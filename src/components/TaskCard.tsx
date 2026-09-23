@@ -14,6 +14,7 @@ import { formatTaskTime, isOverdue } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
 import { DependencyEditor } from './DependencyEditor'
+import { AttachmentList } from './AttachmentList'
 
 /** 优先级文案（§4.1 四级） */
 const PRIORITY_LABEL: Record<number, string> = {
@@ -29,6 +30,8 @@ interface TaskCardProps {
   onDelete: (id: string) => void
   onRestore?: (id: string) => void
   onPurge?: (id: string) => void
+  /** 打开完整编辑表单（§4.1 字段集） */
+  onEdit?: (task: Task) => void
   /** 回收站视图下显示恢复/永久删除而非完成/删除 */
   mode?: 'normal' | 'trash'
   /** 子任务进度（由列表页批量获取，避免每张卡片各查一次） */
@@ -41,6 +44,7 @@ export function TaskCard({
   onDelete,
   onRestore,
   onPurge,
+  onEdit,
   mode = 'normal',
   progress,
 }: TaskCardProps) {
@@ -167,6 +171,15 @@ export function TaskCard({
               <button
                 type="button"
                 className="icon-btn"
+                title="编辑任务详情"
+                aria-label={`编辑「${task.title}」`}
+                onClick={() => onEdit?.(task)}
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                className="icon-btn"
                 aria-expanded={expanded}
                 title={expanded ? '收起详情' : '展开详情（提醒、子任务、依赖）'}
                 aria-label={`${expanded ? '收起' : '展开'}「${task.title}」的详情`}
@@ -191,6 +204,7 @@ export function TaskCard({
       {expanded && hasDetail && (
         <div className="task__detail">
           <SubtaskList taskId={task.id} />
+          <AttachmentList taskId={task.id} />
           <ReminderEditor
             taskId={task.id}
             hasPlanned={Boolean(task.plannedAt)}

@@ -15,6 +15,8 @@ import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
 import { CalendarView } from './components/CalendarView'
+import { BoardView } from './components/BoardView'
+import { TaskEditor } from './components/TaskEditor'
 import { bucketOf } from './lib/datetime'
 import type { Task, ViewId } from './lib/types'
 
@@ -31,6 +33,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'tags',
   'settings',
   'calendar',
+  'board',
 ])
 
 /** 使用组织管理界面的视图（项目与分类、标签） */
@@ -66,6 +69,8 @@ export default function App() {
   } = useApp()
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  /** 正在编辑的任务（null 表示编辑对话框关闭） */
+  const [editing, setEditing] = useState<Task | null>(null)
 
   // ------------------------------ 启动 ------------------------------
   useEffect(() => {
@@ -261,12 +266,26 @@ export default function App() {
             onDelete={remove}
             onRestore={restore}
             onPurge={purge}
+            onEdit={setEditing}
             onRetry={reload}
             onNew={() => setShowQuickAdd(true)}
             onGoSettings={() => setView('settings')}
           />
         </main>
       </div>
+
+      {/* 完整编辑表单（§4.1 字段集） */}
+      {editing && (
+        <TaskEditor
+          task={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            pushToast('success', '已保存')
+            await reload()
+            await useApp.getState().refreshOverview()
+          }}
+        />
+      )}
 
       {/* 提示条（§3 保存失败等要有明确反馈） */}
       <div className="toasts" role="status" aria-live="polite">
@@ -305,6 +324,8 @@ interface TaskAreaProps {
   onDelete: (id: string) => void
   onRestore: (id: string) => void
   onPurge: (id: string) => void
+  /** 打开完整编辑表单 */
+  onEdit: (task: Task) => void
   onRetry: () => void
   onNew: () => void
   onGoSettings: () => void
@@ -321,6 +342,7 @@ function TaskArea({
   onDelete,
   onRestore,
   onPurge,
+  onEdit,
   onRetry,
   onNew,
   onGoSettings,
@@ -338,6 +360,11 @@ function TaskArea({
   // 日历视图（日 / 周 / 月 + 拖拽改期）
   if (view === 'calendar') {
     return <CalendarView />
+  }
+
+  // 看板视图（按状态分列 + 拖拽改状态）
+  if (view === 'board') {
+    return <BoardView onEdit={onEdit} />
   }
 
   // 未实现的视图：明确说明，而不是假装能用
@@ -441,6 +468,7 @@ function TaskArea({
           onToggle={onToggle}
           onDelete={onDelete}
           onRestore={onRestore}
+          onEdit={onEdit}
           onPurge={(id) => {
             if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
           }}

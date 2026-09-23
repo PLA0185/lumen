@@ -217,6 +217,7 @@ export type ViewId =
   | 'week'
   | 'all'
   | 'calendar'
+  | 'board'
   | 'projects'
   | 'tags'
   | 'completed'

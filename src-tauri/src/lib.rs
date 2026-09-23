@@ -11,6 +11,7 @@
 //! 归属由前端按用户本地时区计算后，把 UTC 边界传入（见 `today_overview`）。
 //! 这样避免了在数据层硬编码某一时区。
 
+pub mod attachments;
 pub mod backup;
 pub mod commands;
 pub mod db;
@@ -199,6 +200,12 @@ pub fn run() {
             backup::backup_auto,
             backup::export_csv,
             backup::export_markdown,
+            // ---- 附件受控存储（§4.1）----
+            attachments::attachment_add,
+            attachments::attachment_list,
+            attachments::attachment_remove,
+            attachments::attachment_reveal,
+            attachments::attachment_check,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");
