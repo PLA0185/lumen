@@ -33,7 +33,7 @@
 | Rust 静态检查 | — | 0 错误 0 警告 | `cargo check --all-targets` |
 | TypeScript 类型检查 | — | 0 错误 | `pnpm typecheck` |
 | 实机启动 | — | 正常，日志无 ERROR | `pnpm tauri dev` / 已安装版本 |
-| 实机界面验收（CDP 驱动真实界面） | 2 个脚本 | 见 §3.8 / §3.9 | `tools/verify_v020.py`、`tools/verify_floating.py` |
+| 实机界面验收（CDP 驱动真实界面） | 4 个脚本 | 见 §3.8 ~ §3.11 | `tools/verify_v020.py`、`verify_floating.py`、`verify_pdf.py`、`verify_update.py` |
 | 端到端脚本 | 6 个 | 见下 | `tools/*.py` |
 
 ### Rust 测试按模块分布（257 项）
@@ -208,6 +208,28 @@
 
 **这一步是被用户实测打回来才做对的**：第一版导出得到的是一张 1,076 字节的
 空白 PDF——原因见缺陷 #21。修好之后同一次导出是 90 KB 且内容完整。
+
+### 3.11 自动更新（`tools/verify_update.py`，对着真实 GitHub 端点）
+
+不搭假服务，直接让应用去打真实发布的清单地址：
+
+```
+https://github.com/PLA0185/lumen/releases/latest/download/latest.json
+```
+
+| 检查项 | 实测结果 | 判定 |
+| --- | --- | --- |
+| 端点可达且格式正确 | `version = 0.2.0`，`platforms.windows-x86_64.url` 指向 `Lumen_0.2.0_x64-setup.exe` | ✅ |
+| 清单里的签名与本地 `.sig` 一致 | 逐字相同（432 字符） | ✅ |
+| 应用内「检查更新」拿到结论 | 界面显示「当前版本 0.2.0 已是最新版本。」 | ✅ |
+
+发布 v0.2.0 之前，同一次检查的提示是
+`Could not fetch a valid release JSON from the remote`——因为当时 Release 里
+还没有 `latest.json`。发布后再查即变为「已是最新」，说明**版本号比对是真的
+在读远端清单**，而不是写死的提示。
+
+**未验证**：完整的「旧版 → 新版」静默升级（需要在装有 0.1.x 的机器上点
+「下载并安装」走完 NSIS 静默安装与重启）。这一项已如实列进验收表的验证缺口。
 
 ---
 

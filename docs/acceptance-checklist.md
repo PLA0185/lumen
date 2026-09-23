@@ -20,6 +20,8 @@
 | 实机启动 | 应用启动、窗口创建、数据库迁移、日志无 ERROR |
 | Win32 API 读取 | 窗口扩展样式位（置顶/穿透/任务栏）**直接读取而非界面自述** |
 | `tools/*.py` | 数据库结构、提醒调度、窗口恢复、周期口径的端到端验证 |
+| CDP 实机验收 | 通过 WebView2 的远程调试协议驱动**真实界面**：`tools/verify_v020.py`（新功能）、`verify_floating.py`（悬浮窗按钮用真实鼠标事件）、`verify_pdf.py`（PDF 内容与中文）、`verify_update.py`（真实更新端点） |
+| `tools/ui_drive.py` | 上述脚本共用的驱动层（连接窗口、派发真实鼠标事件、稳定等待） |
 | 安装包实测 | 静默安装 → 启动 → 卸载全流程（见下） |
 | 界面截图 | `docs/screenshots/01-main-window.png`（已安装版本运行时的主界面） |
 
@@ -325,6 +327,7 @@
 | 断网重连 | 已完成 | AI 调用失败不影响本地功能 |
 | 开机启动 | 已完成 | 插件接入 + 设置开关 |
 | 安装升级及卸载后数据保留/删除选项 | 已完成 | NSIS 原生"删除应用数据"复选框（默认保留） |
+| **自动更新（升级不需要重新下载安装包）** | 已完成 | `tauri-plugin-updater` + minisign 签名。设置 → 关于 → 软件更新可检查/下载/安装；启动 20 秒后静默检查一次，只提示不擅自安装。端点为 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json`，**签名校验无法关闭**，校验不过直接拒绝安装。实机验证：发布 v0.2.0 前提示"拿不到有效清单"，发布后同一按钮显示"已是最新版本"（见测试报告 §3.11）。**完整的跨版本静默升级仍需在装有旧版的机器上实测** |
 | 单实例或明确多实例的数据库互斥策略 | 已完成 | 采用单实例 |
 
 ## §11 实施顺序与质量门槛
@@ -372,7 +375,10 @@
 | 完整源代码 | 已完成 | 仓库根目录（145 个受版本控制文件） |
 | 依赖锁文件 | 已完成 | `src-tauri/Cargo.lock`、`pnpm-lock.yaml` |
 | 构建命令 | 已完成 | `README.md` §9 |
-| Windows 安装包 | 已完成 | `src-tauri/target/release/bundle/nsis/` |
+| Windows 安装包 | 已完成 | `src-tauri/target/release/bundle/nsis/Lumen_0.2.0_x64-setup.exe`（4.1 MB） |
+| 自动更新所需的更新包与清单 | 已完成 | 同一目录下的 `.exe.sig`（minisign 签名）与根目录 `latest.json`；已随 Release 一起发布 |
+| 生成更新清单的脚本 | 已完成 | `tools/make-latest-json.mjs`（本地构建不会生成 `latest.json`，官方文档明说这一步由 CI 完成） |
+| CI 发布工作流 | 已完成 | `.github/workflows/release.yml`（推 tag 触发；用 `uploadUpdaterJson` / `uploadUpdaterSignatures`） |
 | README（安装/首次运行/功能/数据位置/备份恢复/FAQ） | 已完成 | `README.md` |
 | `docs/api-research.md` | 已完成 | 附官方 URL 与访问日期 |
 | 数据结构说明 | 已完成 | `docs/data-structure.md` |
@@ -460,7 +466,9 @@
 
 **已完成（本轮从清单中移除）**
 - PDF 导出、自动更新、任务复制入口、列表内手动拖拽排序、项目/分类/标签合并入口
-- GitHub 仓库推送与 Release 发布（`https://github.com/PLA0185/lumen`）
+- 悬浮窗的置顶/穿透开关、不透明度拖动调节、拖拽改大小、完整编辑表单
+- 提醒触发后的应用内可点击提醒条（替代系统通知的点击回调）
+- GitHub 仓库推送与 Release 发布（`https://github.com/PLA0185/lumen`，含 v0.1.0 / v0.2.0）
 
 **未实现但已记录替代方案**
 - 备份含附件压缩包：采取"JSON + 界面明确说明不含附件"的方案
