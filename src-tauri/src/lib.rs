@@ -19,6 +19,8 @@ pub mod error;
 pub mod models;
 pub mod organize;
 pub mod recurrence;
+#[cfg(test)]
+mod recurrence_e2e;
 pub mod recurrence_service;
 pub mod reminders;
 pub mod subtasks;

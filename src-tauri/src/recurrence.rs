@@ -472,10 +472,21 @@ pub fn parse_local_date(s: &str) -> AppResult<chrono::NaiveDate> {
     })
 }
 
-/// 解析 `YYYY-MM-DDTHH:MM:SS` 或 `YYYY-MM-DDTHH:MM` 为 NaiveDateTime
+/// 解析 `YYYY-MM-DDTHH:MM:SS` 为 NaiveDateTime。
+///
+/// 刻意同时接受空格分隔的 `YYYY-MM-DD HH:MM:SS`：
+/// chrono 的 `NaiveDateTime::to_string()` 产出的正是带空格的形式，
+/// 而内部几处会把 `Occurrence.local` 直接 `to_string()` 后再解析回来。
+/// 只认 `T` 会让这条内部往返路径失败（表现为"日期格式不正确"），
+/// 而这与用户输入无关，属于实现细节不该互相打架的地方。
 pub fn parse_local_datetime(s: &str) -> AppResult<chrono::NaiveDateTime> {
     let t = s.trim();
-    for fmt in ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"] {
+    for fmt in [
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+    ] {
         if let Ok(d) = chrono::NaiveDateTime::parse_from_str(t, fmt) {
             return Ok(d);
         }

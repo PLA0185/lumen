@@ -53,6 +53,18 @@ pub enum EditScope {
     WholeSeries,
 }
 
+/// SQL 绑定值的极简表达。
+///
+/// 用于"手动拼 SET 片段"的场景：片段里用 `?` 占位，值按同顺序放进
+/// `Vec<BindValue>`，绑定时按变体分派。比 `QueryBuilder` 的链式调用
+/// 更朴素，但顺序完全显式，不容易出现分隔符错位。
+enum BindValue {
+    /// 文本
+    S(String),
+    /// 整数（SQLite 无布尔类型，布尔也走这里）
+    I(i64),
+}
+
 /// 系列视图
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -434,12 +446,15 @@ impl From<SeriesSegmentRow> for Segment {
 // 命令：创建
 // =============================================================================
 
-/// 创建重复任务。
+/// 创建重复任务的**业务实现**。
 ///
-/// 同时创建系列、首个实例（作为后续实例的字段模板）以及可选的截止时间。
-#[tauri::command]
-pub async fn recurring_create(
-    state: State<'_, AppState>,
+/// 拆成 `*_impl(state: &AppState, ...)` 是为了让集成测试能直接调用，
+/// 而不必构造 Tauri 的 `State`（那需要一个完整的 App 实例）。
+/// 紧随其后的 `#[tauri::command]` 函数只把它接到 IPC 上。
+///
+/// 同时创建系列、首个实例（作为后续实例的字段模板）。
+pub async fn create_recurring_impl(
+    state: &AppState,
     input: CreateRecurringInput,
 ) -> AppResult<CreateRecurringResult> {
     let db = &state.db;
@@ -545,12 +560,26 @@ pub async fn recurring_create(
 
     tx.commit().await?;
 
-    // 物化后续实例（默认 90 天，避免一次性写入过多又不至于让日历空着）
+    // 物化后续实例（默认 90 天）。
+    //
+    // 起点必须从**首个发生时刻**起算，而不是 utc_now()：
+    // dtstart 可能在过去（用户补录一个已开始的习惯），也可能在未来
+    // （提前安排好接下来的安排）。以 first_utc 为基准两种情况都正确，
+    // 而以 now 为基准会在 dtstart 已过时把范围算短、导致实例缺失。
     let days = input.materialize_days.unwrap_or(90).clamp(1, 730);
-    let end_range = to_db_time(utc_now() + chrono::Duration::days(days));
-    let created = materialize_range(&state, &series_id, &first_utc, &end_range, MAX_MATERIALIZE)
+    let first_dt = chrono::DateTime::parse_from_rfc3339(&first_utc)
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| utc_now());
+    let end_range = to_db_time(first_dt + chrono::Duration::days(days));
+    // 物化失败必须**暴露出来**，不能静默吞掉：
+    // 用户会以为"创建成功"，实际日历里只有第一个实例，且不知道原因。
+    let created = materialize_range(state, &series_id, &first_utc, &end_range, MAX_MATERIALIZE)
         .await
-        .unwrap_or(0);
+        .map_err(|e| {
+            log::error!("系列 {series_id} 物化失败：{e}");
+            AppError::internal(format!("重复任务已创建，但生成后续发生失败：{e}"))
+                .with_hint("可在任务列表中打开该任务并手动刷新；若持续失败请导出备份后联系支持")
+        })?;
 
     log::info!(
         "已创建重复系列 {series_id}（{}），共物化 {} 个实例",
@@ -564,6 +593,15 @@ pub async fn recurring_create(
         description: rule.describe(),
         edge_note: rule.edge_policy_note(),
     })
+}
+
+/// 创建重复任务（IPC 入口）
+#[tauri::command]
+pub async fn recurring_create(
+    state: State<'_, AppState>,
+    input: CreateRecurringInput,
+) -> AppResult<CreateRecurringResult> {
+    create_recurring_impl(&state, input).await
 }
 
 /// 展开预览：接下来 N 次发生的本地日期（§5 要求"提供规则预览"）
@@ -605,8 +643,18 @@ pub async fn recurring_materialize(
     range_start_utc: String,
     range_end_utc: String,
 ) -> AppResult<usize> {
+    recurring_materialize_inner(&state, series_id, range_start_utc, range_end_utc).await
+}
+
+/// 物化封装（业务实现，供测试与命令共用）
+pub async fn recurring_materialize_inner(
+    state: &AppState,
+    series_id: String,
+    range_start_utc: String,
+    range_end_utc: String,
+) -> AppResult<usize> {
     materialize_range(
-        &state,
+        state,
         &series_id,
         &range_start_utc,
         &range_end_utc,
@@ -951,9 +999,8 @@ async fn history_guard(
 ///   已完成实例与用户改过的例外一律保留。
 /// - **整个系列**：更新系列本身的基础字段，并同步到所有未完成的实例
 ///   （不改已完成实例的字段，保护历史）。
-#[tauri::command]
-pub async fn recurring_edit_instance(
-    state: State<'_, AppState>,
+pub async fn edit_instance_impl(
+    state: &AppState,
     task_id: String,
     scope: EditScope,
     patch: InstancePatch,
@@ -1005,52 +1052,78 @@ pub async fn recurring_edit_instance(
                 None => None,
             };
 
-            let mut b = sqlx::QueryBuilder::<sqlx::Sqlite>::new("UPDATE tasks SET ");
-            let mut sep = b.separated(", ");
+            // 手动累积 SET 片段与绑定值。
+            //
+            // 这里刻意**不用** `QueryBuilder::separated()`：
+            // `Separated::push` 会把分隔符拼进片段流，与 `push_bind`
+            // 混用时空格与逗号的位置很容易错位，产生 `SET , title = ?`
+            // 这类语法错误。手动维护「片段数组 + 值数组」虽然朴素，
+            // 但顺序一目了然，也便于断言两者数量一致。
+            let mut sets: Vec<String> = Vec::new();
+            let mut binds: Vec<BindValue> = Vec::new();
+
             if let Some(t) = &title {
-                sep.push("title = ").push_bind(t.clone());
+                sets.push("title = ?".into());
+                binds.push(BindValue::S(t.clone()));
             }
             if let Some(d) = &patch.description {
-                sep.push("description = ").push_bind(d.clone());
+                sets.push("description = ?".into());
+                binds.push(BindValue::S(d.clone()));
             }
             if let Some(p) = patch.priority {
                 if !(0..=3).contains(&p) {
                     return Err(AppError::validation("优先级只能是 0–3"));
                 }
-                sep.push("priority = ").push_bind(p);
+                sets.push("priority = ?".into());
+                binds.push(BindValue::I(p));
             }
             if let Some(v) = patch.estimated_minutes {
-                sep.push("estimated_minutes = ").push_bind(v);
+                sets.push("estimated_minutes = ?".into());
+                binds.push(BindValue::I(v));
             }
 
             if patch.clear_planned_at {
-                sep.push("planned_at = ").push_bind(None::<String>);
-                sep.push("has_planned_time = ").push_bind(0i64);
+                sets.push("planned_at = NULL".into());
+                sets.push("has_planned_time = 0".into());
             } else if let Some(p) = &patch.planned_at {
                 // 改期时 occurrence_key 保持原值——它代表"原本该发生的时刻"，
                 // 是这一次的稳定身份，不能跟着 planned_at 一起变。
-                sep.push("planned_at = ").push_bind(p.clone());
+                sets.push("planned_at = ?".into());
+                binds.push(BindValue::S(p.clone()));
                 if let Some(h) = patch.has_planned_time {
-                    sep.push("has_planned_time = ").push_bind(h as i64);
+                    sets.push("has_planned_time = ?".into());
+                    binds.push(BindValue::I(h as i64));
                 }
             }
 
             if patch.clear_due_at {
-                sep.push("due_at = ").push_bind(None::<String>);
-                sep.push("has_due_time = ").push_bind(0i64);
+                sets.push("due_at = NULL".into());
+                sets.push("has_due_time = 0".into());
             } else if let Some(d) = &patch.due_at {
-                sep.push("due_at = ").push_bind(d.clone());
+                sets.push("due_at = ?".into());
+                binds.push(BindValue::S(d.clone()));
                 if let Some(h) = patch.has_due_time {
-                    sep.push("has_due_time = ").push_bind(h as i64);
+                    sets.push("has_due_time = ?".into());
+                    binds.push(BindValue::I(h as i64));
                 }
             }
 
-            sep.push("occurrence_kind = ").push_bind("exception".to_string());
-            sep.push("is_exception = ").push_bind(1i64);
-            sep.push("updated_at = ").push_bind(now.clone());
-            b.push(" WHERE id = ").push_bind(&task_id);
+            // 固定标记这个实例为"用户改过的例外"，并刷新时间戳
+            sets.push("occurrence_kind = ?".into());
+            binds.push(BindValue::S("exception".to_string()));
+            sets.push("is_exception = 1".into());
+            sets.push("updated_at = ?".into());
+            binds.push(BindValue::S(now.clone()));
 
-            b.build().execute(db.pool()).await?;
+            let sql = format!("UPDATE tasks SET {} WHERE id = ?", sets.join(", "));
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for v in binds {
+                q = match v {
+                    BindValue::S(s) => q.bind(s),
+                    BindValue::I(i) => q.bind(i),
+                };
+            }
+            q.bind(task_id.clone()).execute(db.pool()).await?;
 
             // 时间变了要重算相对型提醒（§4.3）
             crate::reminders::on_task_time_changed(db, &task_id).await;
@@ -1068,7 +1141,7 @@ pub async fn recurring_edit_instance(
         // ------------------------------------------------------------------
         EditScope::ThisAndFuture => {
             // §5：不追改历史。若该次之前有已完成实例，必须先确认。
-            let history = history_guard(&state, &series_id, &occ_key, confirm_history).await?;
+            let history = history_guard(state, &series_id, &occ_key, confirm_history).await?;
 
             let effective_rrule = match &new_rrule {
                 Some(r) if !r.trim().is_empty() => {
@@ -1134,7 +1207,7 @@ pub async fn recurring_edit_instance(
             // 用新规则重新物化未来实例
             let end_range = to_db_time(utc_now() + chrono::Duration::days(365));
             let regenerated = materialize_range(
-                &state,
+                state,
                 &series_id,
                 &occ_key,
                 &end_range,
@@ -1163,7 +1236,7 @@ pub async fn recurring_edit_instance(
         // 整个系列：改基础规则/字段，历史实例的字段不动
         // ------------------------------------------------------------------
         EditScope::WholeSeries => {
-            let history = history_guard(&state, &series_id, &occ_key, true).await?;
+            let history = history_guard(state, &series_id, &occ_key, true).await?;
 
             let mut tx = db.pool().begin().await?;
 
@@ -1185,7 +1258,19 @@ pub async fn recurring_edit_instance(
                 .await?;
             }
 
-            // 只同步"未完成且非例外"的实例字段；已完成的历史保持原样
+            // 同步字段到系列的实例。
+            //
+            // 关于"例外"（用户单独改过的实例）该怎么处理，这里采取的原则是：
+            // **例外只锁定用户真正改过的那个字段，其余字段仍跟随系列。**
+            //
+            // 理由：用户在这一次上改了标题，说明"这次内容不一样"；
+            // 但这不代表"这次的优先级永远不跟着系列走"。若把例外整体排除，
+            // 用户改完整个系列的优先级后会发现个别实例没变，而且找不到原因。
+            // 因此：
+            //   - 改标题时跳过例外（保护用户的自定义标题）；
+            //   - 改其它字段时包含例外（它们是系列的共同属性）。
+            //
+            // 已完成的历史实例一律不动（§5 保护历史）。
             let mut affected = 0i64;
             if let Some(p) = patch.priority {
                 if !(0..=3).contains(&p) {
@@ -1193,7 +1278,8 @@ pub async fn recurring_edit_instance(
                 }
                 affected += sqlx::query(
                     "UPDATE tasks SET priority = ?1, updated_at = ?2
-                     WHERE series_id = ?3 AND status <> 'done' AND occurrence_kind = 'generated'",
+                     WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
+                       AND deleted_at IS NULL",
                 )
                 .bind(p)
                 .bind(&now)
@@ -1203,11 +1289,39 @@ pub async fn recurring_edit_instance(
                 .rows_affected() as i64;
             }
             if let Some(t) = patch.title.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                // 标题是例外最常定制的字段，因此只同步到非例外实例
                 affected += sqlx::query(
                     "UPDATE tasks SET title = ?1, updated_at = ?2
-                     WHERE series_id = ?3 AND status <> 'done' AND occurrence_kind = 'generated'",
+                     WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
+                       AND deleted_at IS NULL AND occurrence_kind = 'generated'",
                 )
                 .bind(t)
+                .bind(&now)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected() as i64;
+            }
+            if let Some(v) = patch.estimated_minutes {
+                affected += sqlx::query(
+                    "UPDATE tasks SET estimated_minutes = ?1, updated_at = ?2
+                     WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
+                       AND deleted_at IS NULL",
+                )
+                .bind(v)
+                .bind(&now)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected() as i64;
+            }
+            if let Some(d) = patch.description.as_ref() {
+                affected += sqlx::query(
+                    "UPDATE tasks SET description = ?1, updated_at = ?2
+                     WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
+                       AND deleted_at IS NULL AND occurrence_kind = 'generated'",
+                )
+                .bind(d)
                 .bind(&now)
                 .bind(&series_id)
                 .execute(&mut *tx)
@@ -1234,9 +1348,8 @@ pub async fn recurring_edit_instance(
 ///
 /// 实现方式：删除已物化的实例（若有）并写入一条跳过记录，
 /// 使后续物化不会再生成它。系列本身完全不受影响。
-#[tauri::command]
-pub async fn recurring_skip_occurrence(
-    state: State<'_, AppState>,
+pub async fn skip_occurrence_impl(
+    state: &AppState,
     task_id: String,
 ) -> AppResult<ScopeActionResult> {
     let db = &state.db;
@@ -1316,9 +1429,8 @@ pub struct DeleteResult {
 }
 
 /// 删除重复任务的某一部分或全部
-#[tauri::command]
-pub async fn recurring_delete(
-    state: State<'_, AppState>,
+pub async fn delete_recurring_impl(
+    state: &AppState,
     task_id: String,
     mode: DeleteMode,
     confirm_history: bool,
@@ -1372,7 +1484,7 @@ pub async fn recurring_delete(
         }
 
         DeleteMode::ThisAndFuture => {
-            let history = history_guard(&state, &series_id, &occ_key, confirm_history).await?;
+            let history = history_guard(state, &series_id, &occ_key, confirm_history).await?;
             let mut tx = db.pool().begin().await?;
 
             // 已完成的历史实例保留（§5 要求历史不消失）
@@ -1412,7 +1524,7 @@ pub async fn recurring_delete(
         }
 
         DeleteMode::WholeSeries => {
-            let history = history_guard(&state, &series_id, &occ_key, confirm_history).await?;
+            let history = history_guard(state, &series_id, &occ_key, confirm_history).await?;
             let mut tx = db.pool().begin().await?;
 
             // 全部实例软删除（可恢复），再删除系列本身
@@ -1447,13 +1559,24 @@ pub async fn recurring_delete(
     }
 }
 
-/// 查询某任务的重复系列信息（界面据此决定是否显示范围选择）
+/// 查询某任务的重复系列信息（IPC 入口）
 #[tauri::command]
 pub async fn recurring_scope_info(
     state: State<'_, AppState>,
     task_id: String,
 ) -> AppResult<serde_json::Value> {
-    let series_id = series_of_task(&state, &task_id).await?;
+    recurring_scope_info_inner(&state, task_id).await
+}
+
+/// 查询某任务的重复系列信息（业务实现，供测试与命令共用）
+///
+/// 返回：是否重复、属于哪一次、系列统计、该次之前的已完成历史数，
+/// 以及三种范围各自的影响说明——供界面禁用不适用的选项并说明原因（§5）。
+pub async fn recurring_scope_info_inner(
+    state: &AppState,
+    task_id: String,
+) -> AppResult<serde_json::Value> {
+    let series_id = series_of_task(state, &task_id).await?;
     let Some(sid) = series_id else {
         return Ok(serde_json::json!({
             "isRecurring": false,
@@ -1530,6 +1653,44 @@ pub async fn recurring_scope_info(
             },
         },
     }))
+}
+
+
+// =============================================================================
+// IPC 包装（薄层：只把 Tauri 的 State 转成 &AppState 后转调业务实现）
+// =============================================================================
+
+/// 按范围编辑某次发生（§5「仅此次 / 此次及以后 / 整个系列」）
+#[tauri::command]
+pub async fn recurring_edit_instance(
+    state: State<'_, AppState>,
+    task_id: String,
+    scope: EditScope,
+    patch: InstancePatch,
+    new_rrule: Option<String>,
+    confirm_history: bool,
+) -> AppResult<ScopeActionResult> {
+    edit_instance_impl(&state, task_id, scope, patch, new_rrule, confirm_history).await
+}
+
+/// 跳过某一次发生（等价于"单次取消"，系列继续）
+#[tauri::command]
+pub async fn recurring_skip_occurrence(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<ScopeActionResult> {
+    skip_occurrence_impl(&state, task_id).await
+}
+
+/// 按范围删除重复任务
+#[tauri::command]
+pub async fn recurring_delete(
+    state: State<'_, AppState>,
+    task_id: String,
+    mode: DeleteMode,
+    confirm_history: bool,
+) -> AppResult<DeleteResult> {
+    delete_recurring_impl(&state, task_id, mode, confirm_history).await
 }
 
 #[cfg(test)]
