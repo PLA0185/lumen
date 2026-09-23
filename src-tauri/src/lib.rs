@@ -21,6 +21,7 @@
 //! 硬编码某一时区。
 
 pub mod ai;
+pub mod ai_features;
 pub mod attachments;
 pub mod backup;
 pub mod commands;
@@ -34,6 +35,7 @@ mod recurrence_e2e;
 pub mod recurrence_service;
 pub mod reminders;
 pub mod shortcuts;
+pub mod stats;
 pub mod subtasks;
 pub mod window_mgr;
 
@@ -340,6 +342,22 @@ pub fn run() {
             ai::ai_list_models,
             ai::ai_clear_key,
             ai::ai_status,
+            // ---- AI 功能（§6：预览确认后才写库）----
+            ai_features::ai_organize,
+            ai_features::ai_breakdown,
+            ai_features::ai_plan,
+            ai_features::ai_review,
+            ai_features::ai_apply,
+            ai_features::ai_discard,
+            ai_features::schedule_conflicts,
+            // ---- 统计与成长（§7）----
+            stats::stats_period,
+            stats::stats_growth,
+            stats::growth_get_config,
+            stats::growth_set_config,
+            stats::goals_list,
+            stats::goal_create,
+            stats::goal_delete,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");

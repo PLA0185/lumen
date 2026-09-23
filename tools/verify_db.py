@@ -31,6 +31,8 @@ EXPECTED_TABLES = [
     "task_series_skips",
     "task_tags",
     "tasks",
+    # migration 0003：个人目标（§7）
+    "goals",
 ]
 
 # 关键唯一索引：重复实例"稳定身份"的保证（§5）
