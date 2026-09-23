@@ -296,7 +296,7 @@ export function AiPanel() {
             </div>
             <p className="setgroup__hint">
               输出上限用于控制单次调用的规模。API 费用由你自己的服务商账户产生，
-              AiTodo 无法代你计费，也无法限制你的账户支出。
+              Lumen 无法代你计费，也无法限制你的账户支出。
             </p>
 
             <div className="setactions">
@@ -542,6 +542,6 @@ function providerPolicyNote(p: AiProvider): string {
     case 'claude':
       return '按 Anthropic 官方政策，未经明确许可不会将数据用于训练，默认不保留对话内容；部分模型保留 30 天且不适用零数据保留。'
     default:
-      return '自定义服务的隐私政策由其提供方决定，AiTodo 无法代为说明。请自行确认该服务如何处理你的数据。'
+      return '自定义服务的隐私政策由其提供方决定，Lumen 无法代为说明。请自行确认该服务如何处理你的数据。'
   }
 }

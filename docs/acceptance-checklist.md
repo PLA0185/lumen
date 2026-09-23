@@ -27,16 +27,16 @@
 
 | 检查项 | 实测结果 | 判定 |
 | --- | --- | --- |
-| 安装包构建 | `AiTodo_0.1.0_x64-setup.exe`，3.7 MB | ✅ |
+| 安装包构建 | `Lumen_0.1.0_x64-setup.exe`，3.7 MB | ✅ |
 | 构建方式 | Tauri 自动下载 NSIS 3.11 与 nsis_tauri_utils 0.5.3，**无需手动安装** | ✅ |
 | 静默安装 | `setup.exe /S` 退出码 0 | ✅ |
-| 安装产物 | `%LOCALAPPDATA%\AiTodo\aitodo.exe`（11.44 MB）+ `uninstall.exe` | ✅ |
-| 开始菜单快捷方式 | `...\Start Menu\Programs\AiTodo.lnk` | ✅ |
-| 卸载注册表项 | `HKCU\...\Uninstall\AiTodo`，版本 0.1.0 | ✅ |
+| 安装产物 | `%LOCALAPPDATA%\Lumen\lumen.exe`（11.44 MB）+ `uninstall.exe` | ✅ |
+| 开始菜单快捷方式 | `...\Start Menu\Programs\Lumen.lnk` | ✅ |
+| 卸载注册表项 | `HKCU\...\Uninstall\Lumen`，版本 0.1.0 | ✅ |
 | **已安装版本启动** | 进程运行（28.9 MB），**19 个 WebView2 子进程**，主窗口与悬浮窗均可见 | ✅ |
-| 运行的二进制来源 | `C:\Users\win\AppData\Local\AiTodo\aitodo.exe`（确认非开发版） | ✅ |
+| 运行的二进制来源 | `C:\Users\win\AppData\Local\Lumen\lumen.exe`（确认非开发版） | ✅ |
 | 读取既有数据 | 正确读取既有配置（悬浮窗按配置显示） | ✅ |
-| **卸载后数据保留** | 卸载后 `%APPDATA%\com.pla0185.aitodo\aitodo.db` **仍存在**（264 KB） | ✅ |
+| **卸载后数据保留** | 卸载后 `%APPDATA%\com.pla0185.lumen\lumen.db` **仍存在**（264 KB） | ✅ |
 
 判定 ✅ 安装包从构建到安装、启动、卸载形成完整闭环，且卸载**默认保留用户数据**。
 

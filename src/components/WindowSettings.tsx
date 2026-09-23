@@ -472,7 +472,7 @@ export function WindowSettings() {
           <div className="setrow__label">
             <div className="setrow__title">启用全局快捷键</div>
             <div className="setrow__desc">
-              在任意程序前台时都能唤出 AiTodo。这是穿透与隐藏设置下最可靠的恢复入口。
+              在任意程序前台时都能唤出 Lumen。这是穿透与隐藏设置下最可靠的恢复入口。
             </div>
           </div>
           <div className="segmented">
@@ -539,7 +539,7 @@ export function WindowSettings() {
       <div className="setgroup">
         <h3 className="setgroup__title">退出</h3>
         <p className="setgroup__desc">
-          「完全退出」会结束程序，之后提醒不会再触发（直到你再次启动 AiTodo）。
+          「完全退出」会结束程序，之后提醒不会再触发（直到你再次启动 Lumen）。
           如果只是想让它不在前台，用主窗口右上角的关闭按钮即可（按当前设置为准）。
         </p>
         <div className="setactions">
@@ -547,12 +547,12 @@ export function WindowSettings() {
             type="button"
             className="btn btn--danger"
             onClick={() => {
-              if (window.confirm('确定要完全退出 AiTodo 吗？\n\n退出后提醒不会再触发。')) {
+              if (window.confirm('确定要完全退出 Lumen 吗？\n\n退出后提醒不会再触发。')) {
                 void win.appQuit()
               }
             }}
           >
-            完全退出 AiTodo
+            完全退出 Lumen
           </button>
         </div>
       </div>

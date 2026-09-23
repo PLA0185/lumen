@@ -607,13 +607,13 @@ async fn send_notification(app: &AppHandle, title: &str, remind_at: &str) -> App
     let notification = app
         .notification()
         .builder()
-        .title("AiTodo 提醒")
+        .title("Lumen 提醒")
         .body(format!("{title}\n计划时间：{body_time}"));
 
     notification
         .show()
         .map_err(|e| AppError::new(crate::error::ErrorCode::Internal, format!("系统通知发送失败：{e}"))
-            .with_hint("请检查 Windows 通知设置是否允许 AiTodo 发送通知"))?;
+            .with_hint("请检查 Windows 通知设置是否允许 Lumen 发送通知"))?;
     Ok(())
 }
 

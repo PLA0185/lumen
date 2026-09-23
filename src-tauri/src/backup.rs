@@ -34,7 +34,7 @@ use crate::error::{AppError, AppResult};
 pub const BACKUP_FORMAT_VERSION: u32 = 1;
 
 /// 备份文件的扩展名
-pub const BACKUP_EXT: &str = "aitodo-backup.json";
+pub const BACKUP_EXT: &str = "lumen-backup.json";
 
 /// 默认保留的自动备份份数（超出后删除最旧的）
 pub const DEFAULT_KEEP: i64 = 10;
@@ -365,7 +365,7 @@ pub async fn backup_export(
         created_at: to_db_time(utc_now()),
         checksum: checksum.clone(),
         stats: stats.clone(),
-        note: Some("AiTodo 完整数据备份（不含附件文件本体）".to_string()),
+        note: Some("Lumen 完整数据备份（不含附件文件本体）".to_string()),
         data,
     };
 
@@ -422,7 +422,7 @@ fn read_backup(path: &Path) -> AppResult<BackupFile> {
     })?;
     serde_json::from_str::<BackupFile>(&text).map_err(|e| {
         AppError::validation(format!("备份文件格式不正确：{e}"))
-            .with_hint("请确认选择的是 AiTodo 导出的 .aitodo-backup.json 文件")
+            .with_hint("请确认选择的是 Lumen 导出的 .lumen-backup.json 文件")
     })
 }
 
@@ -456,7 +456,7 @@ pub async fn backup_preview(
     }
     if file.format_version > BACKUP_FORMAT_VERSION {
         blocking.push(format!(
-            "备份格式版本 {} 高于当前程序支持的 {}，请先升级 AiTodo",
+            "备份格式版本 {} 高于当前程序支持的 {}，请先升级 Lumen",
             file.format_version, BACKUP_FORMAT_VERSION
         ));
     }
@@ -848,7 +848,7 @@ pub async fn backup_auto(state: State<'_, AppState>, keep: Option<i64>) -> AppRe
         created_at: to_db_time(utc_now()),
         checksum: checksum.clone(),
         stats: stats.clone(),
-        note: Some("AiTodo 自动备份".to_string()),
+        note: Some("Lumen 自动备份".to_string()),
         data,
     };
 
@@ -1029,7 +1029,7 @@ pub async fn export_markdown(state: State<'_, AppState>, path: String) -> AppRes
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
     let mut md = String::new();
-    md.push_str(&format!("# AiTodo 任务导出\n\n> 导出时间：{now}\n>\n> 共 {} 项任务。\n\n", rows.len()));
+    md.push_str(&format!("# Lumen 任务导出\n\n> 导出时间：{now}\n>\n> 共 {} 项任务。\n\n", rows.len()));
 
     for r in rows {
         let title: String = r.try_get("title")?;
@@ -1138,7 +1138,7 @@ mod tests {
 
     /// 建一个带样例数据的临时库，返回 (库句柄, 目录)
     async fn make_db_with_data() -> (Db, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("aitodo-backup-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("lumen-backup-{}", uuid::Uuid::now_v7()));
         let db = Db::init(&dir).await.expect("初始化数据库");
         let now = to_db_time(utc_now());
 

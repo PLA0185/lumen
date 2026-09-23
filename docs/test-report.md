@@ -76,9 +76,9 @@
 **日志证据**（系统通知确实发出）：
 
 ```
-[2026-09-23][04:11:41][aitodo_lib::reminders][INFO] 发出提醒 be7982a6-...：
+[2026-09-23][04:11:41][lumen_lib::reminders][INFO] 发出提醒 be7982a6-...：
     任务「AITODO-DEDUP 去重验证」，计划时刻 2026-09-23T03:39:25.347Z
-[2026-09-23][04:11:41][aitodo_lib::reminders][INFO] 通知已提交给 Windows 通知中心（提醒 be7982a6-...）
+[2026-09-23][04:11:41][lumen_lib::reminders][INFO] 通知已提交给 Windows 通知中心（提醒 be7982a6-...）
 ```
 
 **去重验证**（`tools/verify_dedup.py`）：插入一条"刚刚到期"的提醒，
@@ -91,8 +91,8 @@
 
 | 窗口 | 可见 | `WS_EX_TOPMOST` | `WS_EX_TRANSPARENT` | `WS_EX_TOOLWINDOW` |
 | --- | --- | --- | --- | --- |
-| `AiTodo 今日`（悬浮窗） | 是 | **是** | 否 | **是**（不在任务栏/Alt+Tab） |
-| `AiTodo`（主窗口） | 是 | 否 | 否 | 否 |
+| `Lumen 今日`（悬浮窗） | 是 | **是** | 否 | **是**（不在任务栏/Alt+Tab） |
+| `Lumen`（主窗口） | 是 | 否 | 否 | 否 |
 
 与配置 `floatingAlwaysOnTop=true`、`floatingClickThrough=false`、
 `floatingShowInTaskbar=false`、`mainAlwaysOnTop=false` **逐项一致**。

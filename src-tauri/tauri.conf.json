@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AiTodo",
+  "productName": "Lumen",
   "version": "0.1.0",
-  "identifier": "com.pla0185.aitodo",
+  "identifier": "com.pla0185.lumen",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "AiTodo",
+        "title": "Lumen",
         "width": 1180,
         "height": 780,
         "minWidth": 940,
@@ -39,10 +39,10 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "publisher": "AiTodo",
-    "copyright": "Copyright © 2026 AiTodo",
+    "publisher": "Lumen",
+    "copyright": "Copyright © 2026 Lumen",
     "category": "Productivity",
-    "shortDescription": "AI 智能 Todo 桌面软件",
+    "shortDescription": "Lumen —— 本地优先的智能任务管理",
     "longDescription": "本地优先的个人任务管理软件，支持复杂重复规则、提醒、悬浮今日小窗，可选接入大模型辅助整理、拆解、排程与复盘。",
     "windows": {
       "nsis": {

@@ -25,7 +25,7 @@ use sqlx::Row;
 
 /// 建一个临时库并返回状态句柄。调用方负责删除目录。
 async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("aitodo-{name}-{}", uuid::Uuid::now_v7()));
+    let dir = std::env::temp_dir().join(format!("lumen-{name}-{}", uuid::Uuid::now_v7()));
     let db = Db::init(&dir).await.expect("初始化数据库");
     (AppState::new(db), dir)
 }

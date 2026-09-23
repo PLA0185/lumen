@@ -1,5 +1,5 @@
 -- =============================================================================
--- AiTodo 初始数据库结构  (migration 0001)
+-- Lumen 初始数据库结构  (migration 0001)
 --
 -- 设计约定（任务书 §4.1 / §5 / §5 时间存储方式）：
 --  1) 所有时间戳一律以 **UTC** 存储为 TEXT(ISO-8601, 'YYYY-MM-DDTHH:MM:SS.sssZ')。
@@ -303,7 +303,7 @@ CREATE TABLE app_meta (
 );
 INSERT INTO app_meta (key, value, updated_at)
 VALUES ('schema_version', '1', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-       ('created_by', 'aitodo/0.1.0', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+       ('created_by', 'lumen/0.1.0', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 -- -----------------------------------------------------------------------------
 -- updated_at 自动维护触发器

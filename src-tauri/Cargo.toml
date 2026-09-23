@@ -1,19 +1,19 @@
 [package]
-name = "aitodo"
+name = "lumen"
 version = "0.1.0"
-description = "AI 智能 Todo 桌面软件（本地优先，可选 AI 辅助）"
-authors = ["AiTodo"]
+description = "Lumen —— 本地优先的智能任务管理（可选 AI 辅助）"
+authors = ["Lumen"]
 edition = "2021"
 # MSRV 由依赖中最严格者决定：sqlx 0.9.0 要求 Rust 1.94.0，
 # reqwest 0.13 / keyring 4 分别要求 1.85 / 1.88。此处不得低于 1.94。
 rust-version = "1.94"
 license = "MIT"
 repository = ""
-default-run = "aitodo"
+default-run = "lumen"
 
 [lib]
 # Tauri 2 约定：业务逻辑放 lib，main.rs 只做入口
-name = "aitodo_lib"
+name = "lumen_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -1,4 +1,4 @@
-﻿//! 窗口能力管理（任务书 §8）。
+//! 窗口能力管理（任务书 §8）。
 //!
 //! ## 覆盖的要求
 //!
@@ -189,7 +189,7 @@ pub fn ensure_floating(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<()>
     }
 
     let mut builder = WebviewWindowBuilder::new(app, FLOATING, WebviewUrl::App("index.html".into()))
-        .title("AiTodo 今日")
+        .title("Lumen 今日")
         .inner_size(FLOATING_W, FLOATING_H)
         .min_inner_size(240.0, 200.0)
         .resizable(true)

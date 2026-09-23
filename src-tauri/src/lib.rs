@@ -1,4 +1,4 @@
-//! AiTodo 应用入口与 Tauri 运行时装配。
+//! Lumen 应用入口与 Tauri 运行时装配。
 //!
 //! 分层约定（任务书 §2.4「功能分模块开发」）：
 //! - `db`              —— 连接池、迁移、事务、备份原语
@@ -80,7 +80,7 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: Some("aitodo".into()) }),
+                    Target::new(TargetKind::LogDir { file_name: Some("lumen".into()) }),
                 ])
                 .level(if cfg!(debug_assertions) {
                     log::LevelFilter::Debug
@@ -115,7 +115,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .setup(|app| {
             // ---------------- 数据目录与数据库 ----------------
-            // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.aitodo），
+            // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.lumen），
             // 而不是安装目录：这样 NSIS 卸载程序的"删除应用数据"选项才能
             // 统一决定是否清除用户数据（§10 卸载后的数据保留/删除选项）。
             let data_dir = app
@@ -123,7 +123,7 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|e| format!("无法获取应用数据目录：{e}"))?;
 
-            log::info!("AiTodo 启动，数据目录：{}", data_dir.display());
+            log::info!("Lumen 启动，数据目录：{}", data_dir.display());
 
             let db = tauri::async_runtime::block_on(Db::init(&data_dir))
                 .map_err(|e| format!("数据库初始化失败：{e}"))?;
@@ -370,7 +370,7 @@ pub fn run() {
             focus::focus_format_seconds,
         ])
         .run(tauri::generate_context!())
-        .expect("AiTodo 启动失败");
+        .expect("Lumen 启动失败");
 }
 
 // =============================================================================
@@ -430,7 +430,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
-        .tooltip("AiTodo —— 智能任务管理")
+        .tooltip("Lumen —— 智能任务管理")
         // 左键单击切换主窗口显隐，符合 Windows 托盘交互习惯
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| handle_tray_menu(app, event))
@@ -549,7 +549,7 @@ fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<ta
         true,
         None::<&str>,
     )?;
-    let quit = MenuItem::with_id(app, tray_ids::QUIT, "完全退出 AiTodo", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, tray_ids::QUIT, "完全退出 Lumen", true, None::<&str>)?;
 
     Menu::with_items(
         app,

@@ -56,19 +56,19 @@ impl Db {
 
     /// 数据库文件完整路径
     pub fn db_path(&self) -> PathBuf {
-        self.data_dir.join("aitodo.db")
+        self.data_dir.join("lumen.db")
     }
 
     /// 初始化：确保目录存在 → 打开连接池 → 执行迁移。
     ///
     /// `data_dir` 由 Tauri 的 `app_data_dir()` 提供（Windows 下为
-    /// `%APPDATA%\com.pla0185.aitodo`），刻意放在安装目录之外，
+    /// `%APPDATA%\com.pla0185.lumen`），刻意放在安装目录之外，
     /// 这样 NSIS 卸载程序的"删除应用数据"复选框才能统一管理（§10）。
     pub async fn init(data_dir: impl AsRef<Path>) -> Result<Self, DbError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&data_dir)?;
 
-        let db_path = data_dir.join("aitodo.db");
+        let db_path = data_dir.join("lumen.db");
 
         // 迁移前备份：任务书 §9「数据库写入使用事务、迁移有备份」
         if db_path.exists() {
@@ -80,7 +80,7 @@ impl Db {
             }
             // 备份失败不应阻止启动，但要留下日志（调用方负责记录）
             if let Err(e) = std::fs::copy(&db_path, &backup) {
-                eprintln!("[aitodo] 迁移前备份失败（继续启动）: {e}");
+                eprintln!("[lumen] 迁移前备份失败（继续启动）: {e}");
             }
         }
 
@@ -169,7 +169,7 @@ mod tests {
     /// 迁移必须能在空库上跑通，且重复执行幂等。
     #[tokio::test]
     async fn migrations_apply_and_are_idempotent() {
-        let dir = std::env::temp_dir().join(format!("aitodo-test-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("lumen-test-{}", uuid::Uuid::now_v7()));
         let db = Db::init(&dir).await.expect("首次初始化应成功");
         let db2 = Db::init(&dir).await.expect("重复初始化应成功（迁移幂等）");
 
@@ -211,7 +211,7 @@ mod tests {
     /// §5 核心不变式：同一系列的同一原始发生时刻不得重复插入。
     #[tokio::test]
     async fn occurrence_identity_is_unique_but_survives_reschedule() {
-        let dir = std::env::temp_dir().join(format!("aitodo-occ-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("lumen-occ-{}", uuid::Uuid::now_v7()));
         let db = Db::init(&dir).await.expect("初始化");
         let pool = db.pool();
 
@@ -275,7 +275,7 @@ mod tests {
     /// 循环依赖必须由应用层拒绝；这里验证自依赖被数据库 CHECK 拦住。
     #[tokio::test]
     async fn self_dependency_is_rejected() {
-        let dir = std::env::temp_dir().join(format!("aitodo-dep-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("lumen-dep-{}", uuid::Uuid::now_v7()));
         let db = Db::init(&dir).await.expect("初始化");
         let now = to_db_time(utc_now());
         let id = uuid::Uuid::now_v7().to_string();

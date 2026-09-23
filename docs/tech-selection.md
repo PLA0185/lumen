@@ -122,7 +122,7 @@
 
 ## 5. 数据目录位置
 
-**选择**：`app.path().app_data_dir()` → Windows 下 `%APPDATA%\com.pla0185.aitodo\`
+**选择**：`app.path().app_data_dir()` → Windows 下 `%APPDATA%\com.pla0185.lumen\`
 
 **依据**：
 - 任务书 §10 要求"卸载后的数据保留/删除选项"。若把数据库放在**安装目录**，
@@ -131,9 +131,9 @@
   （已核实其删除的正是 `$APPDATA\${BUNDLEID}`，其中 BUNDLEID 即 identifier）。
 - 目录布局：
   ```
-  %APPDATA%\com.pla0185.aitodo\
-    ├── aitodo.db          SQLite 数据库
-    ├── aitodo.db-wal      WAL 日志
+  %APPDATA%\com.pla0185.lumen\
+    ├── lumen.db          SQLite 数据库
+    ├── lumen.db-wal      WAL 日志
     ├── backups\           自动与手动备份（含迁移前备份）
     ├── attachments\       受控存储的附件
     └── logs\              运行日志（不含密钥与任务正文）

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 设置页（任务书 §3 / §9）。
  *
  * 本页承担三件事：
@@ -37,9 +37,9 @@ export function SettingsView() {
   const [busy, setBusy] = useState(false)
 
   // 外观（本地持久化，立即可见）
-  const [scale, setScale] = useState(() => localStorage.getItem('aitodo.uiScale') ?? '1')
-  const [fontSize, setFontSize] = useState(() => localStorage.getItem('aitodo.fontSize') ?? '14px')
-  const [motion, setMotion] = useState(() => localStorage.getItem('aitodo.motion') ?? 'on')
+  const [scale, setScale] = useState(() => localStorage.getItem('lumen.uiScale') ?? '1')
+  const [fontSize, setFontSize] = useState(() => localStorage.getItem('lumen.fontSize') ?? '14px')
+  const [motion, setMotion] = useState(() => localStorage.getItem('lumen.motion') ?? 'on')
 
   // 备份
   const [backups, setBackups] = useState<BackupEntry[]>([])
@@ -77,19 +77,19 @@ export function SettingsView() {
   // ------------------------------ 外观 ------------------------------
   const applyScale = (v: string) => {
     setScale(v)
-    localStorage.setItem('aitodo.uiScale', v)
+    localStorage.setItem('lumen.uiScale', v)
     document.documentElement.style.setProperty('--ui-scale', v)
   }
 
   const applyFontSize = (v: string) => {
     setFontSize(v)
-    localStorage.setItem('aitodo.fontSize', v)
+    localStorage.setItem('lumen.fontSize', v)
     document.documentElement.style.setProperty('--font-size-base', v)
   }
 
   const applyMotion = (v: string) => {
     setMotion(v)
-    localStorage.setItem('aitodo.motion', v)
+    localStorage.setItem('lumen.motion', v)
     if (v === 'off') document.documentElement.dataset.motion = 'off'
     else delete document.documentElement.dataset.motion
   }
@@ -98,10 +98,10 @@ export function SettingsView() {
     setTheme(v)
     if (v === 'system') {
       delete document.documentElement.dataset.theme
-      localStorage.removeItem('aitodo.theme')
+      localStorage.removeItem('lumen.theme')
     } else {
       document.documentElement.dataset.theme = v
-      localStorage.setItem('aitodo.theme', v)
+      localStorage.setItem('lumen.theme', v)
     }
   }
 
@@ -113,8 +113,8 @@ export function SettingsView() {
       // 让用户选择保存位置；取消则回退到默认的备份目录
       const target = await save({
         title: '导出备份',
-        defaultPath: `aitodo-backup-${new Date().toISOString().slice(0, 10)}.aitodo-backup.json`,
-        filters: [{ name: 'AiTodo 备份', extensions: ['json'] }],
+        defaultPath: `lumen-backup-${new Date().toISOString().slice(0, 10)}.lumen-backup.json`,
+        filters: [{ name: 'Lumen 备份', extensions: ['json'] }],
       })
       const r = await bk.backupExport(typeof target === 'string' ? target : undefined)
       pushToast('success', `已导出 ${r.stats.tasks} 个任务到 ${r.path}`)
@@ -135,7 +135,7 @@ export function SettingsView() {
     try {
       const target = await save({
         title: '导出 CSV',
-        defaultPath: `aitodo-tasks-${new Date().toISOString().slice(0, 10)}.csv`,
+        defaultPath: `lumen-tasks-${new Date().toISOString().slice(0, 10)}.csv`,
         filters: [{ name: 'CSV', extensions: ['csv'] }],
       })
       if (typeof target !== 'string') return
@@ -154,7 +154,7 @@ export function SettingsView() {
     try {
       const target = await save({
         title: '导出 Markdown',
-        defaultPath: `aitodo-tasks-${new Date().toISOString().slice(0, 10)}.md`,
+        defaultPath: `lumen-tasks-${new Date().toISOString().slice(0, 10)}.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }],
       })
       if (typeof target !== 'string') return
@@ -173,7 +173,7 @@ export function SettingsView() {
       const picked = await open({
         title: '选择要导入的备份文件',
         multiple: false,
-        filters: [{ name: 'AiTodo 备份', extensions: ['json'] }],
+        filters: [{ name: 'Lumen 备份', extensions: ['json'] }],
       })
       if (typeof picked !== 'string') return
       setBusy(true)
@@ -577,7 +577,7 @@ export function SettingsView() {
                     <th>格式版本</th>
                     <td>
                       {preview.formatVersion}
-                      {preview.appVersion && `（由 AiTodo ${preview.appVersion} 生成）`}
+                      {preview.appVersion && `（由 Lumen ${preview.appVersion} 生成）`}
                     </td>
                   </tr>
                   <tr>
@@ -728,7 +728,7 @@ export function SettingsView() {
         <div className="setgroup">
           <h3 className="setgroup__title">提醒调度</h3>
           <p className="setgroup__desc">
-            AiTodo 自己负责调度提醒（不使用系统计划任务），因此程序关闭期间到期的提醒会在下次
+            Lumen 自己负责调度提醒（不使用系统计划任务），因此程序关闭期间到期的提醒会在下次
             启动时处理。下面的窗口决定"补发多久以内错过的提醒"。
           </p>
 
@@ -817,7 +817,7 @@ export function SettingsView() {
       {/* ---------------------------- 关于 ---------------------------- */}
       {tab === 'about' && (
         <div className="setgroup">
-          <h3 className="setgroup__title">关于 AiTodo</h3>
+          <h3 className="setgroup__title">关于 Lumen</h3>
           <table className="kvtable">
             <tbody>
               <tr>
@@ -843,7 +843,7 @@ export function SettingsView() {
             </tbody>
           </table>
           <p className="setgroup__hint">
-            AiTodo 是本地优先的应用：不配置 AI 服务时，任务管理、重复规则与提醒全部可用。
+            Lumen 是本地优先的应用：不配置 AI 服务时，任务管理、重复规则与提醒全部可用。
           </p>
         </div>
       )}

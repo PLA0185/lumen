@@ -40,7 +40,7 @@ export const ATT_CMD = {
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
-    throw new IpcError('internal', '当前不在 AiTodo 桌面程序内运行', null, null)
+    throw new IpcError('internal', '当前不在 Lumen 桌面程序内运行', null, null)
   }
   try {
     return await invoke<T>(cmd, args)
@@ -59,7 +59,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
  *
  * `mode`：
  * - `reference` 只在数据库里记录原文件路径，不复制、不占用额外空间；
- * - `copied` 把文件复制到 AiTodo 数据目录，备份时能找到它，但会占双份空间。
+ * - `copied` 把文件复制到 Lumen 数据目录，备份时能找到它，但会占双份空间。
  */
 export const attachmentAdd = (
   taskId: string,

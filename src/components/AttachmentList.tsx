@@ -5,7 +5,7 @@
  *
  * - **仅记录**（reference）：只在数据库里记一条指向你原文件的信息。
  *   移动或改名原文件后，这里就找不到它了。不占额外磁盘空间。
- * - **复制到附件目录**（copied）：把文件复制一份到 AiTodo 的数据目录里统一管理。
+ * - **复制到附件目录**（copied）：把文件复制一份到 Lumen 的数据目录里统一管理。
  *   删除任务时删的是这份副本，<strong>你的原文件始终不受影响</strong>。
  *
  * 界面默认选「仅记录」，因为这是最不会让用户意外丢失或重复占用空间的选项；
@@ -100,7 +100,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
   const remove = async (a: Attachment) => {
     const msg =
       a.storageMode === 'copied'
-        ? `移除附件「${a.fileName}」？\n\n会删除 AiTodo 附件目录中的副本，你的原文件不受影响。`
+        ? `移除附件「${a.fileName}」？\n\n会删除 Lumen 附件目录中的副本，你的原文件不受影响。`
         : `移除附件「${a.fileName}」？\n\n只会删除这条记录，你的原文件不会被删除。`
     if (!window.confirm(msg)) return
     try {
@@ -196,7 +196,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
 
       <p className="remnew__hint" style={{ color: 'var(--c-text-3)' }}>
         删除任务或移除附件都<strong>不会删除你的原文件</strong>；「复制到附件目录」模式下的
-        副本位于 AiTodo 数据目录内，清理它同样不影响原文件。
+        副本位于 Lumen 数据目录内，清理它同样不影响原文件。
       </p>
 
       {error && (

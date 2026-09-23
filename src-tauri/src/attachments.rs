@@ -344,7 +344,7 @@ pub async fn attachment_reveal(
             crate::error::ErrorCode::Io,
             format!("附件文件已不存在：{p}"),
         )
-        .with_hint("文件可能已被移动或删除。若这是引用模式的附件，原件不在 AiTodo 管理范围内"));
+        .with_hint("文件可能已被移动或删除。若这是引用模式的附件，原件不在 Lumen 管理范围内"));
     }
     Ok(path.to_string_lossy().to_string())
 }
@@ -475,7 +475,7 @@ mod tests {
     /// 短文件名（8.3）、符号链接都会让"看起来在目录内"与"实际在目录内"不一致。
     #[test]
     fn canonicalize_actually_blocks_traversal() {
-        let base = std::env::temp_dir().join(format!("aitodo-att-{}", uuid::Uuid::now_v7()));
+        let base = std::env::temp_dir().join(format!("lumen-att-{}", uuid::Uuid::now_v7()));
         let attachments = base.join("attachments");
         std::fs::create_dir_all(&attachments).unwrap();
 
@@ -518,7 +518,7 @@ mod tests {
     /// 这是备份说明里"核对副本是否与原件一致"的前提。
     #[test]
     fn file_hash_is_stable_and_content_sensitive() {
-        let dir = std::env::temp_dir().join(format!("aitodo-hash-{}", uuid::Uuid::now_v7()));
+        let dir = std::env::temp_dir().join(format!("lumen-hash-{}", uuid::Uuid::now_v7()));
         std::fs::create_dir_all(&dir).unwrap();
 
         let f1 = dir.join("a.txt");

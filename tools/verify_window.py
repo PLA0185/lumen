@@ -1,4 +1,4 @@
-﻿"""窗口配置注入与检查（阶段 4 实机验收用）。
+"""窗口配置注入与检查（阶段 4 实机验收用）。
 
 用于在没有界面的情况下模拟"用户上次把界面设置得很隐蔽"，
 验证启动时的安全恢复是否真的生效（任务书 §8 的安全底线：
@@ -18,7 +18,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-DB = Path(os.environ["APPDATA"]) / "com.pla0185.aitodo" / "aitodo.db"
+DB = Path(os.environ["APPDATA"]) / "com.pla0185.lumen" / "lumen.db"
 KEY = "window_config"
 
 DEFAULT = {

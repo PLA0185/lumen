@@ -1,4 +1,4 @@
-# AiTodo —— AI 智能 Todo 桌面软件
+# Lumen —— Lumen —— 本地优先的智能任务管理
 
 本地优先的个人任务管理软件，Windows 桌面应用。支持复杂重复规则、日历与提醒、
 悬浮今日小窗、可选的大模型辅助（整理 / 拆解 / 排程 / 复盘），以及完整备份与恢复。
@@ -19,12 +19,12 @@
 
 ### 安装
 
-从 Release 页面下载 `AiTodo_<版本>_x64-setup.exe` 并运行。
+从 Release 页面下载 `Lumen_<版本>_x64-setup.exe` 并运行。
 
-- 安装到当前用户目录（`%LOCALAPPDATA%\AiTodo`），**不需要管理员权限**。
+- 安装到当前用户目录（`%LOCALAPPDATA%\Lumen`），**不需要管理员权限**。
 - 卸载时安装程序会询问是否**同时删除你的数据**：
   - 不勾选（默认）＝ 保留任务数据，重新安装后仍在；
-  - 勾选 ＝ 删除 `%APPDATA%\com.pla0185.aitodo` 下的全部数据（含备份与附件副本）。
+  - 勾选 ＝ 删除 `%APPDATA%\com.pla0185.lumen` 下的全部数据（含备份与附件副本）。
 - 更新版本时**永远不会**删除数据。
 
 ### 首次运行
@@ -41,9 +41,9 @@
 所有数据都在本机，路径可在「设置 → 数据与备份」中一键打开。
 
 ```
-%APPDATA%\com.pla0185.aitodo\
-├── aitodo.db            主数据库（SQLite）
-├── aitodo.db-wal        写前日志（正常现象，勿删）
+%APPDATA%\com.pla0185.lumen\
+├── lumen.db            主数据库（SQLite）
+├── lumen.db-wal        写前日志（正常现象，勿删）
 ├── backups\             备份目录
 │   ├── auto-*.json      自动备份（按保留份数自动清理）
 │   ├── manual-*.json    手动导出
@@ -293,7 +293,7 @@ A：默认缩到托盘（可在「设置 → 窗口」改为"退出程序"）。
 
 **Q：卸载后数据还在吗？**
 A：默认保留（卸载程序会询问，默认不勾选删除）。数据在
-`%APPDATA%\com.pla0185.aitodo`。
+`%APPDATA%\com.pla0185.lumen`。
 
 **Q：断网了还能用吗？**
 A：能。除 AI 功能外，任务管理、重复规则、提醒、统计、备份全部可离线使用。
@@ -304,7 +304,7 @@ A：不会。所有 AI 输出都必须经过你的差异预览确认才会写入
 
 **Q：提醒为什么没响？**
 A：请依次检查：① 设置 → 提醒里是否处于"已暂停"；② Windows 通知设置是否允许
-AiTodo 发送通知；③ 提醒是否因超出补发窗口被标记为"已过期"（设置页可见）。
+Lumen 发送通知；③ 提醒是否因超出补发窗口被标记为"已过期"（设置页可见）。
 
 ---
 
@@ -329,7 +329,7 @@ pnpm tauri build        # 构建安装包
 产物路径：
 
 ```
-src-tauri/target/release/bundle/nsis/AiTodo_<版本>_x64-setup.exe
+src-tauri/target/release/bundle/nsis/Lumen_<版本>_x64-setup.exe
 ```
 
 ### 测试

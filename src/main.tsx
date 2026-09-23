@@ -5,22 +5,22 @@ import { FloatingToday, QuickAddWindow } from './components/FloatingToday'
 import './styles.css'
 
 // 主题：读取用户上次选择（默认"跟随系统"，由 CSS 的 prefers-color-scheme 处理）
-const savedTheme = localStorage.getItem('aitodo.theme')
+const savedTheme = localStorage.getItem('lumen.theme')
 if (savedTheme === 'light' || savedTheme === 'dark') {
   document.documentElement.dataset.theme = savedTheme
 }
 
 // 字体与缩放（§3）：在设置页可调，这里应用已保存的值
-const savedScale = localStorage.getItem('aitodo.uiScale')
+const savedScale = localStorage.getItem('lumen.uiScale')
 if (savedScale) {
   document.documentElement.style.setProperty('--ui-scale', savedScale)
 }
-const savedFontSize = localStorage.getItem('aitodo.fontSize')
+const savedFontSize = localStorage.getItem('lumen.fontSize')
 if (savedFontSize) {
   document.documentElement.style.setProperty('--font-size-base', savedFontSize)
 }
 // 动画开关（§3「动画应轻且可关闭」）
-if (localStorage.getItem('aitodo.motion') === 'off') {
+if (localStorage.getItem('lumen.motion') === 'off') {
   document.documentElement.dataset.motion = 'off'
 }
 

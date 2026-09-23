@@ -152,7 +152,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
     throw new IpcError(
       'internal',
-      '当前不在 AiTodo 桌面程序内运行',
+      '当前不在 Lumen 桌面程序内运行',
       '请通过桌面应用打开，而不是在浏览器中访问页面',
       null,
     )

@@ -1,4 +1,4 @@
-﻿"""数据库结构验证脚本（阶段 1 验收用）。
+"""数据库结构验证脚本（阶段 1 验收用）。
 
 用途：独立于应用进程，直接检查 SQLite 文件，确认迁移真实执行、
 约束真实生效。不依赖任何第三方库（仅标准库 sqlite3）。
@@ -11,7 +11,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
-DEFAULT_DB = Path(os.environ["APPDATA"]) / "com.pla0185.aitodo" / "aitodo.db"
+DEFAULT_DB = Path(os.environ["APPDATA"]) / "com.pla0185.lumen" / "lumen.db"
 
 # 迁移必须创建的表（与 migrations/ 一一对应）
 EXPECTED_TABLES = [

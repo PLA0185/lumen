@@ -1,9 +1,9 @@
 {
-  "name": "aitodo",
+  "name": "lumen",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "AI 智能 Todo 桌面软件（本地优先，可选 AI 辅助）",
+  "description": "Lumen —— 本地优先的智能任务管理（本地优先，可选 AI 辅助）",
   "license": "MIT",
   "engines": {
     "node": ">=20.19"

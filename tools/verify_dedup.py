@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DB = Path(os.environ["APPDATA"]) / "com.pla0185.aitodo" / "aitodo.db"
+DB = Path(os.environ["APPDATA"]) / "com.pla0185.lumen" / "lumen.db"
 MARK = "AITODO-DEDUP"
 
 

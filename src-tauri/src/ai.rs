@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, AppResult};
 
 /// 密钥在凭据管理器中的服务名
-const KEYRING_SERVICE: &str = "com.pla0185.aitodo";
+const KEYRING_SERVICE: &str = "com.pla0185.lumen";
 
 /// 连接建立的超时（秒）。与"读取超时"分开设置：
 /// 连接慢通常是网络问题，而读取慢可能只是模型在长时间推理，
@@ -130,7 +130,7 @@ impl Provider {
                  部分模型（Covered Models）保留 30 天且不适用零数据保留。"
             }
             Self::Custom => {
-                "自定义服务的隐私政策由其提供方决定，AiTodo 无法代为说明。\
+                "自定义服务的隐私政策由其提供方决定，Lumen 无法代为说明。\
                  请自行确认该服务如何处理你的数据。"
             }
         }
@@ -354,7 +354,7 @@ fn build_client(timeout_seconds: u64) -> AppResult<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(Duration::from_secs(timeout_seconds.clamp(5, 600)))
-        .user_agent("AiTodo/0.1")
+        .user_agent("Lumen/0.1")
         // 关掉自动重定向：避免密钥被带到其它域
         .redirect(reqwest::redirect::Policy::none())
         .build()

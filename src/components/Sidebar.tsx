@@ -113,7 +113,7 @@ export function Sidebar({ current, onSelect, counts, version }: SidebarProps) {
         <span className="sidebar__logo" aria-hidden="true">
           A
         </span>
-        <span className="sidebar__title">AiTodo</span>
+        <span className="sidebar__title">Lumen</span>
         {version && <span className="sidebar__version">v{version}</span>}
       </div>
 
