@@ -34,6 +34,18 @@ pub struct AppState {
     /// §4.3 要求"重启、休眠唤醒后重算待提醒项，避免漏发或重复轰炸"，
     /// 这个窗口就是"漏发"与"轰炸"之间的平衡点，且可由用户调整。
     pub missed_grace_minutes: std::sync::atomic::AtomicI64,
+
+    /// 窗口配置的内存缓存。
+    ///
+    /// 为什么需要缓存而不是每次查数据库：托盘菜单的事件处理器是**同步**的，
+    /// 而查库需要 async。若在那里调用 `block_on`，一旦外层已处于
+    /// Tauri 的异步运行时中（例如 setup 阶段），就会造成 tokio 运行时
+    /// 嵌套并直接 panic——这是实测踩到的崩溃。
+    /// 因此配置以内存为准、数据库只作持久化，事件处理器只读内存。
+    pub window_config: std::sync::RwLock<crate::window_mgr::WindowConfig>,
+
+    /// 今日未完成数（托盘菜单显示用），同样为避免同步上下文查库而缓存。
+    pub today_open_count: std::sync::atomic::AtomicI64,
 }
 
 impl AppState {
@@ -46,6 +58,24 @@ impl AppState {
             // 默认 6 小时：足以覆盖"关机一晚后开机"的常见场景，
             // 又不至于把上周的提醒全部倒出来。
             missed_grace_minutes: std::sync::atomic::AtomicI64::new(6 * 60),
+            window_config: std::sync::RwLock::new(crate::window_mgr::WindowConfig::default()),
+            // -1 表示"尚未统计"，托盘菜单据此显示"今日概览"而不是假的 0
+            today_open_count: std::sync::atomic::AtomicI64::new(-1),
+        }
+    }
+
+    /// 读取窗口配置的内存副本（同步、不会 panic）
+    pub fn cfg(&self) -> crate::window_mgr::WindowConfig {
+        self.window_config
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// 更新窗口配置的内存副本
+    pub fn set_cfg(&self, cfg: &crate::window_mgr::WindowConfig) {
+        if let Ok(mut w) = self.window_config.write() {
+            *w = cfg.clone();
         }
     }
 }
