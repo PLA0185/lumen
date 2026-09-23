@@ -1,0 +1,119 @@
+[package]
+name = "aitodo"
+version = "0.1.0"
+description = "AI 智能 Todo 桌面软件（本地优先，可选 AI 辅助）"
+authors = ["AiTodo"]
+edition = "2021"
+# MSRV 由依赖中最严格者决定：sqlx 0.9.0 要求 Rust 1.94.0，
+# reqwest 0.13 / keyring 4 分别要求 1.85 / 1.88。此处不得低于 1.94。
+rust-version = "1.94"
+license = "MIT"
+repository = ""
+default-run = "aitodo"
+
+[lib]
+# Tauri 2 约定：业务逻辑放 lib，main.rs 只做入口
+name = "aitodo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [
+    "tray-icon",           # 系统托盘（任务书 §8.6）
+    "image-png",           # 托盘/窗口图标解码
+    "devtools",            # 调试期可用；release 下由 tauri.conf 控制
+] }
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"       # Windows 系统通知（§4.3）
+tauri-plugin-global-shortcut = "2"    # 全局快捷键（§4.4 / §8.2 恢复入口）
+tauri-plugin-autostart = "2"          # 开机自启（§8.6）
+# 单实例互斥（§10 要求单实例或明确多实例策略）。
+# 核实：该插件**没有 npm 包**，纯 Rust 侧注册即可，前端不需要对应依赖。
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"       # 窗口位置尺寸状态（§8）
+tauri-plugin-store = "2"              # 前端侧轻量键值设置
+
+# ---------- 序列化 ----------
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ---------- 日志 ----------
+# 直接依赖 log：tauri-plugin-log 提供了日志后端（文件+控制台）与
+# 初始化（Builder），但 `log::info!` 等宏来自 log crate 本身，必须显式声明。
+log = "0.4"
+
+# ---------- 异步运行时 ----------
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# ---------- 数据库（§2.4 迁移机制 / §9 本地优先 SQLite） ----------
+# 核实：sqlx 0.9 的 SQLite 驱动 feature 名仍为 `sqlite`；`default` 会带上
+# any/macros/derive 等当前用不到的驱动，故显式关闭 default-features。
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+    "chrono",
+    "uuid",
+    "json",
+] }
+
+# ---------- 日期时间与时区（§4.3 / §5 重复规则跨时区与 DST） ----------
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = { version = "0.10", features = ["serde"] }
+
+# ---------- 其他 ----------
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+thiserror = "2"
+anyhow = "1"
+# 凭据安全存储（§6 密钥优先使用 Windows 凭据管理器）。
+# 核实：keyring 4.2.0 仅暴露 `cli` / `default` / `v1` 三个 feature——
+# 不存在 `windows-native`，Windows 后端默认编译进来，无需额外 feature。
+keyring = "4"
+# HTTP 客户端：AI 适配层（§6）
+#
+# 已核实的 feature 事实（crates.io reqwest 0.13.5 全量 feature 列表）：
+#  - 不存在 `rustls-tls`，也不存在 `webpki-roots`（后者在 0.11/0.12 时期
+#    名为 `rustls-tls-webpki-roots`，0.13 已整体移除该系列）。
+#  - `rustls` 会带出 `rustls-platform-verifier`，走系统证书库，
+#    因此不需要、也没有可用的 webpki-roots 开关。
+#  - `default` = default-tls + charset + http2 + system-proxy。
+#    我们关掉了 default-features，故必须显式补回这几项：
+#      * system-proxy  —— 否则走系统代理的用户会静默直连失败
+#                         （国内访问境外 AI 接口场景很常见）
+#      * http2         —— 多数 AI 服务默认启用
+#      * charset       —— 响应字符集处理
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls",
+    "system-proxy",
+    "http2",
+    "charset",
+    "stream",
+    "gzip",
+] }
+futures-util = "0.3"
+# 正则：自然语言日期解析辅助（§4.4）
+regex = "1"
+# 文件哈希与校验：备份完整性（§9 "附带版本号和校验"）
+sha2 = "0.10"
+hex = "0.4"
+
+[features]
+# 由 tauri.conf.json 的 withGlobalTauri 控制；此处仅保留 custom-protocol 契约
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

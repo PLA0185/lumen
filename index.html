@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      CSP 刻意只写在 tauri.conf.json 的 app.security.csp 中，不在这里重复声明。
+      原因：Tauri 在 Windows 上会注入它自己需要的 IPC 来源，两处同时声明容易
+      互相覆盖导致 IPC 全部被拦截（表现为界面正常但所有操作静默失效）。
+      安全策略仍以 tauri.conf.json 为准（任务书 §10「Web 内容与本地特权隔离」）。
+    -->
+    <title>AiTodo</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

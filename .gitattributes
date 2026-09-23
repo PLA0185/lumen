@@ -1,0 +1,54 @@
+# 行尾统一策略（Windows 项目，跨平台协作必须显式声明）
+#
+# 背景：仓库在 Windows 上开发。若不声明，Git 会在不同机器上产生
+# 全文件 diff（CRLF ↔ LF 互转），使 review 与回退都变得不可靠。
+
+# 默认：交给 Git 自动判断文本文件，检出时用平台原生行尾
+* text=auto
+
+# 源码与配置一律用 LF 存储，检出时按平台转换
+*.rs        text
+*.toml      text
+*.json      text
+*.ts        text
+*.tsx       text
+*.css       text
+*.html      text
+*.md        text
+*.yml       text
+*.yaml      text
+*.mjs       text
+*.cjs       text
+*.sql       text
+*.nsi       text
+
+# Windows 专属脚本保持 CRLF，避免 cmd/PowerShell 解析异常
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# 二进制文件：禁止任何行尾转换与 diff
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.webp      binary
+*.ico       binary
+*.icns      binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+*.pdf       binary
+*.zip       binary
+*.db        binary
+*.exe       binary
+*.dll       binary
+
+# 锁文件在合并时不做 union，避免产生损坏的锁
+pnpm-lock.yaml  -diff
+Cargo.lock      -diff
+
+# 让 GitHub 正确识别语言统计
+src-tauri/Cargo.lock  linguist-generated
+pnpm-lock.yaml        linguist-generated

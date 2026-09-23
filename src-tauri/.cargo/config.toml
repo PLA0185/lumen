@@ -1,0 +1,11 @@
+[build]
+# 默认链接策略，不做额外 rustflags 覆盖。
+# 说明：这里刻意不设置 `+crt-static`。静态 CRT 对 Tauri/WebView2 并非必要，
+# 却会改变链接行为并增加不可预见的风险（任务书 §10 要求稳定性优先）。
+# 如需发布期体积优化，应通过 Cargo profile 而非 rustflags 完成。
+
+[alias]
+# 常用别名，降低协作成本
+t = "test"
+ck = "check"
+rr = "run --release"

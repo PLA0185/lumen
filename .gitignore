@@ -1,0 +1,85 @@
+# ---------- 依赖与构建产物 ----------
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+src-tauri/target/
+src-tauri/gen/
+
+# ---------- 测试与覆盖率 ----------
+coverage/
+*.lcov
+test-results/
+playwright-report/
+.playwright/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 日志 ----------
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# ---------- 【严禁提交】密钥与凭据 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+credentials.json
+secrets.json
+client_secret*.json
+updater.key
+updater.key.pub
+.tauri-signing/
+
+# ---------- 【严禁提交】用户数据与备份 ----------
+# 应用运行期产生的真实任务数据、数据库、日志、导出与备份
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+data/
+userdata/
+backups/
+exports/
+*.aitodo-backup
+*.aitodo-backup.zip
+
+# ---------- 【严禁提交】调研抓取的原始镜像（体积大且非源码） ----------
+.research/
+# 调研过程中落地的临时抓取文件
+_research/
+.research-docs/
+*.research-raw.html
+
+# ---------- 【严禁提交】本地临时目录 ----------
+tmp/
+temp/
+.cache/
+*.tmp
+
+# ---------- 例外：必须提交的锁文件与模板（显式反向声明，防止误伤） ----------
+!pnpm-lock.yaml
+!package-lock.json
+!src-tauri/Cargo.lock
+!*.example
+!*.template

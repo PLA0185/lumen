@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AiTodo",
+  "version": "0.1.0",
+  "identifier": "com.pla0185.aitodo",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "AiTodo",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 940,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "AiTodo",
+    "copyright": "Copyright © 2026 AiTodo",
+    "category": "Productivity",
+    "shortDescription": "AI 智能 Todo 桌面软件",
+    "longDescription": "本地优先的个人任务管理软件，支持复杂重复规则、提醒、悬浮今日小窗，可选接入大模型辅助整理、拆解、排程与复盘。",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": false
+  }
+}

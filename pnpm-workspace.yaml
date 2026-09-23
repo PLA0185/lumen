@@ -1,0 +1,10 @@
+# pnpm 12 的构建脚本白名单。pnpm 默认拒绝执行依赖的 postinstall 脚本
+# 以防供应链攻击，因此必须显式批准（等价于 `pnpm approve-builds`）。
+#
+# 为什么只批准这两个：
+#   - esbuild         Vite 的打包器，postinstall 用于落地平台二进制，构建必需
+#   - @tauri-apps/cli Tauri CLI，postinstall 用于准备平台可执行文件，构建必需
+# 其余依赖一律保持禁止执行脚本。
+allowBuilds:
+  esbuild: true
+  '@tauri-apps/cli': true
