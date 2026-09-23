@@ -20,6 +20,7 @@
 //! 归属由前端按用户本地时区计算后把 UTC 边界传入。这样避免了在数据层
 //! 硬编码某一时区。
 
+pub mod ai;
 pub mod attachments;
 pub mod backup;
 pub mod commands;
@@ -332,6 +333,13 @@ pub fn run() {
             window_mgr::window_floating_state,
             window_mgr::window_floating_reset_position,
             window_mgr::app_quit,
+            // ---- AI 提供商适配（§6）----
+            ai::ai_get_config,
+            ai::ai_set_config,
+            ai::ai_test_connection,
+            ai::ai_list_models,
+            ai::ai_clear_key,
+            ai::ai_status,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");
