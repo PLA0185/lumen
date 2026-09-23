@@ -134,6 +134,33 @@ export function UpdatePanel({ currentVersion }: { currentVersion: string | undef
           <span className="selectable">{error}</span>
         </div>
       )}
+
+      {/* 手动退路：无论上面成功与否都能用。
+          网络到不了 GitHub、或自动安装没生效时，这是唯一确定能升级的路径。 */}
+      <div className="setactions">
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          title={`用浏览器打开 ${up.RELEASES_URL}`}
+          onClick={() =>
+            void (async () => {
+              try {
+                await up.openReleasesPage()
+              } catch (e) {
+                setError(
+                  `打不开浏览器，请手动访问：${up.RELEASES_URL}（${e instanceof Error ? e.message : String(e)}）`,
+                )
+                setPhase('failed')
+              }
+            })()
+          }
+        >
+          手动下载安装包
+        </button>
+        <span className="setgroup__hint" style={{ margin: 0 }}>
+          自动更新失败时走这里，数据不受影响
+        </span>
+      </div>
     </div>
   )
 }

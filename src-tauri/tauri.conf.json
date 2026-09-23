@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Lumen",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "identifier": "com.pla0185.lumen",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -60,7 +60,7 @@
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3MzdERTAzOEFCQUU1RjkKUldUNTVicUtBOTQzTjRibXFaT3Ara2ZKSXZwNkhXTEZqWnhhQXFyQWhtMnZVWTQ4UW5IRllmT20K",
       "windows": {
-        "installMode": "passive"
+        "installMode": "quiet"
       }
     }
   }

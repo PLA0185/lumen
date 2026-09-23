@@ -40,18 +40,42 @@ export interface UpdateProgress {
 /** 底层 Update 对象的句柄类型（保持插件类型不泄漏到组件里） */
 export type UpdateHandle = Awaited<ReturnType<typeof import('@tauri-apps/plugin-updater')['check']>>
 
+/** 更新来源页面（打不开更新接口时给用户的手动退路） */
+export const RELEASES_URL = 'https://github.com/PLA0185/lumen/releases/latest'
+
+/** 用系统默认浏览器打开 Releases 页面 */
+export async function openReleasesPage(): Promise<void> {
+  const { openUrl } = await import('@tauri-apps/plugin-opener')
+  await openUrl(RELEASES_URL)
+}
+
 function inTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-/** 把插件抛出的异常翻译成人能看懂的说明 */
+/**
+ * 把插件抛出的异常翻译成人能看懂的说明。
+ *
+ * 之前这里直接把插件的英文原文抛给用户，于是界面上出现
+ * `Could not fetch a valid release JSON from the remote` —— 既没说清是网络问题
+ * 还是文件坏了，也没告诉用户下一步该做什么。用户实测就撞上了这条。
+ */
 function readable(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e)
   if (/InsecureTransportProtocol/i.test(raw)) {
     return '更新地址必须使用 HTTPS，当前配置被拒绝'
   }
+  // 插件在"请求失败"和"返回内容不是合法清单"两种情况用的是同一句话，
+  // 实际绝大多数是网络到不了 GitHub，因此按最常见原因给建议。
+  if (/valid release JSON|release JSON from the remote/i.test(raw)) {
+    return (
+      `没能从 GitHub 取到更新信息（${raw}）。` +
+      '常见原因是网络到不了 GitHub，或对方临时限流；稍后重试通常就好。' +
+      '如果一直不行，可以用下面的「手动下载安装包」按钮。'
+    )
+  }
   if (/dns|connect|timed? ?out|network|error sending request/i.test(raw)) {
-    return `无法连接更新服务器（${raw}）。若是网络原因，可稍后重试，或直接到 GitHub Releases 手动下载安装包。`
+    return `无法连接更新服务器（${raw}）。若是网络原因，可稍后重试，或到 GitHub Releases 手动下载安装包。`
   }
   if (/signature|verify|minisign/i.test(raw)) {
     return `更新包签名校验未通过，已拒绝安装（${raw}）。这通常意味着文件被篡改或与当前版本不匹配。`
