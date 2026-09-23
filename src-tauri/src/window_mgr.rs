@@ -28,7 +28,7 @@ use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewUrl,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
 };
 
@@ -42,9 +42,18 @@ pub const FLOATING: &str = "floating";
 pub const QUICK_ADD: &str = "quick-add";
 
 /// 悬浮窗默认宽度（紧凑但不拥挤）
-const FLOATING_W: f64 = 300.0;
+const FLOATING_W: f64 = 320.0;
 /// 悬浮窗默认高度
-const FLOATING_H: f64 = 380.0;
+const FLOATING_H: f64 = 460.0;
+
+/// 悬浮窗尺寸的取值边界。
+///
+/// 放宽到"能放下完整编辑表单"是为了让悬浮窗也能改任务详情；
+/// 上限则防止用户误拖出一个比屏幕还大的窗口后找不回内容。
+const FLOATING_W_MIN: f64 = 260.0;
+const FLOATING_W_MAX: f64 = 1400.0;
+const FLOATING_H_MIN: f64 = 200.0;
+const FLOATING_H_MAX: f64 = 1800.0;
 
 /// 快速添加窗尺寸（够放下一行输入与提示）
 const QUICK_W: f64 = 520.0;
@@ -54,8 +63,12 @@ const QUICK_H: f64 = 120.0;
 pub const OPACITY_MIN: f64 = 0.25;
 
 /// 窗口配置（持久化到数据库的 settings 表）
+///
+/// **容器级 `serde(default)` 是必须的**：以后新增配置项时，老用户数据库里
+/// 存的 JSON 里没有这个键，若不加 default，整份配置会解析失败并整体回落到
+/// 默认值——用户此前调好的置顶、穿透、快捷键会一次性被抹掉。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct WindowConfig {
     // ---------------- 主窗口 ----------------
     /// 主窗口是否始终置顶（§8.1）——与"任务置顶"无关，界面必须区分
@@ -79,6 +92,9 @@ pub struct WindowConfig {
     /// 悬浮窗位置（物理像素）；None 表示右下角默认位置
     pub floating_x: Option<f64>,
     pub floating_y: Option<f64>,
+    /// 悬浮窗尺寸（逻辑像素）：用户拖动右下角把手调节后持久化
+    pub floating_width: f64,
+    pub floating_height: f64,
 
     // ---------------- 托盘与快捷键 ----------------
     /// 是否启用托盘图标（§8.6）
@@ -107,6 +123,8 @@ impl Default for WindowConfig {
             floating_show_in_taskbar: false,
             floating_x: None,
             floating_y: None,
+            floating_width: FLOATING_W,
+            floating_height: FLOATING_H,
 
             tray_enabled: true,
             shortcut_enabled: true,
@@ -125,6 +143,16 @@ impl WindowConfig {
             self.floating_opacity = 1.0;
         }
         self.floating_opacity = self.floating_opacity.clamp(OPACITY_MIN, 1.0);
+
+        // 尺寸同样要收敛：0 或负数会让窗口"消失"，超大值会让内容拖出屏幕
+        if !self.floating_width.is_finite() {
+            self.floating_width = FLOATING_W;
+        }
+        if !self.floating_height.is_finite() {
+            self.floating_height = FLOATING_H;
+        }
+        self.floating_width = self.floating_width.clamp(FLOATING_W_MIN, FLOATING_W_MAX);
+        self.floating_height = self.floating_height.clamp(FLOATING_H_MIN, FLOATING_H_MAX);
 
         if self.close_action != "tray" && self.close_action != "quit" {
             self.close_action = "tray".to_string();
@@ -188,10 +216,13 @@ pub fn ensure_floating(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<()>
         return Ok(());
     }
 
+    let floating_w = cfg.floating_width.clamp(FLOATING_W_MIN, FLOATING_W_MAX);
+    let floating_h = cfg.floating_height.clamp(FLOATING_H_MIN, FLOATING_H_MAX);
     let mut builder = WebviewWindowBuilder::new(app, FLOATING, WebviewUrl::App("index.html".into()))
         .title("Lumen 今日")
-        .inner_size(FLOATING_W, FLOATING_H)
-        .min_inner_size(240.0, 200.0)
+        .inner_size(floating_w, floating_h)
+        // 最小尺寸与后端校验边界保持一致，避免"拖到很小后内容挤成一团"
+        .min_inner_size(FLOATING_W_MIN, FLOATING_H_MIN)
         .resizable(true)
         .decorations(false)
         // 悬浮窗必须是透明的，否则桌面组件会带一块不透明底色（§8.4）
@@ -207,8 +238,8 @@ pub fn ensure_floating(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<()>
     } else if let Ok(Some(mon)) = app.primary_monitor() {
         let size = mon.size();
         let scale = mon.scale_factor();
-        let x = (size.width as f64 / scale) - FLOATING_W - 24.0;
-        let y = (size.height as f64 / scale) - FLOATING_H - 80.0;
+        let x = (size.width as f64 / scale) - floating_w - 24.0;
+        let y = (size.height as f64 / scale) - floating_h - 80.0;
         builder = builder.position(x.max(0.0), y.max(0.0));
     }
 
@@ -566,6 +597,51 @@ pub async fn window_floating_state(
         "clickThrough": cfg.floating_click_through,
         "alwaysOnTop": cfg.floating_always_on_top,
         "opacity": cfg.floating_opacity,
+        "width": cfg.floating_width,
+        "height": cfg.floating_height,
+    }))
+}
+
+/// 设置悬浮窗不透明度（悬浮窗内的滑块用，拖动时高频调用）。
+///
+/// 只写配置并广播事件，不重建窗口——重建会让用户看到闪烁。
+#[tauri::command]
+pub async fn window_set_floating_opacity(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    opacity: f64,
+) -> crate::error::AppResult<f64> {
+    let mut cfg = load_config(&state).await?;
+    cfg.floating_opacity = if opacity.is_finite() { opacity } else { 1.0 };
+    cfg.normalize();
+    save_config(&state, &cfg).await?;
+    apply_floating(&app, &cfg);
+    Ok(cfg.floating_opacity)
+}
+
+/// 设置悬浮窗尺寸（拖动右下角把手结束后调用）。
+#[tauri::command]
+pub async fn window_set_floating_size(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    width: f64,
+    height: f64,
+) -> crate::error::AppResult<serde_json::Value> {
+    let mut cfg = load_config(&state).await?;
+    cfg.floating_width = if width.is_finite() { width } else { FLOATING_W };
+    cfg.floating_height = if height.is_finite() { height } else { FLOATING_H };
+    cfg.normalize();
+    save_config(&state, &cfg).await?;
+
+    // 立刻把规范化后的尺寸应用到真实窗口：
+    // 用户可能拖到超出上限（或小于下限），窗口必须跟配置一致，
+    // 否则会出现"界面显示的尺寸"与"下次启动的尺寸"不一致的怪现象。
+    if let Some(w) = app.get_webview_window(FLOATING) {
+        let _ = w.set_size(LogicalSize::new(cfg.floating_width, cfg.floating_height));
+    }
+    Ok(serde_json::json!({
+        "width": cfg.floating_width,
+        "height": cfg.floating_height,
     }))
 }
 
@@ -578,13 +654,21 @@ pub async fn window_floating_reset_position(app: AppHandle) -> crate::error::App
     if let Ok(Some(mon)) = app.primary_monitor() {
         let size = mon.size();
         let scale = mon.scale_factor();
-        let x = (size.width as f64 / scale) - FLOATING_W - 24.0;
-        let y = (size.height as f64 / scale) - FLOATING_H - 80.0;
+        // 用配置里的尺寸算落点，否则调大窗口后会有一部分跑到屏幕外
+        let (w_now, h_now) = match app.try_state::<AppState>() {
+            Some(state) => match load_config(&state).await {
+                Ok(cfg) => (cfg.floating_width, cfg.floating_height),
+                Err(_) => (FLOATING_W, FLOATING_H),
+            },
+            None => (FLOATING_W, FLOATING_H),
+        };
+        let x = (size.width as f64 / scale) - w_now - 24.0;
+        let y = (size.height as f64 / scale) - h_now - 80.0;
         w.set_position(LogicalPosition::new(x.max(0.0), y.max(0.0)))
             .map_err(|e| {
                 crate::error::AppError::internal(format!("移动悬浮窗失败：{e}"))
             })?;
-        w.set_size(LogicalSize::new(FLOATING_W, FLOATING_H))
+        w.set_size(LogicalSize::new(w_now, h_now))
             .map_err(|e| crate::error::AppError::internal(format!("调整悬浮窗尺寸失败：{e}")))?;
         let _ = w.show();
         let _ = w.set_ignore_cursor_events(false);

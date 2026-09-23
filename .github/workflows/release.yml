@@ -1,0 +1,63 @@
+name: Release
+
+# 打 tag（形如 v0.2.0）时自动构建 Windows 安装包并发布 Release。
+#
+# 关键点（官方文档里没写清、但漏了就会导致自动更新失效的地方）：
+# - `createUpdaterArtifacts: true` 让构建产出 `*-setup.exe.sig` 签名文件；
+# - action 的参数名是 **`uploadUpdaterJson`**，不是 `includeUpdaterJson`；
+# - `uploadUpdaterSignatures` 默认 true，负责把 `.sig` 一起传上去；
+# - 少了 `latest.json`（或其中任何一个平台的 url/signature），
+#   updater 插件会在比对版本号**之前**就解析失败。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Rust 构建产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 私钥内容存放在仓库 Secrets 中；签名无法关闭，
+          # 缺了它构建会直接失败（而不是产出"不能更新的更新包"）。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Lumen ${{ github.ref_name }}'
+          releaseBody: '安装包与自动更新所需的 latest.json、签名文件见下方 Assets。'
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          uploadUpdaterSignatures: true
+          updaterJsonPreferNsis: true

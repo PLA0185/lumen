@@ -83,3 +83,6 @@ temp/
 !src-tauri/Cargo.lock
 !*.example
 !*.template
+
+# 实机验收脚本的 Python 缓存
+tools/__pycache__/

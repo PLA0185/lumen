@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 快速添加表单（§4.4）。
  *
  * 核心要求：自然语言解析的结果**必须在保存前可见可改**。
@@ -12,6 +12,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { parseQuickInput } from '../lib/nlp'
 import { combineDateTime } from '../lib/datetime'
+import * as bus from '../lib/bus'
 import type { PeriodType, Task } from '../lib/types'
 
 interface QuickAddProps {
@@ -90,6 +91,8 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
         tagIds,
       })
       onCreated(task)
+      // 通知悬浮窗/快速添加窗等其他窗口刷新
+      void bus.notifyTasksChanged()
       reset()
       inputRef.current?.focus()
     } catch (e) {

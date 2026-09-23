@@ -40,6 +40,10 @@ export const CMD = {
   taskPurge: 'task_purge',
   taskPurgeAllDeleted: 'task_purge_all_deleted',
   taskBulk: 'task_bulk',
+  taskDuplicate: 'task_duplicate',
+  taskReorder: 'task_reorder',
+  taskReport: 'task_report',
+  exportPdf: 'export_pdf',
   todayOverview: 'today_overview',
   setRemindersPaused: 'set_reminders_paused',
   tasksInRange: 'tasks_in_range',
@@ -181,6 +185,55 @@ export const purgeAllDeleted = (): Promise<PurgeResult> =>
 export const bulkTasks = (input: BulkActionInput): Promise<number> =>
   call<number>(CMD.taskBulk, { input })
 
+/** 复制任务的结果 */
+export interface DuplicateResult {
+  newTaskId: string
+  title: string
+  copiedTags: number
+  copiedSubtasks: number
+  copiedReminders: number
+  /** 未一起复制的附件数量（>0 时界面应提示） */
+  skippedAttachments: number
+  note: string
+}
+
+/**
+ * 复制任务。
+ *
+ * 副本状态为未完成、完成时间清空（复制是为了"再做一遍"）；
+ * 标签、子任务、提醒会复制，但**附件不会**——界面据 `skippedAttachments`
+ * 提示用户，而不是静默丢掉。
+ */
+export const duplicateTask = (id: string): Promise<DuplicateResult> =>
+  call<DuplicateResult>(CMD.taskDuplicate, { id })
+
+/**
+ * 手动排序：把任务移到 `beforeId` 之前；`beforeId` 为 null 表示移到末尾。
+ *
+ * 后端用中点插入法，只更新被移动的那一行，因此上千条任务也不会卡。
+ */
+export const reorderTask = (movedId: string, beforeId?: string | null): Promise<number> =>
+  call<number>(CMD.taskReorder, { input: { movedId, beforeId: beforeId ?? null } })
+
+/** 打印 / PDF 报告的一行（归属名称已在后端解析好，避免前端 N+1） */
+export interface TaskReportRow {
+  task: Task
+  projectName: string | null
+  categoryName: string | null
+  tagNames: string[]
+}
+
+/** 取报告数据：与列表同一套筛选语义，额外带项目/分类/标签名称 */
+export const taskReport = (query: TaskQuery): Promise<TaskReportRow[]> =>
+  call<TaskReportRow[]>(CMD.taskReport, { query })
+
+/**
+ * 把主窗口当前页面导出为 PDF。
+ *
+ * 调用前界面必须已经切到打印报告（`#print-report` 可见），
+ * 因为 WebView2 打印的是**当前页面**。
+ */
+export const exportPdf = (path: string): Promise<void> => call<void>(CMD.exportPdf, { path })
 /** 今日概览 */
 export const getTodayOverview = (
   dayStartUtc: string,

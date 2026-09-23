@@ -14,6 +14,8 @@
 //! - `backup`          —— 备份、导出、恢复
 //! - `window_mgr`      —— 窗口能力与安全恢复（§8）
 //! - `shortcuts`       —— 全局快捷键
+//! - `pdf`             —— PDF 导出（走 WebView2 自身的 PrintToPdf，保证中文可读）
+//! - `update`          —— 自动更新检查（§9 分发与升级）
 //! - `lib.rs`          —— 只做装配：插件注册、状态注入、托盘、启动恢复
 //!
 //! 时区策略（§4.3 / §5）：Rust 侧一律处理 UTC；"今天/本周"等本地日历
@@ -25,11 +27,14 @@ pub mod ai_features;
 pub mod attachments;
 pub mod backup;
 pub mod commands;
+#[cfg(test)]
+mod commands_e2e;
 pub mod db;
 pub mod error;
 pub mod focus;
 pub mod models;
 pub mod organize;
+pub mod pdf;
 pub mod recurrence;
 #[cfg(test)]
 mod recurrence_e2e;
@@ -113,6 +118,12 @@ pub fn run() {
         // 窗口位置尺寸记忆（§8 多显示器断连找回）
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_store::Builder::new().build())
+        // 自动更新（§9「后续版本升级不需要用户手动重装」）。
+        // 更新包必须用 minisign 私钥签名，公钥在 tauri.conf.json 的
+        // plugins.updater.pubkey 中；签名无法关闭（插件硬性要求）。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 更新安装完成后需要重启应用
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // ---------------- 数据目录与数据库 ----------------
             // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.lumen），
@@ -256,6 +267,8 @@ pub fn run() {
             commands::task_purge,
             commands::task_purge_all_deleted,
             commands::task_bulk,
+            commands::task_duplicate,
+            commands::task_reorder,
             commands::today_overview,
             commands::set_reminders_paused,
             commands::tasks_in_range,
@@ -273,6 +286,7 @@ pub fn run() {
             organize::category_update,
             organize::category_delete_impact,
             organize::category_delete,
+            organize::category_merge,
             organize::tag_list,
             organize::tag_create,
             organize::tag_update,
@@ -311,6 +325,9 @@ pub fn run() {
             backup::backup_auto,
             backup::export_csv,
             backup::export_markdown,
+            // ---- PDF 导出（§6 中文可读）----
+            pdf::export_pdf,
+            commands::task_report,
             // ---- 附件受控存储（§4.1）----
             attachments::attachment_add,
             attachments::attachment_list,
@@ -335,6 +352,8 @@ pub fn run() {
             window_mgr::window_reset_safe,
             window_mgr::window_floating_state,
             window_mgr::window_floating_reset_position,
+            window_mgr::window_set_floating_opacity,
+            window_mgr::window_set_floating_size,
             window_mgr::app_quit,
             // ---- AI 提供商适配（§6）----
             ai::ai_get_config,

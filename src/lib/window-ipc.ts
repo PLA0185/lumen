@@ -25,6 +25,9 @@ export interface WindowConfig {
   floatingShowInTaskbar: boolean
   floatingX: number | null
   floatingY: number | null
+  /** 悬浮窗尺寸（逻辑像素），由拖动把手调节后持久化 */
+  floatingWidth: number
+  floatingHeight: number
 
   /** 是否启用托盘图标 */
   trayEnabled: boolean
@@ -51,6 +54,9 @@ export interface FloatingState {
   clickThrough: boolean
   alwaysOnTop: boolean
   opacity: number
+  /** 当前持久化的尺寸（逻辑像素） */
+  width: number
+  height: number
 }
 
 export const WINDOW_CMD = {
@@ -60,6 +66,8 @@ export const WINDOW_CMD = {
   resetSafe: 'window_reset_safe',
   floatingState: 'window_floating_state',
   floatingResetPosition: 'window_floating_reset_position',
+  setFloatingOpacity: 'window_set_floating_opacity',
+  setFloatingSize: 'window_set_floating_size',
   quit: 'app_quit',
 } as const
 
@@ -113,6 +121,22 @@ export const windowFloatingState = (): Promise<FloatingState> => call(WINDOW_CMD
 /** 把悬浮窗移回屏幕右下角（拖丢后的一键找回） */
 export const windowFloatingResetPosition = (): Promise<boolean> =>
   call(WINDOW_CMD.floatingResetPosition)
+
+/**
+ * 设置悬浮窗不透明度。
+ *
+ * 悬浮窗里的滑块拖动时高频调用，因此后端只写配置并广播事件，
+ * 不重建窗口——重建会让用户看到明显闪烁。
+ */
+export const windowSetFloatingOpacity = (opacity: number): Promise<number> =>
+  call(WINDOW_CMD.setFloatingOpacity, { opacity })
+
+/** 设置悬浮窗尺寸；后端会做边界收敛并把收敛结果返回 */
+export const windowSetFloatingSize = (
+  width: number,
+  height: number,
+): Promise<{ width: number; height: number }> =>
+  call(WINDOW_CMD.setFloatingSize, { width, height })
 
 /** 完全退出应用 */
 export const appQuit = (): Promise<void> => call(WINDOW_CMD.quit)

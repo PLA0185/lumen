@@ -124,6 +124,7 @@ export const ORG_CMD = {
   categoryUpdate: 'category_update',
   categoryDeleteImpact: 'category_delete_impact',
   categoryDelete: 'category_delete',
+  categoryMerge: 'category_merge',
 
   tagList: 'tag_list',
   tagCreate: 'tag_create',
@@ -237,6 +238,10 @@ export const categoryDeleteImpact = (id: string): Promise<DeleteImpact> =>
 
 export const categoryDelete = (id: string, strategy: OrphanStrategy): Promise<number> =>
   call(ORG_CMD.categoryDelete, { id, strategy })
+
+/** 合并分类：把 sourceIds 的任务并到 targetId，源分类随之删除 */
+export const categoryMerge = (sourceIds: string[], targetId: string): Promise<number> =>
+  call(ORG_CMD.categoryMerge, { input: { sourceIds, targetId } })
 
 // =============================================================================
 // 标签

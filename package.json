@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Lumen —— 本地优先的智能任务管理（本地优先，可选 AI 辅助）",
   "license": "MIT",
@@ -34,6 +34,8 @@
     "@tauri-apps/plugin-notification": "^2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.5",
     "@tauri-apps/plugin-os": "^2.3.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.12.0",
     "date-fns": "^4.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

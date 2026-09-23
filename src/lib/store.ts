@@ -8,6 +8,7 @@
 
 import { create } from 'zustand'
 import * as ipc from './ipc'
+import * as bus from './bus'
 import { IpcError } from './ipc'
 import type {
   AppInfo,
@@ -26,8 +27,10 @@ export type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 /** 界面反馈消息 */
 export interface Toast {
   id: string
-  kind: 'success' | 'error' | 'info'
+  kind: 'success' | 'error' | 'info' | 'reminder'
   text: string
+  /** 提醒类消息带上任务 ID，界面据此提供「打开任务」的跳转按钮 */
+  taskId?: string
 }
 
 interface AppStore {
@@ -69,12 +72,20 @@ interface AppStore {
   setTheme: (t: 'light' | 'dark' | 'system') => void
 
   toggleDone: (id: string, done: boolean) => Promise<void>
+  /** 复制为副本：新任务插在被复制项之后 */
+  duplicate: (id: string) => Promise<void>
+  /** 拖拽排序：把 movedId 放到 beforeId 之前（beforeId 为 null 表示放到末尾） */
+  reorder: (movedId: string, beforeId: string | null) => Promise<void>
   remove: (id: string) => Promise<void>
   restore: (id: string) => Promise<void>
   purge: (id: string) => Promise<void>
   purgeAll: () => Promise<void>
+  /** 取打印 / PDF 报告数据（与当前列表同一套筛选条件） */
+  reportRows: () => Promise<ipc.TaskReportRow[]>
 
   pushToast: (kind: Toast['kind'], text: string) => void
+  /** 提醒条：不自动消失，并带「打开任务」跳转 */
+  pushReminder: (text: string, taskId: string) => void
   dismissToast: (id: string) => void
 }
 
@@ -258,6 +269,33 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.toggleTaskDone(id, done)
       await Promise.all([get().reload(), get().refreshOverview()])
+      void bus.notifyTasksChanged()
+    } catch (e) {
+      get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+    }
+  },
+
+  duplicate: async (id) => {
+    try {
+      const r = await ipc.duplicateTask(id)
+      await get().reload()
+      void bus.notifyTasksChanged()
+      // 附件不随副本复制，这一点必须告诉用户，不能静默丢掉
+      if (r.skippedAttachments > 0) {
+        get().pushToast('info', r.note)
+      } else {
+        get().pushToast('success', `已复制为「${r.title}」`)
+      }
+    } catch (e) {
+      get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+    }
+  },
+
+  reorder: async (movedId, beforeId) => {
+    try {
+      await ipc.reorderTask(movedId, beforeId)
+      await get().reload()
+      void bus.notifyTasksChanged()
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     }
@@ -267,6 +305,7 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.softDeleteTask(id)
       await Promise.all([get().reload(), get().refreshOverview()])
+      void bus.notifyTasksChanged()
       get().pushToast('success', '已移入回收站，可随时恢复')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -277,6 +316,7 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.restoreTask(id)
       await Promise.all([get().reload(), get().refreshOverview()])
+      void bus.notifyTasksChanged()
       get().pushToast('success', '已恢复')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -287,6 +327,7 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.purgeTask(id)
       await get().reload()
+      void bus.notifyTasksChanged()
       get().pushToast('success', '已永久删除')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -297,10 +338,18 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       const r = await ipc.purgeAllDeleted()
       await get().reload()
+      void bus.notifyTasksChanged()
       get().pushToast('success', `已永久删除 ${r.purged} 项`)
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     }
+  },
+
+  /** 打印 / PDF 报告数据：走列表同一套筛选，报告里能看到归属名称 */
+  reportRows: async () => {
+    const q = buildQuery(get())
+    // 报告是给用户留档的，不该像列表那样只取前 500 条
+    return ipc.taskReport({ ...q, limit: 1000 })
   },
 
   pushToast: (kind, text) => {
@@ -308,6 +357,12 @@ export const useApp = create<AppStore>((set, get) => ({
     set({ toasts: [...get().toasts, { id, kind, text }] })
     // 错误停留更久，给用户时间读完恢复建议
     window.setTimeout(() => get().dismissToast(id), kind === 'error' ? 6000 : 3000)
+  },
+
+  pushReminder: (text, taskId) => {
+    const id = `r-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    set({ toasts: [...get().toasts, { id, kind: 'reminder', text, taskId }] })
+    // 提醒条不自动消失：用户可能不在电脑前，回来时仍要能看到并点进去
   },
 
   dismissToast: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),

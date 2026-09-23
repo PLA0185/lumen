@@ -9,6 +9,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useApp } from './lib/store'
+import { IpcError } from './lib/ipc'
+import * as ipc from './lib/ipc'
 import { Sidebar, VIEW_META } from './components/Sidebar'
 import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
@@ -18,8 +20,10 @@ import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
+import { PrintReport } from './components/PrintReport'
 import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
+import * as bus from './lib/bus'
 import type { Task, ViewId } from './lib/types'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
@@ -68,12 +72,16 @@ export default function App() {
     setSort,
     setOverdueOnly,
     toggleDone,
+    duplicate,
+    reorder,
     remove,
     restore,
     purge,
     purgeAll,
+    reportRows,
     dismissToast,
     pushToast,
+    pushReminder,
   } = useApp()
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
@@ -81,11 +89,30 @@ export default function App() {
   const [editing, setEditing] = useState<Task | null>(null)
   /** 新建重复任务对话框 */
   const [showRecurring, setShowRecurring] = useState(false)
+  /** PDF 导出期间的打印报告数据（非 null 时界面切到打印视图） */
+  const [printData, setPrintData] = useState<{
+    rows: ipc.TaskReportRow[]
+    scopeTitle: string
+    filterNote?: string
+  } | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   // ------------------------------ 启动 ------------------------------
   useEffect(() => {
     void init()
   }, [init])
+
+  /** 打印视图开关：交给 CSS 决定"只显示报告" */
+  useEffect(() => {
+    if (printData) {
+      document.body.dataset.print = 'on'
+    } else {
+      delete document.body.dataset.print
+    }
+    return () => {
+      delete document.body.dataset.print
+    }
+  }, [printData])
 
   // --------------------- 后端事件（托盘菜单等） ---------------------
   useEffect(() => {
@@ -103,6 +130,82 @@ export default function App() {
     })()
     return () => unlisten?.()
   }, [setView])
+
+  // --------------------- 启动后静默检查更新（§9） ---------------------
+  /**
+   * 延迟 20 秒再查：避免和启动时的数据库初始化、首屏加载抢带宽与主线程。
+   * 只提示、不自动安装——安装会让程序退出，必须由用户决定时机。
+   */
+  useEffect(() => {
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const up = await import('./lib/update-ipc')
+          const { info } = await up.checkUpdate()
+          if (!cancelled && info) {
+            pushToast(
+              'info',
+              `发现新版本 ${info.version}（当前 ${info.currentVersion}）。到「设置 → 关于」可一键更新。`,
+            )
+          }
+        } catch {
+          // 静默检查失败不打扰用户：网络原因很常见，
+          // 用户真要更新时会去「关于」里手动检查并看到具体原因
+        }
+      })()
+    }, 20_000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [pushToast])
+
+  // --------------------- 跨窗口同步（悬浮窗改了要立刻反映到这里） ---------------------
+  useEffect(() => {
+    return bus.onTasksChanged(() => {
+      void reload()
+      void useApp.getState().refreshOverview()
+    })
+  }, [reload])
+
+  // --------------------- 提醒触发 → 可点开任务 ---------------------
+  /**
+   * 桌面端系统通知**没有点击回调**（Windows 的 toast 激活需要打包身份，
+   * Tauri 的通知插件在桌面不暴露该事件）。因此"点击通知跳转任务"
+   * 改用应用内提醒条实现：提醒一到就出现在界面上，点「打开任务」
+   * 直接定位到该任务，不需要用户自己去找。
+   */
+  const openTaskById = useCallback(
+    async (taskId: string) => {
+      try {
+        const t = await ipc.getTask(taskId)
+        setEditing(t)
+      } catch (e) {
+        pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+      }
+    },
+    [pushToast],
+  )
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        unlisten = await listen<{ id: string; taskId: string; title: string }>(
+          'reminder-fired',
+          (e) => {
+            pushReminder(`提醒：${e.payload.title}`, e.payload.taskId)
+            void reload()
+          },
+        )
+      } catch {
+        // 非 Tauri 环境下忽略
+      }
+    })()
+    return () => unlisten?.()
+  }, [pushReminder, reload])
 
   // --------------------------- 键盘快捷键 ---------------------------
   // §4.4 要求关键操作可用键盘完成。此处提供应用内快捷键；
@@ -154,7 +257,84 @@ export default function App() {
     return [...tasks].sort((a, b) => order[bucketOf(a)] - order[bucketOf(b)])
   }, [tasks, view])
 
+  // ---------------------- 拖拽排序（§4.1 手动排序） ----------------------
+  /** 正在被拖动的任务 id */
+  const [dragId, setDragId] = useState<string | null>(null)
+  /** 落点：插入到这个任务之前 */
+  const [dropBeforeId, setDropBeforeId] = useState<string | null>(null)
+
+  // 只有"手动排序 + 无搜索"时拖拽才有意义：其它排序方式下顺序由字段决定，
+  // 拖了也会被服务端排序覆盖，与其给一个假交互不如直接禁用。
+  const canSort = sortBy === 'manual' && search.trim().length === 0 && view !== 'trash'
+
+  const handleDragOverCard = useCallback(
+    (overId: string) => {
+      if (!dragId || overId === dragId) return
+      setDropBeforeId(overId)
+    },
+    [dragId],
+  )
+
+  const handleDragEndCard = useCallback(() => {
+    const movedId = dragId
+    const beforeId = dropBeforeId
+    setDragId(null)
+    setDropBeforeId(null)
+    if (!movedId || !beforeId || movedId === beforeId) return
+    void reorder(movedId, beforeId)
+  }, [dragId, dropBeforeId, reorder])
+
+  const handleDragStartCard = useCallback((id: string) => setDragId(id), [])
+
+  // ---------------------------- PDF 导出 ----------------------------
+  /**
+   * 导出流程（顺序很重要）：
+   * 1. 先让用户选保存位置；
+   * 2. 取报告数据并切到打印视图（WebView2 打印的是**当前页面**）；
+   * 3. 等两帧 + 一点余量，确保表格布局与字体都已就绪，
+   *    否则可能出现"导出的 PDF 是上一个界面"或半张空白；
+   * 4. 调后端 PrintToPdf，最后无论成败都恢复界面。
+   */
+  const doExportPdf = useCallback(async () => {
+    setExporting(true)
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog')
+      const stamp = new Date().toISOString().slice(0, 10)
+      const target = await save({
+        title: '导出 PDF',
+        defaultPath: `lumen-tasks-${stamp}.pdf`,
+        filters: [{ name: 'PDF 文件', extensions: ['pdf'] }],
+      })
+      if (typeof target !== 'string') return
+
+      const rows = await reportRows()
+      if (rows.length === 0) {
+        pushToast('info', '当前范围内没有任务，未生成 PDF')
+        return
+      }
+      setPrintData({
+        rows,
+        scopeTitle: meta.title,
+        filterNote: search.trim() ? `搜索「${search.trim()}」` : undefined,
+      })
+
+      await new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => r())),
+      )
+      await new Promise<void>((r) => window.setTimeout(r, 180))
+
+      await ipc.exportPdf(target)
+      pushToast('success', `已导出 ${rows.length} 条任务到 ${target}`)
+    } catch (e) {
+      pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+    } finally {
+      setPrintData(null)
+      setExporting(false)
+    }
+  }, [meta.title, pushToast, reportRows, search])
+
   return (
+    <>
     <div className="app">
       <Sidebar current={view} onSelect={setView} counts={counts} version={appInfo?.version} />
 
@@ -229,6 +409,16 @@ export default function App() {
             <button
               type="button"
               className="btn btn--ghost btn--sm"
+              disabled={exporting || loadState !== 'ready'}
+              onClick={() => void doExportPdf()}
+              title="把当前列表导出为 PDF（含项目、标签、时间等字段）"
+            >
+              {exporting ? '导出中…' : '⤓ PDF'}
+            </button>
+
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
               onClick={() => setShowRecurring(true)}
               title="新建可以按规则重复的任务"
             >
@@ -286,6 +476,13 @@ export default function App() {
             onRestore={restore}
             onPurge={purge}
             onEdit={setEditing}
+            onDuplicate={(t) => void duplicate(t.id)}
+            sortable={canSort}
+            dragId={dragId}
+            dropBeforeId={dropBeforeId}
+            onDragStartCard={handleDragStartCard}
+            onDragOverCard={handleDragOverCard}
+            onDragEndCard={handleDragEndCard}
             onRetry={reload}
             onNew={() => setShowQuickAdd(true)}
             onGoSettings={() => setView('settings')}
@@ -322,8 +519,29 @@ export default function App() {
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast--${t.kind}`}>
-            <span aria-hidden="true">{t.kind === 'success' ? '✓' : t.kind === 'error' ? '⚠' : 'ℹ'}</span>
+            <span aria-hidden="true">
+              {t.kind === 'success'
+                ? '✓'
+                : t.kind === 'error'
+                  ? '⚠'
+                  : t.kind === 'reminder'
+                    ? '⏰'
+                    : 'ℹ'}
+            </span>
             <span style={{ flex: 1 }}>{t.text}</span>
+            {/* 提醒条提供跳转：这是"点击通知打开任务"在桌面端的可用替代 */}
+            {t.taskId && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => {
+                  void openTaskById(t.taskId as string)
+                  dismissToast(t.id)
+                }}
+              >
+                打开任务
+              </button>
+            )}
             <button
               type="button"
               className="icon-btn"
@@ -336,6 +554,21 @@ export default function App() {
         ))}
       </div>
     </div>
+
+    {/*
+      打印报告**必须是 `.app` 的兄弟节点**，不能放在里面：
+      导出 PDF 时用 `body[data-print='on'] .app { display: none }` 隐藏主界面，
+      报告若在 `.app` 内会跟着被隐藏——WebView2 打印的是"当前页面"，
+      结果就是导出一张空白 PDF（实测踩过：导出的文件只有 1 KB，没有任何内容）。
+    */}
+    {printData && (
+      <PrintReport
+        rows={printData.rows}
+        scopeTitle={printData.scopeTitle}
+        filterNote={printData.filterNote}
+      />
+    )}
+    </>
   )
 }
 
@@ -357,6 +590,15 @@ interface TaskAreaProps {
   onPurge: (id: string) => void
   /** 打开完整编辑表单 */
   onEdit: (task: Task) => void
+  /** 复制为副本 */
+  onDuplicate: (task: Task) => void
+  /** 是否允许拖拽排序 */
+  sortable: boolean
+  dragId: string | null
+  dropBeforeId: string | null
+  onDragStartCard: (id: string) => void
+  onDragOverCard: (id: string) => void
+  onDragEndCard: () => void
   onRetry: () => void
   onNew: () => void
   onGoSettings: () => void
@@ -374,6 +616,13 @@ function TaskArea({
   onRestore,
   onPurge,
   onEdit,
+  onDuplicate,
+  sortable,
+  dragId,
+  dropBeforeId,
+  onDragStartCard,
+  onDragOverCard,
+  onDragEndCard,
   onRetry,
   onNew,
   onGoSettings,
@@ -505,6 +754,13 @@ function TaskArea({
           onDelete={onDelete}
           onRestore={onRestore}
           onEdit={onEdit}
+          onDuplicate={onDuplicate}
+          sortable={sortable}
+          isDragging={dragId === t.id}
+          dropHint={dropBeforeId === t.id && dragId !== t.id ? 'before' : null}
+          onDragStartCard={onDragStartCard}
+          onDragOverCard={onDragOverCard}
+          onDragEndCard={onDragEndCard}
           onPurge={(id) => {
             if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
           }}

@@ -13,7 +13,7 @@ use sqlx::{FromRow, QueryBuilder, Row, Sqlite};
 use tauri::State;
 
 use crate::commands::AppState;
-use crate::db::{to_db_time, utc_now};
+use crate::db::{to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 名称长度上限，防止超长文本进入列表渲染
@@ -363,9 +363,14 @@ pub async fn project_create(
 
 /// 读取单个项目
 async fn get_project(state: &AppState, id: &str) -> AppResult<Project> {
+    get_project_row(&state.db, id).await
+}
+
+/// 按 ID 读项目（带 `deleted_at`，更新前要判断是否在回收站里）
+async fn get_project_row(db: &Db, id: &str) -> AppResult<Project> {
     let p = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?1")
         .bind(id)
-        .fetch_optional(state.db.pool())
+        .fetch_optional(db.pool())
         .await?;
     p.ok_or_else(|| AppError::not_found("项目", id))
 }
@@ -377,7 +382,16 @@ pub async fn project_update(
     id: String,
     input: UpdateProjectInput,
 ) -> AppResult<Project> {
-    let existing = get_project(&state, &id).await?;
+    update_project_impl(&state.db, &id, input).await
+}
+
+/// 更新项目的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn update_project_impl(
+    db: &Db,
+    id: &str,
+    input: UpdateProjectInput,
+) -> AppResult<Project> {
+    let existing = get_project_row(db, id).await?;
     if existing.deleted_at.is_some() {
         return Err(AppError::conflict("项目已在回收站中，请先恢复"));
     }
@@ -393,39 +407,39 @@ pub async fn project_update(
     let mut b = QueryBuilder::<Sqlite>::new("UPDATE projects SET ");
     let mut sep = b.separated(", ");
     if let Some(n) = &name {
-        sep.push("name = ").push_bind(n.clone());
+        sep.push("name = ").push_bind_unseparated(n.clone());
     }
     if let Some(d) = &desc {
-        sep.push("description = ").push_bind(d.clone());
+        sep.push("description = ").push_bind_unseparated(d.clone());
     }
     if input.color.is_some() {
-        sep.push("color = ").push_bind(color.clone());
+        sep.push("color = ").push_bind_unseparated(color.clone());
     }
     if let Some(i) = input.icon.as_deref() {
-        sep.push("icon = ").push_bind(if i.trim().is_empty() { None } else { Some(i.to_string()) });
+        sep.push("icon = ").push_bind_unseparated(if i.trim().is_empty() { None } else { Some(i.to_string()) });
     }
     if let Some(o) = input.sort_order {
-        sep.push("sort_order = ").push_bind(o);
+        sep.push("sort_order = ").push_bind_unseparated(o);
     }
     if let Some(f) = input.is_favorite {
-        sep.push("is_favorite = ").push_bind(f as i64);
+        sep.push("is_favorite = ").push_bind_unseparated(f as i64);
     }
     if let Some(a) = input.is_archived {
-        sep.push("is_archived = ").push_bind(a as i64);
+        sep.push("is_archived = ").push_bind_unseparated(a as i64);
         // 归档时间与归档标志必须同时维护，否则"归档于何时"会丢失
-        sep.push("archived_at = ").push_bind(if a { Some(now.clone()) } else { None });
+        sep.push("archived_at = ").push_bind_unseparated(if a { Some(now.clone()) } else { None });
     }
-    sep.push("updated_at = ").push_bind(now);
-    b.push(" WHERE id = ").push_bind(&id);
+    sep.push("updated_at = ").push_bind_unseparated(now);
+    b.push(" WHERE id = ").push_bind(id);
 
-    let r = b.build().execute(state.db.pool()).await;
+    let r = b.build().execute(db.pool()).await;
     if let Err(e) = r {
         if is_unique_violation(&e) {
             return Err(conflict_err("项目", name.as_deref().unwrap_or("")));
         }
         return Err(e.into());
     }
-    get_project(&state, &id).await
+    get_project_row(db, id).await
 }
 
 /// 归档 / 取消归档项目
@@ -534,20 +548,25 @@ pub async fn project_delete(
 /// 合并项目：把源项目的任务全部转到目标项目，然后删除源项目
 #[tauri::command]
 pub async fn project_merge(state: State<'_, AppState>, input: MergeInput) -> AppResult<i64> {
+    merge_project_impl(&state.db, &input).await
+}
+
+/// 合并项目的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn merge_project_impl(db: &Db, input: &MergeInput) -> AppResult<i64> {
     if input.source_ids.is_empty() {
         return Err(AppError::validation("请选择要合并的项目"));
     }
     if input.source_ids.iter().any(|s| s == &input.target_id) {
         return Err(AppError::validation("目标项目不能同时作为被合并项"));
     }
-    get_project(&state, &input.target_id).await?;
+    ensure_org_row_exists(db, "projects", "项目", &input.target_id).await?;
 
     let now = to_db_time(utc_now());
-    let mut tx = state.db.pool().begin().await?;
+    let mut tx = db.pool().begin().await?;
     let mut moved = 0i64;
 
     for src in &input.source_ids {
-        get_project(&state, src).await?;
+        ensure_org_row_exists(db, "projects", "项目", src).await?;
         moved += sqlx::query(
             "UPDATE tasks SET project_id = ?1, updated_at = ?2
              WHERE project_id = ?3 AND deleted_at IS NULL",
@@ -621,9 +640,14 @@ pub async fn category_create(
 }
 
 async fn get_category(state: &AppState, id: &str) -> AppResult<Category> {
+    get_category_row(&state.db, id).await
+}
+
+/// 按 ID 读分类（不经过 `State`，供实现函数与测试复用）
+async fn get_category_row(db: &Db, id: &str) -> AppResult<Category> {
     let c = sqlx::query_as::<_, Category>("SELECT * FROM categories WHERE id = ?1")
         .bind(id)
-        .fetch_optional(state.db.pool())
+        .fetch_optional(db.pool())
         .await?;
     c.ok_or_else(|| AppError::not_found("分类", id))
 }
@@ -635,7 +659,16 @@ pub async fn category_update(
     id: String,
     input: UpdateCategoryInput,
 ) -> AppResult<Category> {
-    get_category(&state, &id).await?;
+    update_category_impl(&state.db, &id, input).await
+}
+
+/// 更新分类的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn update_category_impl(
+    db: &Db,
+    id: &str,
+    input: UpdateCategoryInput,
+) -> AppResult<Category> {
+    get_category_row(db, id).await?;
     let name = match &input.name {
         Some(n) => Some(validate_name(n)?),
         None => None,
@@ -647,31 +680,31 @@ pub async fn category_update(
     let mut b = QueryBuilder::<Sqlite>::new("UPDATE categories SET ");
     let mut sep = b.separated(", ");
     if let Some(n) = &name {
-        sep.push("name = ").push_bind(n.clone());
+        sep.push("name = ").push_bind_unseparated(n.clone());
     }
     if let Some(d) = &desc {
-        sep.push("description = ").push_bind(d.clone());
+        sep.push("description = ").push_bind_unseparated(d.clone());
     }
     if input.color.is_some() {
-        sep.push("color = ").push_bind(color.clone());
+        sep.push("color = ").push_bind_unseparated(color.clone());
     }
     if let Some(i) = input.icon.as_deref() {
-        sep.push("icon = ").push_bind(if i.trim().is_empty() { None } else { Some(i.to_string()) });
+        sep.push("icon = ").push_bind_unseparated(if i.trim().is_empty() { None } else { Some(i.to_string()) });
     }
     if let Some(o) = input.sort_order {
-        sep.push("sort_order = ").push_bind(o);
+        sep.push("sort_order = ").push_bind_unseparated(o);
     }
-    sep.push("updated_at = ").push_bind(now);
-    b.push(" WHERE id = ").push_bind(&id);
+    sep.push("updated_at = ").push_bind_unseparated(now);
+    b.push(" WHERE id = ").push_bind(id);
 
-    let r = b.build().execute(state.db.pool()).await;
+    let r = b.build().execute(db.pool()).await;
     if let Err(e) = r {
         if is_unique_violation(&e) {
             return Err(conflict_err("分类", name.as_deref().unwrap_or("")));
         }
         return Err(e.into());
     }
-    get_category(&state, &id).await
+    get_category_row(db, id).await
 }
 
 /// 分类删除影响预览
@@ -723,6 +756,67 @@ pub async fn category_delete(
         .await?;
     tx.commit().await?;
     Ok(affected)
+}
+
+/// 合并分类：把源分类的任务全部转到目标分类，然后删除源分类。
+///
+/// 与 `project_merge` 同一套语义：只改归属，不改任务本身，
+/// 也不碰已删除的任务（回收站里的记录保留它当时的分类）。
+#[tauri::command]
+pub async fn category_merge(state: State<'_, AppState>, input: MergeInput) -> AppResult<i64> {
+    merge_category_impl(&state.db, &input).await
+}
+
+/// 合并分类的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn merge_category_impl(db: &Db, input: &MergeInput) -> AppResult<i64> {
+    if input.source_ids.is_empty() {
+        return Err(AppError::validation("请选择要合并的分类"));
+    }
+    if input.source_ids.iter().any(|s| s == &input.target_id) {
+        return Err(AppError::validation("目标分类不能同时作为被合并项"));
+    }
+    ensure_org_row_exists(db, "categories", "分类", &input.target_id).await?;
+
+    let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
+    let mut moved = 0i64;
+
+    for src in &input.source_ids {
+        ensure_org_row_exists(db, "categories", "分类", src).await?;
+        moved += sqlx::query(
+            "UPDATE tasks SET category_id = ?1, updated_at = ?2
+             WHERE category_id = ?3 AND deleted_at IS NULL",
+        )
+        .bind(&input.target_id)
+        .bind(&now)
+        .bind(src)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected() as i64;
+
+        sqlx::query("UPDATE categories SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
+            .bind(&now)
+            .bind(src)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(moved)
+}
+
+/// 确认某个组织项存在且未删除；表名与名称只来自本文件内的字面量。
+async fn ensure_org_row_exists(db: &Db, table: &str, label: &str, id: &str) -> AppResult<()> {
+    let sql = format!("SELECT COUNT(*) AS n FROM {table} WHERE id = ?1 AND deleted_at IS NULL");
+    let n: i64 = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_one(db.pool())
+        .await?
+        .try_get("n")?;
+    if n == 0 {
+        return Err(AppError::not_found(label, id));
+    }
+    Ok(())
 }
 
 // =============================================================================
@@ -798,7 +892,12 @@ pub async fn tag_update(
     id: String,
     input: UpdateTagInput,
 ) -> AppResult<Tag> {
-    get_tag(&state, &id).await?;
+    update_tag_impl(&state.db, &id, input).await
+}
+
+/// 更新标签的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn update_tag_impl(db: &Db, id: &str, input: UpdateTagInput) -> AppResult<Tag> {
+    get_tag_by_id(db, id).await?;
     let name = match &input.name {
         Some(n) => Some(validate_name(n)?),
         None => None,
@@ -809,25 +908,34 @@ pub async fn tag_update(
     let mut b = QueryBuilder::<Sqlite>::new("UPDATE tags SET ");
     let mut sep = b.separated(", ");
     if let Some(n) = &name {
-        sep.push("name = ").push_bind(n.clone());
+        sep.push("name = ").push_bind_unseparated(n.clone());
     }
     if input.color.is_some() {
-        sep.push("color = ").push_bind(color.clone());
+        sep.push("color = ").push_bind_unseparated(color.clone());
     }
     if let Some(o) = input.sort_order {
-        sep.push("sort_order = ").push_bind(o);
+        sep.push("sort_order = ").push_bind_unseparated(o);
     }
-    sep.push("updated_at = ").push_bind(now);
-    b.push(" WHERE id = ").push_bind(&id);
+    sep.push("updated_at = ").push_bind_unseparated(now);
+    b.push(" WHERE id = ").push_bind(id);
 
-    let r = b.build().execute(state.db.pool()).await;
+    let r = b.build().execute(db.pool()).await;
     if let Err(e) = r {
         if is_unique_violation(&e) {
             return Err(conflict_err("标签", name.as_deref().unwrap_or("")));
         }
         return Err(e.into());
     }
-    get_tag(&state, &id).await
+    get_tag_by_id(db, id).await
+}
+
+/// 按 ID 读标签（不经过 `State`，供实现函数与测试复用）
+async fn get_tag_by_id(db: &Db, id: &str) -> AppResult<Tag> {
+    let t = sqlx::query_as::<_, Tag>("SELECT * FROM tags WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(db.pool())
+        .await?;
+    t.ok_or_else(|| AppError::not_found("标签", id))
 }
 
 /// 删除标签：只解除任务关联，绝不删除任务本身
@@ -861,20 +969,25 @@ pub async fn tag_delete(state: State<'_, AppState>, id: String) -> AppResult<i64
 /// 合并标签：把源标签的关联转到目标标签，并处理重复关联
 #[tauri::command]
 pub async fn tag_merge(state: State<'_, AppState>, input: MergeInput) -> AppResult<i64> {
+    merge_tag_impl(&state.db, &input).await
+}
+
+/// 合并标签的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn merge_tag_impl(db: &Db, input: &MergeInput) -> AppResult<i64> {
     if input.source_ids.is_empty() {
         return Err(AppError::validation("请选择要合并的标签"));
     }
     if input.source_ids.iter().any(|s| s == &input.target_id) {
         return Err(AppError::validation("目标标签不能同时作为被合并项"));
     }
-    get_tag(&state, &input.target_id).await?;
+    ensure_org_row_exists(db, "tags", "标签", &input.target_id).await?;
 
     let now = to_db_time(utc_now());
-    let mut tx = state.db.pool().begin().await?;
+    let mut tx = db.pool().begin().await?;
     let mut moved = 0i64;
 
     for src in &input.source_ids {
-        get_tag(&state, src).await?;
+        ensure_org_row_exists(db, "tags", "标签", src).await?;
         // INSERT OR IGNORE：任务若已同时拥有目标标签，不会产生重复关联
         moved += sqlx::query(
             "INSERT OR IGNORE INTO task_tags (task_id, tag_id)

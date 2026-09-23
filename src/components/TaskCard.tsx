@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 任务卡片（§4.1 / §3）。
  *
  * 视觉要求：明确的完成状态、截止时间与优先级提示；
@@ -132,6 +132,20 @@ interface TaskCardProps {
   mode?: 'normal' | 'trash'
   /** 子任务进度（由列表页批量获取，避免每张卡片各查一次） */
   progress?: { total: number; done: number; percent: number | null }
+  /** 复制任务（§4.1 复制为副本，不复制附件与完成状态） */
+  onDuplicate?: (task: Task) => void
+  /** 是否允许拖拽排序（回收站、只读视图传 false） */
+  sortable?: boolean
+  /** 拖拽开始：把被拖任务的 id 交给列表容器 */
+  onDragStartCard?: (id: string) => void
+  /** 拖到本卡片上方：容器据此决定插入点 */
+  onDragOverCard?: (id: string) => void
+  /** 拖拽结束（含取消） */
+  onDragEndCard?: () => void
+  /** 本卡片是否正在被拖动 */
+  isDragging?: boolean
+  /** 落点提示：'before' 表示会插到本卡片前面 */
+  dropHint?: 'before' | null
 }
 
 export function TaskCard({
@@ -143,6 +157,13 @@ export function TaskCard({
   onEdit,
   mode = 'normal',
   progress,
+  onDuplicate,
+  sortable = false,
+  onDragStartCard,
+  onDragOverCard,
+  onDragEndCard,
+  isDragging = false,
+  dropHint = null,
 }: TaskCardProps) {
   const done = task.status === 'done'
   const overdue = isOverdue(task)
@@ -152,6 +173,7 @@ export function TaskCard({
   const [expanded, setExpanded] = useState(false)
 
   const hasDetail = !inTrash
+  const canDrag = sortable && !inTrash
 
   return (
     <li
@@ -161,11 +183,48 @@ export function TaskCard({
         overdue ? 'task--overdue' : '',
         task.isPinned ? 'task--pinned' : '',
         expanded ? 'task--expanded' : '',
+        canDrag ? 'task--draggable' : '',
+        isDragging ? 'task--dragging' : '',
+        dropHint === 'before' ? 'task--drop-before' : '',
       ]
         .filter(Boolean)
         .join(' ')}
+      draggable={canDrag}
+      onDragStart={
+        canDrag
+          ? (e) => {
+              e.dataTransfer.effectAllowed = 'move'
+              // 部分浏览器要求 setData 才会真正启动拖拽
+              e.dataTransfer.setData('text/plain', task.id)
+              onDragStartCard?.(task.id)
+            }
+          : undefined
+      }
+      onDragOver={
+        canDrag
+          ? (e) => {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'move'
+              onDragOverCard?.(task.id)
+            }
+          : undefined
+      }
+      onDragEnd={canDrag ? () => onDragEndCard?.() : undefined}
+      onDrop={
+        canDrag
+          ? (e) => {
+              e.preventDefault()
+              onDragEndCard?.()
+            }
+          : undefined
+      }
     >
       <div className="task__main">
+        {canDrag && (
+          <span className="task__grip" title="按住拖动可调整顺序（仅同一天内生效）" aria-hidden="true">
+            ⋮⋮
+          </span>
+        )}
         {!inTrash && (
           <button
             type="button"
@@ -273,6 +332,15 @@ export function TaskCard({
             </>
           ) : (
             <>
+              <button
+                type="button"
+                className="icon-btn"
+                title="复制为副本（不含附件、重置为未完成）"
+                aria-label={`复制「${task.title}」`}
+                onClick={() => onDuplicate?.(task)}
+              >
+                ⧉
+              </button>
               <button
                 type="button"
                 className="icon-btn"

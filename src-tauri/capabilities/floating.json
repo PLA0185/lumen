@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "floating-windows",
+  "description": "悬浮今日窗与快速添加窗的能力集。这两个窗口只做少量自我操作（拖动、置顶、隐藏、监听配置事件），因此不给任何文件、对话框或 shell 权限，比主窗口更收敛。",
+  "windows": ["floating", "quick-add"],
+  "permissions": [
+    "core:event:default",
+    "core:app:allow-version",
+    "core:app:allow-name",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-is-always-on-top",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-scale-factor",
+    "log:default"
+  ]
+}

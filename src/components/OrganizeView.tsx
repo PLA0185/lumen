@@ -114,6 +114,153 @@ function DeleteDialog({ kind, name, impact, busy, onCancel, onConfirm }: DeleteD
 }
 
 // =============================================================================
+// 合并对话框（§4.2 项目 / 分类 / 标签的重复项合并）
+// =============================================================================
+
+/** 合并候选：只用到 id / 名称 / 关联任务数 */
+interface MergeItem {
+  id: string
+  name: string
+  count?: number
+}
+
+interface MergeDialogProps {
+  kind: '项目' | '分类' | '标签'
+  items: MergeItem[]
+  /** 从哪一行的「合并」按钮打开的：默认勾选为被合并项 */
+  initialSourceId: string
+  busy: boolean
+  onCancel: () => void
+  onConfirm: (sourceIds: string[], targetId: string) => void
+}
+
+/**
+ * 合并对话框。
+ *
+ * 语义刻意写成"保留一个，合并掉其余"：合并是**破坏性**的
+ * （源会被删除），所以必须让用户明确看到"哪个留下、哪些消失、
+ * 有多少任务会转移"，而不是一句"合并成功"。
+ */
+function MergeDialog({ kind, items, initialSourceId, busy, onCancel, onConfirm }: MergeDialogProps) {
+  const [sources, setSources] = useState<string[]>([initialSourceId])
+  const [target, setTarget] = useState<string>(
+    () => items.find((i) => i.id !== initialSourceId)?.id ?? '',
+  )
+
+  // 目标不能同时是被合并项：选了新目标就把冲突项移出
+  const toggleSource = (id: string) => {
+    if (id === target) return
+    setSources((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+  }
+
+  const pickTarget = (id: string) => {
+    setTarget(id)
+    setSources((s) => s.filter((x) => x !== id))
+  }
+
+  const movingCount = items
+    .filter((i) => sources.includes(i.id))
+    .reduce((n, i) => n + (i.count ?? 0), 0)
+  const targetName = items.find((i) => i.id === target)?.name ?? ''
+  const canSubmit = sources.length > 0 && target !== '' && !busy
+
+  if (items.length < 2) {
+    return (
+      <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="merge-title">
+        <div className="modal">
+          <h2 className="modal__title" id="merge-title">
+            合并{kind}
+          </h2>
+          <p className="modal__text">
+            至少要有两个{kind}才能合并。当前只有一个，无需合并。
+          </p>
+          <div className="modal__actions">
+            <button type="button" className="btn btn--primary" onClick={onCancel}>
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="merge-title">
+      <div className="modal">
+        <h2 className="modal__title" id="merge-title">
+          合并{kind}
+        </h2>
+        <p className="modal__text">
+          选择一个{kind}作为保留项，其余勾选的{kind}会被删除，它们名下的任务全部转到这里。
+          任务本身不会被删除，只改归属。
+        </p>
+
+        <label className="field field--block">
+          保留为
+          <select
+            className="input selectable"
+            value={target}
+            aria-label={`保留为哪个${kind}`}
+            onChange={(e) => pickTarget(e.target.value)}
+          >
+            {items.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.name}
+                {i.count !== undefined ? `（${i.count} 个任务）` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="field field--block">
+          合并掉（可多选）
+          <div className="mergepick">
+            {items
+              .filter((i) => i.id !== target)
+              .map((i) => (
+                <label key={i.id} className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={sources.includes(i.id)}
+                    onChange={() => toggleSource(i.id)}
+                  />
+                  {i.name}
+                  {i.count !== undefined && (
+                    <span className="orgrow__meta">{i.count} 个任务</span>
+                  )}
+                </label>
+              ))}
+          </div>
+        </div>
+
+        <p className="modal__text">
+          {sources.length === 0
+            ? '请至少勾选一个要合并掉的项。'
+            : `将把 ${sources.length} 个${kind}合并进「${targetName}」` +
+              (sources.some((s) => items.find((i) => i.id === s)?.count !== undefined)
+                ? `，预计转移 ${movingCount} 个任务。`
+                : '。')}
+        </p>
+
+        <div className="modal__actions">
+          <button type="button" className="btn btn--ghost" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!canSubmit}
+            onClick={() => onConfirm(sources, target)}
+          >
+            {busy ? '合并中…' : '确认合并'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
 // 主组件
 // =============================================================================
 
@@ -146,6 +293,12 @@ export function OrganizeView() {
     impact: org.DeleteImpact | null
   } | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // 合并（§4.2 重复项清理）
+  const [merging, setMerging] = useState<{
+    kind: '项目' | '分类' | '标签'
+    sourceId: string
+  } | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -266,6 +419,43 @@ export function OrganizeView() {
       await reload()
     } catch (e) {
       setError(errText(e))
+    }
+  }
+
+  // ------------------------------ 合并 ------------------------------
+  /** 当前标签页可参与合并的条目 */
+  const mergeItems: MergeItem[] =
+    merging === null
+      ? []
+      : merging.kind === '项目'
+        ? projects.map((p) => ({ id: p.id, name: p.name, count: p.totalCount }))
+        : merging.kind === '分类'
+          ? categories.map((c) => ({ id: c.id, name: c.name }))
+          : tags.map((t) => ({ id: t.id, name: t.name, count: t.taskCount }))
+
+  const confirmMerge = async (sourceIds: string[], targetId: string) => {
+    if (!merging) return
+    const targetName = mergeItems.find((i) => i.id === targetId)?.name ?? ''
+    setBusy(true)
+    setError(null)
+    try {
+      const moved =
+        merging.kind === '项目'
+          ? await org.projectMerge(sourceIds, targetId)
+          : merging.kind === '分类'
+            ? await org.categoryMerge(sourceIds, targetId)
+            : await org.tagMerge(sourceIds, targetId)
+      setMerging(null)
+      setNotice(
+        moved > 0
+          ? `已合并 ${sourceIds.length} 个${merging.kind}到「${targetName}」，转移 ${moved} 个任务`
+          : `已合并 ${sourceIds.length} 个${merging.kind}到「${targetName}」，没有需要转移的任务`,
+      )
+      await reload()
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -437,6 +627,15 @@ export function OrganizeView() {
                     </button>
                     <button
                       type="button"
+                      className="icon-btn"
+                      title="合并到其它项目"
+                      aria-label={`合并项目 ${p.name}`}
+                      onClick={() => setMerging({ kind: '项目', sourceId: p.id })}
+                    >
+                      ⇥
+                    </button>
+                    <button
+                      type="button"
                       className="icon-btn icon-btn--danger"
                       title="删除项目"
                       aria-label={`删除项目 ${p.name}`}
@@ -491,6 +690,15 @@ export function OrganizeView() {
                       }}
                     >
                       ✎
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      title="合并到其它分类"
+                      aria-label={`合并分类 ${c.name}`}
+                      onClick={() => setMerging({ kind: '分类', sourceId: c.id })}
+                    >
+                      ⇥
                     </button>
                     <button
                       type="button"
@@ -549,6 +757,15 @@ export function OrganizeView() {
                     </button>
                     <button
                       type="button"
+                      className="icon-btn"
+                      title="合并到其它标签"
+                      aria-label={`合并标签 ${t.name}`}
+                      onClick={() => setMerging({ kind: '标签', sourceId: t.id })}
+                    >
+                      ⇥
+                    </button>
+                    <button
+                      type="button"
                       className="icon-btn icon-btn--danger"
                       title="删除标签"
                       aria-label={`删除标签 ${t.name}`}
@@ -571,6 +788,17 @@ export function OrganizeView() {
           busy={busy}
           onCancel={() => setDeleting(null)}
           onConfirm={(s) => void confirmDelete(s)}
+        />
+      )}
+
+      {merging && (
+        <MergeDialog
+          kind={merging.kind}
+          items={mergeItems}
+          initialSourceId={merging.sourceId}
+          busy={busy}
+          onCancel={() => setMerging(null)}
+          onConfirm={(sources, target) => void confirmMerge(sources, target)}
         />
       )}
     </div>

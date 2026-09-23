@@ -5,6 +5,7 @@
 //! - 删除一律软删除；永久删除仅限回收站显式操作。
 //! - 输入全部校验后才落库，错误以 `AppError` 返回可读中文消息。
 
+use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
 use tauri::State;
 
@@ -212,16 +213,21 @@ async fn ensure_exists(
     Ok(())
 }
 
-/// 读取下一个手动排序值（§4.1 手动排序）
+/// 读取下一个手动排序值（§4.1 手动排序）。
+///
+/// **必须 CAST 成 REAL**：`sort_order` 是 REAL 列，但空表时
+/// `COALESCE(MAX(sort_order), 0) + 1` 的求值结果会被 SQLite 判成 INTEGER，
+/// 于是 sqlx 按 f64 解码时报 "SQL type INTEGER is not compatible"。
+/// 这个坑只在**全新数据库的第一条任务**上出现，很容易漏测。
 async fn next_sort_order(db: &Db) -> AppResult<f64> {
-    let row = sqlx::query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM tasks")
+    let row = sqlx::query("SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) AS n FROM tasks")
         .fetch_one(db.pool())
         .await?;
     Ok(row.try_get::<f64, _>("n")?)
 }
 
-/// 按 ID 读取单个任务
-async fn get_task_row(db: &Db, id: &str) -> AppResult<Task> {
+/// 按 ID 读取单个任务（`pub(crate)` 供集成测试复用）
+pub(crate) async fn get_task_row(db: &Db, id: &str) -> AppResult<Task> {
     let task = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?1")
         .bind(id)
         .fetch_optional(db.pool())
@@ -242,7 +248,11 @@ pub async fn task_create(
     state: State<'_, AppState>,
     input: CreateTaskInput,
 ) -> AppResult<Task> {
-    let db = &state.db;
+    create_task_impl(&state.db, input).await
+}
+
+/// 创建任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task> {
     let title = validate_title(&input.title)?;
     let description = validate_long_text("描述", input.description.as_deref().unwrap_or(""))?;
     let note_md = validate_long_text("备注", input.note_md.as_deref().unwrap_or(""))?;
@@ -341,8 +351,12 @@ pub async fn task_update(
     id: String,
     input: UpdateTaskInput,
 ) -> AppResult<Task> {
-    let db = &state.db;
-    let existing = get_task_row(db, &id).await?;
+    update_task_impl(&state.db, &id, input).await
+}
+
+/// 更新任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppResult<Task> {
+    let existing = get_task_row(db, id).await?;
     if existing.deleted_at.is_some() {
         return Err(AppError::conflict("任务已在回收站中，请先恢复再编辑"));
     }
@@ -393,92 +407,92 @@ pub async fn task_update(
     let mut sep = b.separated(", ");
 
     if let Some(v) = &title {
-        sep.push("title = ").push_bind(v);
+        sep.push("title = ").push_bind_unseparated(v);
     }
     if let Some(v) = &description {
-        sep.push("description = ").push_bind(v);
+        sep.push("description = ").push_bind_unseparated(v);
     }
     if let Some(v) = &note_md {
-        sep.push("note_md = ").push_bind(v);
+        sep.push("note_md = ").push_bind_unseparated(v);
     }
     if let Some(v) = &status {
-        sep.push("status = ").push_bind(*v);
+        sep.push("status = ").push_bind_unseparated(*v);
     }
     if let Some(v) = priority {
-        sep.push("priority = ").push_bind(v);
+        sep.push("priority = ").push_bind_unseparated(v);
     }
     if let Some(v) = &new_completed_at {
-        sep.push("completed_at = ").push_bind(v.clone());
+        sep.push("completed_at = ").push_bind_unseparated(v.clone());
     }
 
     // 项目/分类：支持显式清空
     if input.clear_project {
-        sep.push("project_id = ").push_bind(None::<String>);
+        sep.push("project_id = ").push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.project_id.as_deref().filter(|s| !s.is_empty()) {
-        sep.push("project_id = ").push_bind(v.to_string());
+        sep.push("project_id = ").push_bind_unseparated(v.to_string());
     }
     if input.clear_category {
-        sep.push("category_id = ").push_bind(None::<String>);
+        sep.push("category_id = ").push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.category_id.as_deref().filter(|s| !s.is_empty()) {
-        sep.push("category_id = ").push_bind(v.to_string());
+        sep.push("category_id = ").push_bind_unseparated(v.to_string());
     }
 
     // 计划时间：清空优先于赋值，避免两者同时传时行为歧义
     if input.clear_planned_at {
-        sep.push("planned_at = ").push_bind(None::<String>);
-        sep.push("has_planned_time = ").push_bind(0i64);
+        sep.push("planned_at = ").push_bind_unseparated(None::<String>);
+        sep.push("has_planned_time = ").push_bind_unseparated(0i64);
     } else if let Some(v) = &planned {
-        sep.push("planned_at = ").push_bind(v.clone());
+        sep.push("planned_at = ").push_bind_unseparated(v.clone());
         if let Some(h) = input.has_planned_time {
-            sep.push("has_planned_time = ").push_bind(h as i64);
+            sep.push("has_planned_time = ").push_bind_unseparated(h as i64);
         }
     } else if let Some(h) = input.has_planned_time {
         // 只切换"是否含具体时刻"，保留原日期
-        sep.push("has_planned_time = ").push_bind(h as i64);
+        sep.push("has_planned_time = ").push_bind_unseparated(h as i64);
     }
 
     // 截止时间：同上
     if input.clear_due_at {
-        sep.push("due_at = ").push_bind(None::<String>);
-        sep.push("has_due_time = ").push_bind(0i64);
+        sep.push("due_at = ").push_bind_unseparated(None::<String>);
+        sep.push("has_due_time = ").push_bind_unseparated(0i64);
     } else if let Some(v) = &due {
-        sep.push("due_at = ").push_bind(v.clone());
+        sep.push("due_at = ").push_bind_unseparated(v.clone());
         if let Some(h) = input.has_due_time {
-            sep.push("has_due_time = ").push_bind(h as i64);
+            sep.push("has_due_time = ").push_bind_unseparated(h as i64);
         }
     } else if let Some(h) = input.has_due_time {
-        sep.push("has_due_time = ").push_bind(h as i64);
+        sep.push("has_due_time = ").push_bind_unseparated(h as i64);
     }
 
     if input.clear_link {
-        sep.push("link_url = ").push_bind(None::<String>);
+        sep.push("link_url = ").push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.link_url.as_deref().filter(|s| !s.trim().is_empty()) {
-        sep.push("link_url = ").push_bind(v.to_string());
+        sep.push("link_url = ").push_bind_unseparated(v.to_string());
     }
 
     if let Some(v) = input.estimated_minutes {
-        sep.push("estimated_minutes = ").push_bind(v);
+        sep.push("estimated_minutes = ").push_bind_unseparated(v);
     }
     if let Some(v) = input.actual_minutes {
-        sep.push("actual_minutes = ").push_bind(v);
+        sep.push("actual_minutes = ").push_bind_unseparated(v);
     }
     if let Some(v) = input.is_pinned {
-        sep.push("is_pinned = ").push_bind(v as i64);
+        sep.push("is_pinned = ").push_bind_unseparated(v as i64);
     }
     if let Some(v) = input.is_favorite {
-        sep.push("is_favorite = ").push_bind(v as i64);
+        sep.push("is_favorite = ").push_bind_unseparated(v as i64);
     }
     // 周期跨度：传空串视为"取消周期"，与前端"不限"选项一致
     if let Some(v) = input.period_type.as_deref() {
-        sep.push("period_type = ").push_bind(validate_period(v)?.to_string());
+        sep.push("period_type = ").push_bind_unseparated(validate_period(v)?.to_string());
     }
 
-    sep.push("updated_at = ").push_bind(now);
-    b.push(" WHERE id = ").push_bind(&id);
+    sep.push("updated_at = ").push_bind_unseparated(now);
+    b.push(" WHERE id = ").push_bind(id);
 
     let affected = b.build().execute(&mut *tx).await?.rows_affected();
     if affected == 0 {
-        return Err(AppError::not_found("任务", &id));
+        return Err(AppError::not_found("任务", id));
     }
 
     tx.commit().await?;
@@ -491,10 +505,10 @@ pub async fn task_update(
         || input.clear_planned_at
         || input.clear_due_at
     {
-        crate::reminders::on_task_time_changed(db, &id).await;
+        crate::reminders::on_task_time_changed(db, id).await;
     }
 
-    get_task_row(db, &id).await
+    get_task_row(db, id).await
 }
 
 /// 完成 / 撤销完成。
@@ -778,6 +792,75 @@ pub async fn task_list(state: State<'_, AppState>, query: TaskQuery) -> AppResul
 #[tauri::command]
 pub async fn task_get(state: State<'_, AppState>, id: String) -> AppResult<Task> {
     get_task_row(&state.db, &id).await
+}
+
+/// 打印 / PDF 报告用的一行：任务本体 + 已解析好的归属名称。
+///
+/// 归属名称在 Rust 侧一次查完，而不是让前端对每条任务各调一次
+/// （1000 条任务会产生 1000 次 IPC 往返，§10 明确禁止这种写法）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskReportRow {
+    pub task: Task,
+    pub project_name: Option<String>,
+    pub category_name: Option<String>,
+    pub tag_names: Vec<String>,
+}
+
+/// 取报告数据：复用 `task_list` 的筛选语义，再补上归属名称。
+#[tauri::command]
+pub async fn task_report(
+    state: State<'_, AppState>,
+    query: TaskQuery,
+) -> AppResult<Vec<TaskReportRow>> {
+    let tasks = task_list(state.clone(), query).await?;
+    if tasks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let db = &state.db;
+
+    // 项目与分类都是小表，整表取出后在内存里映射，避免拼接超长 IN 列表
+    let projects: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM projects WHERE deleted_at IS NULL")
+            .fetch_all(db.pool())
+            .await?;
+    let categories: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM categories WHERE deleted_at IS NULL")
+            .fetch_all(db.pool())
+            .await?;
+    let project_map: std::collections::HashMap<String, String> = projects.into_iter().collect();
+    let category_map: std::collections::HashMap<String, String> = categories.into_iter().collect();
+
+    // 标签只查这批任务
+    let mut b = QueryBuilder::<Sqlite>::new(
+        "SELECT tt.task_id AS task_id, t.name AS name
+         FROM task_tags tt JOIN tags t ON t.id = tt.tag_id
+         WHERE t.deleted_at IS NULL AND tt.task_id IN (",
+    );
+    let mut sep = b.separated(", ");
+    for t in &tasks {
+        sep.push_bind(t.id.clone());
+    }
+    sep.push_unseparated(")");
+    b.push(" ORDER BY t.sort_order ASC, t.name ASC");
+
+    let tag_rows = b.build().fetch_all(db.pool()).await?;
+    let mut tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for r in tag_rows {
+        let task_id: String = r.try_get("task_id")?;
+        let name: String = r.try_get("name")?;
+        tag_map.entry(task_id).or_default().push(name);
+    }
+
+    Ok(tasks
+        .into_iter()
+        .map(|t| TaskReportRow {
+            project_name: t.project_id.as_ref().and_then(|id| project_map.get(id).cloned()),
+            category_name: t.category_id.as_ref().and_then(|id| category_map.get(id).cloned()),
+            tag_names: tag_map.get(&t.id).cloned().unwrap_or_default(),
+            task: t,
+        })
+        .collect())
 }
 
 /// 批量操作（§4.1 批量操作）。
@@ -1088,6 +1171,333 @@ pub async fn task_reschedule(
     crate::reminders::on_task_time_changed(db, &id).await;
 
     get_task_row(db, &id).await
+}
+
+/// 复制任务（§4.1 任务生命周期）。
+///
+/// 语义设计：
+/// - 新标题加「（副本）」后缀；若已存在同名副本则递增为「（副本 2）」，
+///   避免用户连续复制几次后分不清哪个是哪个。
+/// - **状态重置为未完成**，且不复制完成时间——复制一个已完成任务，
+///   用户要的是"再做一遍"，而不是复制一份"已完成的记录"。
+/// - 保留计划与截止时间（复制通常是为了重复同类安排），
+///   但清空提醒的触发记录，让提醒能对新任务重新生效。
+/// - 复制标签与子任务（子任务进度重置为未完成）。
+/// - **不复制附件**：附件的"复制模式"会占双份磁盘，且原件路径是共享的。
+///   界面会提示"附件需要单独添加"，而不是静默丢掉。
+#[tauri::command]
+pub async fn task_duplicate(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<serde_json::Value> {
+    duplicate_task_impl(&state.db, &id).await
+}
+
+/// 复制任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn duplicate_task_impl(db: &Db, id: &str) -> AppResult<serde_json::Value> {
+    let src = get_task_row(db, id).await?;
+    if src.deleted_at.is_some() {
+        return Err(AppError::conflict("任务在回收站中，无法复制"));
+    }
+
+    // 生成不冲突的副本标题
+    let base = format!("{}（副本）", src.title);
+    let mut title = base.clone();
+    let mut n = 2;
+    loop {
+        let exists: i64 = sqlx::query(
+            "SELECT COUNT(*) AS n FROM tasks WHERE title = ?1 AND deleted_at IS NULL",
+        )
+        .bind(&title)
+        .fetch_one(db.pool())
+        .await?
+        .try_get("n")?;
+        if exists == 0 {
+            break;
+        }
+        title = format!("{}（副本 {n}）", src.title);
+        n += 1;
+        if n > 999 {
+            return Err(AppError::conflict("同名副本过多，请先整理已有任务"));
+        }
+    }
+
+    let new_id = uuid::Uuid::now_v7().to_string();
+    let now = to_db_time(utc_now());
+    // 放在原任务之后：sort_order 取原值与下一个值的中点，
+    // 这样不会打乱其它任务的相对顺序（手动排序用的就是 REAL）
+    let next_order: f64 = sqlx::query(
+        // CAST 见 `next_sort_order` 的注释：空结果集时 SQLite 会给出 INTEGER
+        "SELECT CAST(COALESCE(MIN(sort_order), ?1 + 1) AS REAL) AS n
+         FROM tasks WHERE sort_order > ?1",
+    )
+    .bind(src.sort_order)
+    .fetch_one(db.pool())
+    .await?
+    .try_get("n")?;
+    let sort_order = if next_order > src.sort_order {
+        (src.sort_order + next_order) / 2.0
+    } else {
+        src.sort_order + 1.0
+    };
+
+    let mut tx = db.pool().begin().await?;
+
+    sqlx::query(
+        "INSERT INTO tasks (
+            id, title, description, note_md, link_url,
+            status, priority, project_id, category_id,
+            planned_at, has_planned_time, due_at, has_due_time,
+            estimated_minutes, actual_minutes,
+            completed_at, created_at, updated_at,
+            sort_order, is_pinned, is_favorite,
+            series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception,
+            period_type
+         ) VALUES (
+            ?1, ?2, ?3, ?4, ?5,
+            'todo', ?6, ?7, ?8,
+            ?9, ?10, ?11, ?12,
+            ?13, 0,
+            NULL, ?14, ?14,
+            ?15, 0, ?16,
+            NULL, NULL, NULL, 'single', 0,
+            ?17
+         )",
+    )
+    .bind(&new_id)
+    .bind(&title)
+    .bind(&src.description)
+    .bind(&src.note_md)
+    .bind(&src.link_url)
+    .bind(src.priority)
+    .bind(&src.project_id)
+    .bind(&src.category_id)
+    .bind(&src.planned_at)
+    .bind(src.has_planned_time)
+    .bind(&src.due_at)
+    .bind(src.has_due_time)
+    .bind(src.estimated_minutes)
+    .bind(&now)
+    .bind(sort_order)
+    .bind(src.is_favorite)
+    .bind(&src.period_type)
+    .execute(&mut *tx)
+    .await?;
+
+    // 复制标签
+    let tags = sqlx::query(
+        "INSERT OR IGNORE INTO task_tags (task_id, tag_id) SELECT ?1, tag_id FROM task_tags WHERE task_id = ?2",
+    )
+    .bind(&new_id)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
+
+    // 复制子任务，但进度重置（副本是"再做一遍"）
+    let subtasks = sqlx::query(
+        "INSERT INTO subtasks (id, task_id, title, is_done, sort_order, completed_at, created_at, updated_at)
+         SELECT lower(hex(randomblob(16))), ?1, title, 0, sort_order, NULL, ?2, ?2
+         FROM subtasks WHERE task_id = ?3",
+    )
+    .bind(&new_id)
+    .bind(&now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
+
+    // 复制提醒，但清空 fired_at —— 否则新任务的提醒永远不会触发
+    let reminders = sqlx::query(
+        "INSERT INTO reminders (id, task_id, kind, offset_minutes, remind_at, is_enabled, fired_at, snoozed_until, created_at, updated_at)
+         SELECT lower(hex(randomblob(16))), ?1, kind, offset_minutes, remind_at, is_enabled, NULL, NULL, ?2, ?2
+         FROM reminders WHERE task_id = ?3",
+    )
+    .bind(&new_id)
+    .bind(&now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
+
+    // 附件数量（用于提示用户"附件未复制"）
+    let attachments: i64 = sqlx::query("SELECT COUNT(*) AS n FROM attachments WHERE task_id = ?1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?
+        .try_get("n")?;
+
+    tx.commit().await?;
+
+    log::info!(
+        "已复制任务 {id} → {new_id}（标签 {tags}、子任务 {subtasks}、提醒 {reminders}）"
+    );
+
+    Ok(serde_json::json!({
+        "newTaskId": new_id,
+        "title": title,
+        "copiedTags": tags,
+        "copiedSubtasks": subtasks,
+        "copiedReminders": reminders,
+        // 附件刻意不复制，界面据此提示
+        "skippedAttachments": attachments,
+        "note": if attachments > 0 {
+            format!("已复制任务，但 {attachments} 个附件未一起复制——附件的原件是共享的，请在新任务上按需重新添加。")
+        } else {
+            "已复制任务".to_string()
+        },
+    }))
+}
+
+/// 拖拽排序的输入（§4.1「拖拽排序和状态变更」）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReorderInput {
+    /// 被移动的任务
+    pub moved_id: String,
+    /// 目标位置：移动到该任务之前；为 None 表示移到末尾
+    #[serde(default)]
+    pub before_id: Option<String>,
+}
+
+/// 手动排序：把任务移动到指定位置。
+///
+/// 实现用**中点插入法**：新 sort_order 取前后两个任务的中点值，
+/// 只更新被移动的那一行，而不是重排整表。这样：
+/// - 单次操作是 O(1) 次写入，上千条任务也不卡；
+/// - 其它任务的相对顺序完全不受影响。
+///
+/// 中点法会让相邻差不断减半，约 50 次同位置插入后 REAL 精度可能不足。
+/// 因此在差值过小时**自动重新编号**（间隔 1000），这只在极端情况下发生。
+#[tauri::command]
+pub async fn task_reorder(
+    state: State<'_, AppState>,
+    input: ReorderInput,
+) -> AppResult<f64> {
+    reorder_task_impl(&state.db, &input).await
+}
+
+/// 排序实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn reorder_task_impl(db: &Db, input: &ReorderInput) -> AppResult<f64> {
+    let moved = get_task_row(db, &input.moved_id).await?;
+    if moved.deleted_at.is_some() {
+        return Err(AppError::conflict("任务在回收站中，无法排序"));
+    }
+
+    // 只在"手动排序"语境下有意义：其它排序规则会覆盖 sort_order 的效果，
+    // 但值仍会被保存，切回手动排序时生效。这里不阻止，只记日志。
+    let now = to_db_time(utc_now());
+
+    // 取邻居 → 算中点。若前后差值已被"对半砍"到精度不足，就重新编号，
+    // 然后**必须重新取一次邻居**再算：用旧的 p/n 会算出一个落在错误位置的
+    // 值（实测表现为"任务被插到了列表最前面"）。
+    let mut renumbered = false;
+    let new_order = loop {
+        let (prev_order, next_order) =
+            reorder_neighbors(db, &input.moved_id, input.before_id.as_deref()).await?;
+        match (prev_order, next_order) {
+            (Some(p), Some(n)) if (n - p).abs() < 1e-6 => {
+                if renumbered {
+                    // 重新编号后依然分不开，说明数据已被外部改坏，明确报错而不是乱插
+                    return Err(AppError::conflict(
+                        "排序值精度不足，无法在两者之间插入",
+                    )
+                    .with_hint("请在设置中执行一次「数据维护」，或把该任务拖到列表末尾"));
+                }
+                renumbered = true;
+                renumber_sort_orders(db).await?;
+            }
+            (Some(p), Some(n)) => break p + (n - p) / 2.0,
+            (Some(p), None) => break p + 1000.0,
+            (None, Some(n)) => break n - 1000.0,
+            // 列表里只有它自己
+            (None, None) => break 0.0,
+        }
+    };
+
+    sqlx::query("UPDATE tasks SET sort_order = ?1, updated_at = ?2 WHERE id = ?3")
+        .bind(new_order)
+        .bind(&now)
+        .bind(&input.moved_id)
+        .execute(db.pool())
+        .await?;
+
+    Ok(new_order)
+}
+
+/// 取"插入到 before 之前"所需的左右邻居排序值。
+///
+/// 注意排除被移动任务自身，否则它会把自己当成邻居，算出错误的中点。
+/// `before` 为 None（或等于自己）表示移到末尾。
+async fn reorder_neighbors(
+    db: &Db,
+    moved_id: &str,
+    before_id: Option<&str>,
+) -> AppResult<(Option<f64>, Option<f64>)> {
+    match before_id {
+        Some(before) if before != moved_id => {
+            let target =
+                sqlx::query("SELECT sort_order FROM tasks WHERE id = ?1 AND deleted_at IS NULL")
+                    .bind(before)
+                    .fetch_optional(db.pool())
+                    .await?
+                    .ok_or_else(|| AppError::not_found("目标任务", before))?;
+            let t: f64 = target.try_get("sort_order")?;
+
+            let prev: Option<(f64,)> = sqlx::query_as(
+                "SELECT sort_order FROM tasks
+                 WHERE deleted_at IS NULL AND id <> ?1 AND sort_order < ?2
+                 ORDER BY sort_order DESC LIMIT 1",
+            )
+            .bind(moved_id)
+            .bind(t)
+            .fetch_optional(db.pool())
+            .await?;
+
+            Ok((prev.map(|(v,)| v), Some(t)))
+        }
+        _ => {
+            // 移到末尾
+            let last: Option<(f64,)> = sqlx::query_as(
+                "SELECT sort_order FROM tasks
+                 WHERE deleted_at IS NULL AND id <> ?1
+                 ORDER BY sort_order DESC LIMIT 1",
+            )
+            .bind(moved_id)
+            .fetch_optional(db.pool())
+            .await?;
+            Ok((last.map(|(v,)| v), None))
+        }
+    }
+}
+
+/// 把全部任务的 sort_order 按当前顺序重新编号为 1000 的整数倍。
+///
+/// 用途有两个：中点插入导致精度不足时修复；以及为将来的"批量排序"提供基础。
+/// 只更新未删除任务，已删除的保持原值（回收站恢复后顺序不乱）。
+async fn renumber_sort_orders(db: &Db) -> AppResult<usize> {
+    let ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM tasks WHERE deleted_at IS NULL
+         ORDER BY is_pinned DESC, sort_order ASC, created_at DESC",
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
+    let mut n = 0usize;
+    for (i, (id,)) in ids.iter().enumerate() {
+        sqlx::query("UPDATE tasks SET sort_order = ?1, updated_at = ?2 WHERE id = ?3")
+            .bind((i as f64 + 1.0) * 1000.0)
+            .bind(&now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        n += 1;
+    }
+    tx.commit().await?;
+    log::info!("已重新编号 {n} 个任务的排序值（修复中点插入的精度不足）");
+    Ok(n)
 }
 
 /// 数据目录信息（§9：提供数据目录查看、一键打开日志目录）

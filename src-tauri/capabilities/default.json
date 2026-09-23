@@ -39,6 +39,8 @@
     "autostart:default",
     "store:default",
     "window-state:default",
-    "log:default"
+    "log:default",
+    "updater:default",
+    "process:default"
   ]
 }

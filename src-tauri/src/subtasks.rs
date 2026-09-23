@@ -13,7 +13,7 @@ use sqlx::{QueryBuilder, Row, Sqlite};
 use tauri::State;
 
 use crate::commands::AppState;
-use crate::db::{to_db_time, utc_now};
+use crate::db::{to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 子任务标题上限
@@ -58,6 +58,11 @@ pub async fn subtask_create(
     task_id: String,
     title: String,
 ) -> AppResult<Subtask> {
+    create_subtask_impl(&state.db, &task_id, &title).await
+}
+
+/// 创建子任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn create_subtask_impl(db: &Db, task_id: &str, title: &str) -> AppResult<Subtask> {
     let t = title.trim();
     if t.is_empty() {
         return Err(AppError::validation("子任务标题不能为空"));
@@ -70,19 +75,19 @@ pub async fn subtask_create(
     }
 
     let exists: i64 = sqlx::query("SELECT COUNT(*) AS n FROM tasks WHERE id = ?1 AND deleted_at IS NULL")
-        .bind(&task_id)
-        .fetch_one(state.db.pool())
+        .bind(task_id)
+        .fetch_one(db.pool())
         .await?
         .try_get("n")?;
     if exists == 0 {
-        return Err(AppError::not_found("任务", &task_id));
+        return Err(AppError::not_found("任务", task_id));
     }
 
     let id = uuid::Uuid::now_v7().to_string();
     let now = to_db_time(utc_now());
-    let row = sqlx::query("SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM subtasks WHERE task_id = ?1")
-        .bind(&task_id)
-        .fetch_one(state.db.pool())
+    let row = sqlx::query("SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) AS n FROM subtasks WHERE task_id = ?1")
+        .bind(task_id)
+        .fetch_one(db.pool())
         .await?;
     let sort_order: f64 = row.try_get("n")?;
 
@@ -91,20 +96,20 @@ pub async fn subtask_create(
          VALUES (?1, ?2, ?3, 0, ?4, ?5, ?5)",
     )
     .bind(&id)
-    .bind(&task_id)
+    .bind(task_id)
     .bind(t)
     .bind(sort_order)
     .bind(&now)
-    .execute(state.db.pool())
+    .execute(db.pool())
     .await?;
 
-    get_subtask(&state, &id).await
+    get_subtask(db, &id).await
 }
 
-async fn get_subtask(state: &AppState, id: &str) -> AppResult<Subtask> {
+async fn get_subtask(db: &Db, id: &str) -> AppResult<Subtask> {
     let s = sqlx::query_as::<_, Subtask>("SELECT * FROM subtasks WHERE id = ?1")
         .bind(id)
-        .fetch_optional(state.db.pool())
+        .fetch_optional(db.pool())
         .await?;
     s.ok_or_else(|| AppError::not_found("子任务", id))
 }
@@ -124,6 +129,15 @@ pub async fn subtask_list(
     Ok(rows)
 }
 
+/// 子任务的部分更新入参（`None` = 不修改该字段）
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubtaskPatch {
+    pub title: Option<String>,
+    pub is_done: Option<bool>,
+    pub sort_order: Option<f64>,
+}
+
 /// 更新子任务（标题 / 完成状态 / 排序）
 #[tauri::command]
 pub async fn subtask_update(
@@ -133,9 +147,23 @@ pub async fn subtask_update(
     is_done: Option<bool>,
     sort_order: Option<f64>,
 ) -> AppResult<Subtask> {
-    get_subtask(&state, &id).await?;
+    update_subtask_impl(
+        &state.db,
+        &id,
+        SubtaskPatch {
+            title,
+            is_done,
+            sort_order,
+        },
+    )
+    .await
+}
 
-    let new_title = match &title {
+/// 更新子任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppResult<Subtask> {
+    get_subtask(db, id).await?;
+
+    let new_title = match &patch.title {
         Some(t) => {
             let v = t.trim();
             if v.is_empty() {
@@ -156,27 +184,28 @@ pub async fn subtask_update(
     let mut b = QueryBuilder::<Sqlite>::new("UPDATE subtasks SET ");
     let mut sep = b.separated(", ");
     if let Some(t) = &new_title {
-        sep.push("title = ").push_bind(t.clone());
+        sep.push("title = ").push_bind_unseparated(t.clone());
     }
-    if let Some(d) = is_done {
-        sep.push("is_done = ").push_bind(d as i64);
+    if let Some(d) = patch.is_done {
+        sep.push("is_done = ").push_bind_unseparated(d as i64);
         // 完成时间必须真实记录，与主任务同一规则（§4.1）
-        sep.push("completed_at = ").push_bind(if d { Some(now.clone()) } else { None });
+        sep.push("completed_at = ")
+            .push_bind_unseparated(if d { Some(now.clone()) } else { None });
     }
-    if let Some(o) = sort_order {
-        sep.push("sort_order = ").push_bind(o);
+    if let Some(o) = patch.sort_order {
+        sep.push("sort_order = ").push_bind_unseparated(o);
     }
-    sep.push("updated_at = ").push_bind(now);
-    b.push(" WHERE id = ").push_bind(&id);
+    sep.push("updated_at = ").push_bind_unseparated(now);
+    b.push(" WHERE id = ").push_bind(id);
 
-    b.build().execute(state.db.pool()).await?;
-    get_subtask(&state, &id).await
+    b.build().execute(db.pool()).await?;
+    get_subtask(db, id).await
 }
 
 /// 删除子任务
 #[tauri::command]
 pub async fn subtask_delete(state: State<'_, AppState>, id: String) -> AppResult<i64> {
-    get_subtask(&state, &id).await?;
+    get_subtask(&state.db, &id).await?;
     let n = sqlx::query("DELETE FROM subtasks WHERE id = ?1")
         .bind(&id)
         .execute(state.db.pool())

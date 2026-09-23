@@ -571,6 +571,40 @@ select {
   background: linear-gradient(90deg, var(--c-accent-soft), transparent 42%), var(--c-surface);
 }
 
+/* ---------------------------- 拖拽排序 ---------------------------- */
+.task--draggable {
+  cursor: grab;
+}
+
+.task--dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+/* 落点提示：在被覆盖卡片上方画一条插入线 */
+.task--drop-before {
+  box-shadow: 0 -2px 0 0 var(--c-accent);
+}
+
+.task__grip {
+  flex: none;
+  margin-top: 1px;
+  padding: 0 2px;
+  font-size: 0.9em;
+  letter-spacing: -2px;
+  line-height: 1;
+  color: var(--c-text-3);
+  cursor: grab;
+  user-select: none;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.task:hover .task__grip,
+.task:focus-within .task__grip {
+  opacity: 0.75;
+}
+
 /* 复选框 */
 .task__check {
   flex: none;
@@ -840,6 +874,36 @@ select {
   border-color: var(--c-accent);
 }
 
+/* 竖向字段（合并对话框用）：标签在上，控件在下 */
+.field--block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+  margin: 12px 0;
+}
+
+.field--block > select {
+  width: 100%;
+}
+
+/* 合并对话框里的多选列表 */
+.mergepick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  padding: 8px 10px;
+  overflow-y: auto;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+}
+
+.mergepick .checkbox {
+  gap: 7px;
+}
+
 .quickadd__hint {
   margin-top: 7px;
   font-size: 0.8em;
@@ -887,6 +951,12 @@ select {
 }
 .toast--info {
   border-left-color: var(--c-info);
+}
+
+/* 提醒条：比普通提示更醒目，并且不自动消失（用户可能离开过电脑） */
+.toast--reminder {
+  border-left-color: var(--c-warn);
+  background: var(--c-warn-soft);
 }
 
 @keyframes toast-in {
@@ -2731,6 +2801,7 @@ body[data-window='quick-add'] {
 }
 
 .floating {
+  position: relative; /* 缩放把手与编辑表单要相对它定位 */
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -2786,6 +2857,21 @@ body[data-window='quick-add'] {
 .floating__btn:hover {
   color: var(--c-text);
   background: var(--c-surface-hover);
+}
+
+/* 置顶开启时给按钮一个明确的高亮态，避免"看不出现在是不是置顶" */
+.floating__btn--on {
+  color: var(--c-accent);
+  background: var(--c-accent-soft);
+}
+
+/* 顶栏按钮区：整栏是拖动区，但按钮本身不能起拖 */
+.floating__tools {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  cursor: default;
 }
 
 .floating__through {
@@ -2860,6 +2946,72 @@ body[data-window='quick-add'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border-radius: 3px;
+  cursor: text;
+}
+
+.floating__text:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* 就地改名的输入框：占满标题原有位置，避免窗口宽度跳动 */
+.floating__edit {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: 1px solid var(--c-accent);
+  border-radius: 3px;
+}
+
+/* 悬浮窗内直接添加今天任务 */
+.floating__add {
+  display: flex;
+  flex: none;
+  gap: 5px;
+  align-items: center;
+  padding: 6px 9px 7px;
+  border-top: 1px solid var(--c-border);
+}
+
+.floating__add-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 0.82em;
+  color: var(--c-text);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+}
+
+.floating__add-input:focus {
+  border-color: var(--c-accent);
+  outline: none;
+}
+
+.floating__add-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--c-accent);
+  border-radius: var(--radius-sm);
+}
+
+.floating__add-btn:hover:not(:disabled) {
+  background: var(--c-accent-soft);
+}
+
+.floating__add-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .floating__time {
@@ -2895,6 +3047,141 @@ body[data-window='quick-add'] {
   flex: none;
   padding: 6px 11px;
   border-top: 1px solid var(--c-border);
+}
+
+/* ------------------------- 悬浮窗：不透明度与尺寸 -------------------------
+   两个控件都必须能被拖动，所以它们所在的区域要显式排除在"拖动窗口"
+   之外（见 FloatingToday 的 onMouseDown）。 */
+
+.floating__opacity {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.75em;
+  color: var(--c-text-3);
+  cursor: default;
+}
+
+.floating__opacity-label {
+  flex: none;
+  font-size: 1.05em;
+  opacity: 0.8;
+}
+
+.floating__opacity-value {
+  flex: none;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 滑块本体：轨道细、滑块大，方便在小窗口里精确拖动 */
+.floating__opacity input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  height: 14px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.floating__opacity input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--c-border-strong);
+  border-radius: 999px;
+}
+
+.floating__opacity input[type='range']::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  appearance: none;
+  background: var(--c-accent);
+  border: 1px solid var(--c-surface);
+  border-radius: 999px;
+}
+
+.floating__opacity input[type='range']:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+.floating__foot .floating__hint {
+  display: block;
+  margin-top: 4px;
+}
+
+/* 右下角缩放把手：用三条斜线示意"可拖动改变大小" */
+.floating__resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background-image: linear-gradient(
+    135deg,
+    transparent 0 46%,
+    var(--c-border-strong) 46% 54%,
+    transparent 54% 100%
+  );
+  background-size: 6px 6px;
+  background-position: 5px 5px;
+  border-bottom-right-radius: var(--radius-lg);
+  opacity: 0.55;
+  z-index: 5;
+}
+
+.floating__resize:hover {
+  opacity: 1;
+}
+
+/* 列表项上的"打开完整编辑"按钮：平时淡显，悬停变清晰 */
+.floating__item-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  font-size: 0.8em;
+  color: var(--c-text-3);
+  border-radius: var(--radius-sm);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.floating__item:hover .floating__item-btn,
+.floating__item:focus-within .floating__item-btn {
+  opacity: 1;
+}
+
+.floating__item-btn:hover:not(:disabled) {
+  color: var(--c-text);
+  background: var(--c-surface-hover);
+}
+
+/* 悬浮窗里的完整编辑表单：小窗口里让表单铺满并自己滚动，
+   否则 300px 宽下会出现横向滚动条与被裁掉的字段。 */
+body[data-window='floating'] .modal-backdrop {
+  padding: 0;
+}
+
+body[data-window='floating'] .modal,
+body[data-window='floating'] .modal--wide {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
+  border-radius: 0;
+  overflow-y: auto;
+}
+
+body[data-window='floating'] .modal__actions {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 0;
+  background: var(--c-surface);
 }
 
 /* ----------------------------- 快速添加窗 ----------------------------- */
@@ -3490,6 +3777,256 @@ body[data-window='quick-add'] {
 .focuspanel__stats strong {
   color: var(--c-text);
   font-variant-numeric: tabular-nums;
+}
+
+/* =============================================================================
+   打印报告（PDF 导出）
+   =============================================================================
+   导出 PDF 时把界面切成"只有报告"：WebView2 的 PrintToPdf 打印的是当前
+   页面，所以屏幕上看到的必须就是 PDF 里有的。
+   报告强制使用浅色配色——深色主题打印出来会是一大块黑底。 */
+
+#print-report {
+  display: none;
+}
+
+body[data-print='on'] #print-report {
+  display: block;
+}
+
+body[data-print='on'] .app {
+  display: none;
+  /* 隐藏但保留在文档流里会让分页出错，因此直接用 display:none */
+}
+
+.report {
+  max-width: 190mm;
+  padding: 12mm 0;
+  margin: 0 auto;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.5;
+  color: #111;
+  background: #fff;
+}
+
+.report__head {
+  padding-bottom: 8px;
+  border-bottom: 2px solid #111;
+}
+
+.report__title {
+  margin: 0;
+  font-size: 19pt;
+  font-weight: 700;
+}
+
+.report__sub {
+  margin-top: 3px;
+  font-size: 9.5pt;
+  color: #444;
+}
+
+.report__stats {
+  display: flex;
+  gap: 22px;
+  padding: 10px 0;
+  border-bottom: 1px solid #bbb;
+}
+
+.report__stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.report__stat-num {
+  font-size: 16pt;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.report__stat-num--danger {
+  color: #b3261e;
+}
+
+.report__stat-label {
+  font-size: 8.5pt;
+  color: #555;
+}
+
+.report__group {
+  margin-top: 14px;
+}
+
+.report__group-title {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  margin: 0 0 5px;
+  font-size: 12pt;
+  font-weight: 650;
+  border-bottom: 1px solid #999;
+}
+
+.report__group-count {
+  font-size: 9pt;
+  font-weight: 400;
+  color: #666;
+}
+
+.report__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.report__table th,
+.report__table td {
+  padding: 4px 5px;
+  font-size: 9.5pt;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #ddd;
+  overflow-wrap: anywhere;
+}
+
+/* 表头在换页后重复，长清单才有可读性 */
+.report__table thead {
+  display: table-header-group;
+}
+
+.report__table th {
+  font-weight: 650;
+  color: #333;
+  background: #f2f2f2;
+  border-bottom: 1px solid #999;
+}
+
+/* 一行任务尽量不跨页断开 */
+.report__table tr {
+  page-break-inside: avoid;
+}
+
+.report__col-idx {
+  width: 7mm;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+
+.report__col-state {
+  width: 18mm;
+}
+
+.report__col-time {
+  width: 24mm;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.report__col-prio {
+  width: 12mm;
+}
+
+.report__col-org {
+  width: 26mm;
+}
+
+.report__col-tags {
+  width: 28mm;
+}
+
+.report__row--overdue td {
+  background: #fdf1f0;
+}
+
+.report__row--overdue .report__task-title {
+  color: #8c1d18;
+}
+
+.report__task-title {
+  font-weight: 600;
+}
+
+.report__task-desc {
+  margin-top: 1px;
+  font-size: 9pt;
+  color: #444;
+}
+
+.report__task-note {
+  margin-top: 1px;
+  font-size: 8.5pt;
+  color: #666;
+}
+
+.report__empty {
+  padding: 24px 0;
+  color: #555;
+  text-align: center;
+}
+
+.report__foot {
+  padding-top: 8px;
+  margin-top: 16px;
+  font-size: 8.5pt;
+  color: #666;
+  border-top: 1px solid #bbb;
+}
+
+/* ---------------------------- 更新卡片（§9） ---------------------------- */
+.updatecard {
+  padding: 10px 12px;
+  margin-top: 10px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-left: 3px solid var(--c-accent);
+  border-radius: var(--radius);
+}
+
+.updatecard__head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.95em;
+}
+
+.updatecard__from {
+  margin-left: auto;
+  font-size: 0.85em;
+  color: var(--c-text-3);
+}
+
+.updatecard__date {
+  margin-top: 3px;
+  font-size: 0.82em;
+  color: var(--c-text-3);
+}
+
+/* 更新说明来自 release，保留原始换行 */
+.updatecard__notes {
+  max-height: 220px;
+  padding: 8px 10px;
+  margin: 8px 0 4px;
+  overflow: auto;
+  font-family: inherit;
+  font-size: 0.85em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+}
+
+/* 真正打印时去掉圆角与阴影，避免出现灰色边缘 */
+@media print {
+  .report {
+    max-width: none;
+    padding: 0;
+  }
+
+  .report__table tr {
+    break-inside: avoid;
+  }
 }
 
 

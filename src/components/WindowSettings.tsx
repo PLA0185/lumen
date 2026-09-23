@@ -350,6 +350,39 @@ export function WindowSettings() {
 
         <div className="setrow">
           <div className="setrow__label">
+            <div className="setrow__title">悬浮窗大小</div>
+            <div className="setrow__desc">
+              当前 {Math.round(cfg.floatingWidth)} × {Math.round(cfg.floatingHeight)}。
+              也可以直接拖动悬浮窗右下角的把手调整，松手后自动记住。
+            </div>
+          </div>
+          <div className="setrow__control">
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              disabled={busy}
+              title="恢复为默认尺寸 320 × 460"
+              onClick={() =>
+                void (async () => {
+                  try {
+                    const applied = await win.windowSetFloatingSize(320, 460)
+                    await apply({
+                      floatingWidth: applied.width,
+                      floatingHeight: applied.height,
+                    })
+                  } catch (e) {
+                    setError(errText(e))
+                  }
+                })()
+              }
+            >
+              恢复默认大小
+            </button>
+          </div>
+        </div>
+
+        <div className="setrow">
+          <div className="setrow__label">
             <div className="setrow__title">悬浮窗始终置顶</div>
             <div className="setrow__desc">让今日清单浮在其它窗口之上。</div>
           </div>

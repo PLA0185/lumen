@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 任务编辑对话框（任务书 §4.1 完整字段集）。
  *
  * ## 关键设计：三个时间字段必须分得清
@@ -25,6 +25,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import * as ipc from '../lib/ipc'
+import * as bus from '../lib/bus'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/datetime'
@@ -210,6 +211,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
       const saved = await ipc.updateTask(task.id, patch)
       // 标签用整体替换语义，单独调用
       await org.taskTagsSet(task.id, tagIds)
+      // 悬浮窗可能正显示这条任务，改完立刻广播
+      void bus.notifyTasksChanged()
       onSaved(saved)
       onClose()
     } catch (e) {

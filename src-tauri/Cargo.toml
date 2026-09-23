@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lumen —— 本地优先的智能任务管理（可选 AI 辅助）"
 authors = ["Lumen"]
 edition = "2021"
@@ -103,6 +103,15 @@ regex = "1"
 # 文件哈希与校验：备份完整性（§9 "附带版本号和校验"）
 sha2 = "0.10"
 hex = "0.4"
+tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
+tauri-plugin-process = "2"
+
+# ---- Windows 专属：PDF 导出走 WebView2 自身的 PrintToPdf ----
+# 版本必须与 tauri 依赖的 webview2-com / windows 保持一致，
+# 否则同一个 COM 接口会出现两份定义而无法互相 cast。
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
 
 [features]
 # 由 tauri.conf.json 的 withGlobalTauri 控制；此处仅保留 custom-protocol 契约

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { save, open } from '@tauri-apps/plugin-dialog'
+import { UpdatePanel } from './UpdatePanel'
 import * as bk from '../lib/backup-ipc'
 import { IpcError } from '../lib/ipc'
 import * as rem from '../lib/reminder-ipc'
@@ -847,6 +848,9 @@ export function SettingsView() {
           </p>
         </div>
       )}
+
+      {/* ---------------------------- 软件更新（§9） ---------------------------- */}
+      {tab === 'about' && <UpdatePanel currentVersion={appInfo?.version} />}
     </div>
   )
 }
