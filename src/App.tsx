@@ -15,6 +15,7 @@ import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
 import { CalendarView } from './components/CalendarView'
+import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
 import { RecurringTaskDialog } from './components/RecurringTaskDialog'
@@ -389,6 +390,11 @@ function TaskArea({
   // 看板视图（按状态分列 + 拖拽改状态）
   if (view === 'board') {
     return <BoardView onEdit={onEdit} />
+  }
+
+  // 统计与成长（§7）
+  if (view === 'stats') {
+    return <StatsView />
   }
 
   // 未实现的视图：明确说明，而不是假装能用

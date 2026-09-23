@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 设置页（任务书 §3 / §9）。
  *
  * 本页承担三件事：
@@ -20,6 +20,7 @@ import { IpcError } from '../lib/ipc'
 import * as rem from '../lib/reminder-ipc'
 import { useApp } from '../lib/store'
 import { WindowSettings } from './WindowSettings'
+import { AiPanel } from './AiPanel'
 import type { BackupEntry, ImportPreview } from '../lib/backup-ipc'
 import type { DataPaths } from '../lib/types'
 
@@ -27,7 +28,7 @@ function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
 }
 
-type Tab = 'appearance' | 'window' | 'data' | 'reminders' | 'about'
+type Tab = 'appearance' | 'window' | 'ai' | 'data' | 'reminders' | 'about'
 
 export function SettingsView() {
   const { appInfo, dataPaths, theme, setTheme, pushToast } = useApp()
@@ -277,6 +278,7 @@ export function SettingsView() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
     { id: 'window', label: '窗口' },
+    { id: 'ai', label: 'AI' },
     { id: 'data', label: '数据与备份' },
     { id: 'reminders', label: '提醒' },
     { id: 'about', label: '关于' },
@@ -413,6 +415,9 @@ export function SettingsView() {
 
       {/* ---------------------------- 窗口 ---------------------------- */}
       {tab === 'window' && <WindowSettings />}
+
+      {/* ---------------------------- AI ---------------------------- */}
+      {tab === 'ai' && <AiPanel />}
 
       {/* ---------------------------- 数据与备份 ---------------------------- */}
       {tab === 'data' && (

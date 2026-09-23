@@ -2945,6 +2945,463 @@ body[data-window='quick-add'] {
   color: var(--c-text-3);
 }
 
+/* =============================================================================
+   统计与成长（§7）
+   ============================================================================= */
+
+.stats {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.stats__bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stats__bar .btn {
+  margin-left: auto;
+}
+
+/* 口径说明必须常驻可见：§7 要求清楚标注分母、时间范围与计数口径 */
+.stats__scope {
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  font-size: 0.82em;
+  line-height: 1.65;
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+  border-left: 3px solid var(--c-accent);
+  border-radius: var(--radius-sm);
+}
+
+.statcards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.statcard {
+  padding: 12px 14px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.statcard__label {
+  font-size: 0.8em;
+  color: var(--c-text-3);
+}
+
+.statcard__value {
+  margin-top: 3px;
+  font-size: 1.5em;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.statcard__unit {
+  font-size: 0.55em;
+  font-weight: 500;
+  color: var(--c-text-3);
+}
+
+.statcard__sub {
+  margin-top: 4px;
+  font-size: 0.78em;
+  line-height: 1.5;
+  color: var(--c-text-3);
+}
+
+/* 纯 CSS 柱状图：避免为一张图引入图表库，也更容易做主题适配 */
+.chart {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  height: 150px;
+  padding: 8px 4px 0;
+  overflow-x: auto;
+}
+
+.chart__col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 14px;
+  height: 100%;
+}
+
+.chart__bars {
+  display: flex;
+  flex: 1;
+  gap: 2px;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 0;
+}
+
+.chart__bar {
+  width: 6px;
+  min-height: 1px;
+  border-radius: 2px 2px 0 0;
+  transition: height var(--dur) var(--ease);
+}
+
+.chart__bar--planned {
+  background: var(--c-border-strong);
+}
+
+.chart__bar--done {
+  background: var(--c-accent);
+}
+
+.chart__label {
+  flex: none;
+  margin-top: 4px;
+  font-size: 0.62em;
+  color: var(--c-text-3);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats__cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 780px) {
+  .stats__cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 占比条 */
+.shares {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.shares li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.85em;
+}
+
+.shares__name {
+  flex: none;
+  width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shares__bar {
+  flex: 1;
+  min-width: 40px;
+  height: 7px;
+  overflow: hidden;
+  background: var(--c-surface-2);
+  border-radius: 999px;
+}
+
+.shares__fill {
+  display: block;
+  height: 100%;
+  background: var(--c-accent);
+  border-radius: 999px;
+  transition: width var(--dur) var(--ease);
+}
+
+.shares__count {
+  flex: none;
+  min-width: 76px;
+  font-size: 0.92em;
+  color: var(--c-text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 目标 */
+.goallist {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.goalrow {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 0.86em;
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.goalrow__title {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.goalrow__meta {
+  flex: none;
+  min-width: 150px;
+  font-size: 0.92em;
+  color: var(--c-text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 成就 */
+.achlist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.achrow {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 8px 11px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  opacity: 0.7;
+}
+
+.achrow--done {
+  background: var(--c-ok-soft);
+  border-color: var(--c-ok);
+  opacity: 1;
+}
+
+.achrow__icon {
+  flex: none;
+  font-size: 1.1em;
+}
+
+.achrow__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.achrow__name {
+  font-size: 0.88em;
+  font-weight: 600;
+}
+
+.achrow__desc {
+  font-size: 0.76em;
+  color: var(--c-text-3);
+}
+
+.achrow__progress {
+  flex: none;
+  font-size: 0.78em;
+  color: var(--c-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* =============================================================================
+   AI 差异预览（§6 的确认闸门）
+   ============================================================================= */
+
+.diffhead {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  margin-top: 4px;
+  border-top: 1px solid var(--c-border);
+}
+
+.difflist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 46vh;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.diffitem {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.diffitem--on {
+  background: var(--c-surface);
+  border-color: var(--c-accent);
+}
+
+/* 有校验错误且无法写入的条目：用左边红条 + 降低不透明度双重表达 */
+.diffitem--error {
+  border-left: 3px solid var(--c-danger);
+  opacity: 0.75;
+}
+
+.diffitem__check {
+  flex: none;
+  padding-top: 2px;
+}
+
+.diffitem__check input {
+  accent-color: var(--c-accent);
+}
+
+.diffitem__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.diffitem__head {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.diffitem__title {
+  font-size: 0.92em;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.difftable {
+  margin: 5px 0 0;
+  font-size: 0.82em;
+}
+
+.difftable__row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.difftable dt {
+  flex: none;
+  width: 76px;
+  color: var(--c-text-3);
+}
+
+.difftable dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 改动前后的视觉区分：旧值删除线 + 新值强调色 */
+.diffold {
+  color: var(--c-text-3);
+  text-decoration: line-through;
+}
+
+.diffarrow {
+  padding: 0 6px;
+  color: var(--c-text-3);
+}
+
+.diffnew {
+  font-weight: 550;
+  color: var(--c-accent);
+}
+
+.diffitem__note {
+  margin-top: 4px;
+  font-size: 0.78em;
+  color: var(--c-text-3);
+}
+
+.diffitem__issues {
+  margin-top: 4px;
+}
+
+.diffmeta {
+  padding: 9px 11px;
+  margin-top: 10px;
+  font-size: 0.78em;
+  line-height: 1.6;
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.diffmeta__row + .diffmeta__row {
+  margin-top: 5px;
+}
+
+.diffraw {
+  max-height: 200px;
+  padding: 8px 10px;
+  margin: 7px 0 0;
+  overflow: auto;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.92em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+}
+
+/* AI 复盘结果 */
+.reviewbox {
+  padding: 11px 13px;
+  margin-top: 10px;
+  background: var(--c-surface-2);
+  border-left: 3px solid var(--c-accent);
+  border-radius: var(--radius-sm);
+}
+
+.reviewbox__head {
+  font-size: 0.82em;
+  color: var(--c-text-3);
+}
+
+.reviewbox__text {
+  margin: 6px 0;
+  font-size: 0.9em;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+
+
 
 
 
