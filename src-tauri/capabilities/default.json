@@ -32,6 +32,7 @@
     "core:menu:default",
     "core:tray:default",
     "opener:default",
+    "opener:allow-reveal-item-in-dir",
     "dialog:default",
     "notification:default",
     "global-shortcut:default",

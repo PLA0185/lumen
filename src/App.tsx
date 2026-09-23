@@ -13,6 +13,7 @@ import { Sidebar, VIEW_META } from './components/Sidebar'
 import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
+import { SettingsView } from './components/SettingsView'
 import { bucketOf } from './lib/datetime'
 import type { Task, ViewId } from './lib/types'
 
@@ -27,6 +28,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'trash',
   'projects',
   'tags',
+  'settings',
 ])
 
 /** 使用组织管理界面的视图（项目与分类、标签） */
@@ -324,6 +326,11 @@ function TaskArea({
   // 组织管理视图（项目与分类、标签）走专门界面
   if (ORGANIZE_VIEWS.has(view)) {
     return <OrganizeView />
+  }
+
+  // 设置页（外观、数据与备份、提醒、关于）
+  if (view === 'settings') {
+    return <SettingsView />
   }
 
   // 未实现的视图：明确说明，而不是假装能用

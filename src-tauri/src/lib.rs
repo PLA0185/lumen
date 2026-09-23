@@ -11,6 +11,7 @@
 //! 归属由前端按用户本地时区计算后，把 UTC 边界传入（见 `today_overview`）。
 //! 这样避免了在数据层硬编码某一时区。
 
+pub mod backup;
 pub mod commands;
 pub mod db;
 pub mod error;
@@ -187,6 +188,15 @@ pub fn run() {
             reminders::reminder_set_grace,
             reminders::reminder_check_missed,
             reminders::reminder_list_pending,
+            // ---- 备份 / 导出 / 恢复（§9）----
+            backup::backup_export,
+            backup::backup_preview,
+            backup::backup_restore,
+            backup::backup_list,
+            backup::backup_delete,
+            backup::backup_auto,
+            backup::export_csv,
+            backup::export_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");

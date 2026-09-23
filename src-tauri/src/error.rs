@@ -138,6 +138,37 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
+/// 文件系统错误直接映射。
+///
+/// 备份、导出、附件等模块大量使用 `std::fs`，若每次都要 `.map_err(...)`，
+/// 业务代码会被错误转换淹没。这里统一转换，并按 errno 给出更具体的提示。
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        use std::io::ErrorKind;
+        let (msg, hint) = match e.kind() {
+            ErrorKind::NotFound => (
+                format!("文件不存在：{e}"),
+                Some("请确认文件是否被移动或删除".to_string()),
+            ),
+            ErrorKind::PermissionDenied => (
+                format!("没有权限访问文件：{e}"),
+                Some("请检查文件是否被其他程序占用，或以管理员身份重试".to_string()),
+            ),
+            ErrorKind::AlreadyExists => (format!("文件已存在：{e}"), None),
+            ErrorKind::WriteZero | ErrorKind::StorageFull => (
+                format!("写入失败，磁盘可能已满：{e}"),
+                Some("请清理磁盘空间后重试".to_string()),
+            ),
+            _ => (format!("文件操作失败：{e}"), None),
+        };
+        let mut err = Self::new(ErrorCode::Io, msg);
+        if let Some(h) = hint {
+            err = err.with_hint(h);
+        }
+        err
+    }
+}
+
 /// 便捷别名
 pub type AppResult<T> = Result<T, AppError>;
 

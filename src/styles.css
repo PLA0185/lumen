@@ -1588,4 +1588,251 @@ input[type='color'] {
   opacity: 0.5;
 }
 
+/* =============================================================================
+   设置页（外观 / 数据与备份 / 提醒 / 关于）
+   ============================================================================= */
+
+.settings {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.setgroup {
+  padding: 16px 18px;
+  margin-top: 14px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.setgroup__title {
+  margin-bottom: 6px;
+  font-size: 1em;
+  font-weight: 650;
+}
+
+.setgroup__desc {
+  margin-bottom: 12px;
+  font-size: 0.86em;
+  line-height: 1.65;
+  color: var(--c-text-2);
+}
+
+.setgroup__hint {
+  margin-top: 10px;
+  font-size: 0.82em;
+  line-height: 1.6;
+  color: var(--c-text-3);
+}
+
+/* 一行设置项：左侧说明，右侧控件 */
+.setrow {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.setrow:first-of-type {
+  border-top: none;
+}
+
+.setrow__label {
+  flex: 1;
+  min-width: 0;
+}
+
+.setrow__title {
+  font-size: 0.93em;
+  font-weight: 550;
+}
+
+.setrow__desc {
+  margin-top: 2px;
+  font-size: 0.82em;
+  line-height: 1.55;
+  color: var(--c-text-3);
+}
+
+.setrow__control {
+  display: flex;
+  flex: none;
+  gap: 10px;
+  align-items: center;
+  min-width: 200px;
+}
+
+.setrow__control input[type='range'] {
+  flex: 1;
+  min-width: 130px;
+  accent-color: var(--c-accent);
+}
+
+.setrow__value {
+  flex: none;
+  min-width: 52px;
+  font-size: 0.85em;
+  color: var(--c-text-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分段控件（主题 / 动画开关） */
+.segmented {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.segmented__item {
+  padding: 5px 12px;
+  font-size: 0.85em;
+  color: var(--c-text-2);
+  border-radius: 5px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.segmented__item:hover {
+  color: var(--c-text);
+}
+
+.segmented__item--on {
+  color: var(--c-text);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-sm);
+  font-weight: 550;
+}
+
+/* 路径行 */
+.pathrow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.pathrow:first-of-type {
+  border-top: none;
+}
+
+.pathrow__label {
+  flex: none;
+  width: 76px;
+  font-size: 0.85em;
+  color: var(--c-text-3);
+}
+
+.pathrow__value {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.8em;
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+
+.setactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+/* 键值表 */
+.kvtable {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 0.86em;
+  border-collapse: collapse;
+}
+
+.kvtable th {
+  width: 116px;
+  padding: 6px 10px 6px 0;
+  font-weight: 500;
+  color: var(--c-text-3);
+  text-align: left;
+  vertical-align: top;
+}
+
+.kvtable td {
+  padding: 6px 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.kvtable tr + tr th,
+.kvtable tr + tr td {
+  border-top: 1px solid var(--c-border);
+}
+
+/* 导入预览卡片：用强调边框与前文区分 */
+.preview {
+  padding: 16px 18px;
+  margin-top: 14px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-accent);
+  border-radius: var(--radius);
+}
+
+.alert--warn {
+  margin-top: 10px;
+  color: var(--c-warn);
+  background: var(--c-warn-soft);
+  border-left-color: var(--c-warn);
+}
+
+/* 备份文件列表 */
+.backuplist {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.backuprow {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 0.85em;
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.backuprow__name {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.95em;
+  overflow-wrap: anywhere;
+}
+
+.backuprow__meta {
+  flex: none;
+  color: var(--c-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.backuprow:hover .orgrow__actions,
+.backuprow:focus-within .orgrow__actions {
+  opacity: 1;
+}
+
+/* 小尺寸数字输入 */
+input[type='number'].input--compact {
+  width: 74px;
+}
+
+
 
