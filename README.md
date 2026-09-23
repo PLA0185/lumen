@@ -1,9 +1,27 @@
-# Lumen —— Lumen —— 本地优先的智能任务管理
+# Lumen
+
+> 流明，光的单位。把模糊的待办照亮成清晰的下一步。
 
 本地优先的个人任务管理软件，Windows 桌面应用。支持复杂重复规则、日历与提醒、
 悬浮今日小窗、可选的大模型辅助（整理 / 拆解 / 排程 / 复盘），以及完整备份与恢复。
 
 **不配置 AI 也能完整使用全部任务管理功能**；所有数据保存在本机，无需注册账号。
+
+## 下载
+
+最新安装包见 [Releases](https://github.com/PLA0185/lumen/releases/latest)：
+
+```
+Lumen_<版本>_x64-setup.exe
+```
+
+安装包**未做代码签名**，Windows SmartScreen 会提示"未知发布者"，
+选择「更多信息 → 仍要运行」即可。
+
+## 技术栈
+
+Rust（Tauri 2）+ React 19 + TypeScript + SQLite。
+测试：243 项 Rust 测试 + 85 项前端测试。
 
 ---
 
