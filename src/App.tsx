@@ -12,11 +12,25 @@ import { useApp } from './lib/store'
 import { Sidebar, VIEW_META } from './components/Sidebar'
 import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
+import { OrganizeView } from './components/OrganizeView'
 import { bucketOf } from './lib/datetime'
 import type { Task, ViewId } from './lib/types'
 
-/** 已具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
-const IMPLEMENTED_VIEWS = new Set<ViewId>(['today', 'tomorrow', 'week', 'inbox', 'all', 'completed', 'trash'])
+/** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
+const IMPLEMENTED_VIEWS = new Set<ViewId>([
+  'today',
+  'tomorrow',
+  'week',
+  'inbox',
+  'all',
+  'completed',
+  'trash',
+  'projects',
+  'tags',
+])
+
+/** 使用组织管理界面的视图（项目与分类、标签） */
+const ORGANIZE_VIEWS = new Set<ViewId>(['projects', 'tags'])
 
 export default function App() {
   const {
@@ -302,6 +316,11 @@ function TaskArea({
   onNew,
   onGoSettings,
 }: TaskAreaProps) {
+  // 组织管理视图（项目与分类、标签）走专门界面
+  if (ORGANIZE_VIEWS.has(view)) {
+    return <OrganizeView />
+  }
+
   // 未实现的视图：明确说明，而不是假装能用
   if (!IMPLEMENTED_VIEWS.has(view)) {
     return (

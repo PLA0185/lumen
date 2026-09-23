@@ -15,6 +15,8 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod organize;
+pub mod subtasks;
 
 use std::sync::atomic::Ordering;
 
@@ -137,6 +139,38 @@ pub fn run() {
             commands::task_bulk,
             commands::today_overview,
             commands::set_reminders_paused,
+            // ---- 项目 / 分类 / 标签（§4.2）----
+            organize::project_list,
+            organize::project_create,
+            organize::project_update,
+            organize::project_set_archived,
+            organize::project_delete_impact,
+            organize::project_delete,
+            organize::project_merge,
+            organize::category_list,
+            organize::category_create,
+            organize::category_update,
+            organize::category_delete_impact,
+            organize::category_delete,
+            organize::tag_list,
+            organize::tag_create,
+            organize::tag_update,
+            organize::tag_delete,
+            organize::tag_merge,
+            organize::task_tags_get,
+            organize::task_tags_set,
+            // ---- 子任务与依赖（§4.1）----
+            subtasks::subtask_create,
+            subtasks::subtask_list,
+            subtasks::subtask_update,
+            subtasks::subtask_delete,
+            subtasks::subtask_progress,
+            subtasks::subtask_progress_batch,
+            subtasks::dependency_add,
+            subtasks::dependency_list,
+            subtasks::dependency_dependents,
+            subtasks::dependency_remove,
+            subtasks::dependency_is_blocked,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");
