@@ -19,6 +19,7 @@ import * as bk from '../lib/backup-ipc'
 import { IpcError } from '../lib/ipc'
 import * as rem from '../lib/reminder-ipc'
 import { useApp } from '../lib/store'
+import { WindowSettings } from './WindowSettings'
 import type { BackupEntry, ImportPreview } from '../lib/backup-ipc'
 import type { DataPaths } from '../lib/types'
 
@@ -26,7 +27,7 @@ function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
 }
 
-type Tab = 'appearance' | 'data' | 'reminders' | 'about'
+type Tab = 'appearance' | 'window' | 'data' | 'reminders' | 'about'
 
 export function SettingsView() {
   const { appInfo, dataPaths, theme, setTheme, pushToast } = useApp()
@@ -275,6 +276,7 @@ export function SettingsView() {
   // ------------------------------ 渲染 ------------------------------
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
+    { id: 'window', label: '窗口' },
     { id: 'data', label: '数据与备份' },
     { id: 'reminders', label: '提醒' },
     { id: 'about', label: '关于' },
@@ -408,6 +410,9 @@ export function SettingsView() {
           </div>
         </div>
       )}
+
+      {/* ---------------------------- 窗口 ---------------------------- */}
+      {tab === 'window' && <WindowSettings />}
 
       {/* ---------------------------- 数据与备份 ---------------------------- */}
       {tab === 'data' && (
