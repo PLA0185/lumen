@@ -8,13 +8,107 @@
  * 塞进折叠行会让列表变得难以扫视（§3「视觉参照成熟桌面工具的清晰度和克制感」）。
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Task } from '../lib/types'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
 import { DependencyEditor } from './DependencyEditor'
 import { AttachmentList } from './AttachmentList'
+import * as rec from '../lib/recurrence-ipc'
+import type { ScopeInfo } from '../lib/recurrence-ipc'
+
+/**
+ * 重复系列信息块（§5）。
+ *
+ * 显示这条任务的系列规则、是第几次、以及"跳过这一次"入口。
+ * 关于"跳过"与"删除"的区别，界面必须说清：
+ * 跳过 = 这一次不发生但系列继续；删除整个系列才会终止后续。
+ */
+function SeriesInfo({ taskId }: { taskId: string }) {
+  const [info, setInfo] = useState<ScopeInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setInfo(await rec.recurringScopeInfo(taskId))
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    })()
+  }, [taskId])
+
+  if (!info?.isRecurring) return null
+
+  const skip = async () => {
+    if (
+      !window.confirm(
+        '跳过这一次？\n\n这一次将不再发生，但重复系列会继续按规则产生后续的发生。\n' +
+          '（若要终止整个系列，请使用编辑或删除功能。）',
+      )
+    ) {
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await rec.recurringSkipOccurrence(taskId)
+      setNotice(r.message)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="seriesinfo">
+      <div className="seriesinfo__row">
+        <span className="seriesinfo__rule" title="这是重复任务的一次发生">
+          ↻ 第 {info.occurrenceIndex ?? '?'} 次发生
+        </span>
+        <span>
+          系列共 <strong>{info.totalInstances ?? 0}</strong> 次
+        </span>
+        <span>
+          已完成 <strong>{info.completed ?? 0}</strong> 次
+        </span>
+        {info.isException && (
+          <span className="chip chip--warn" title="这一次被单独修改过，改系列规则时会保护它">
+            已单独修改
+          </span>
+        )}
+        {(info.segments ?? 0) > 0 && (
+          <span className="chip chip--muted" title="该系列从某次起改用过新规则">
+            规则已分段 {info.segments} 次
+          </span>
+        )}
+        <button
+          type="button"
+          className="btn btn--quiet btn--sm"
+          disabled={busy}
+          title="只让这一次不发生，系列继续"
+          onClick={() => void skip()}
+        >
+          {busy ? '处理中…' : '跳过这一次'}
+        </button>
+      </div>
+      {notice && (
+        <div className="seriesinfo__segments" role="status">
+          {notice}
+        </div>
+      )}
+      {error && (
+        <div className="formerr" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** 优先级文案（§4.1 四级） */
 const PRIORITY_LABEL: Record<number, string> = {
@@ -203,6 +297,7 @@ export function TaskCard({
 
       {expanded && hasDetail && (
         <div className="task__detail">
+          {isRecurring && <SeriesInfo taskId={task.id} />}
           <SubtaskList taskId={task.id} />
           <AttachmentList taskId={task.id} />
           <ReminderEditor

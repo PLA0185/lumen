@@ -17,6 +17,7 @@ import { SettingsView } from './components/SettingsView'
 import { CalendarView } from './components/CalendarView'
 import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
+import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
 import type { Task, ViewId } from './lib/types'
 
@@ -71,6 +72,8 @@ export default function App() {
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
+  /** 新建重复任务对话框 */
+  const [showRecurring, setShowRecurring] = useState(false)
 
   // ------------------------------ 启动 ------------------------------
   useEffect(() => {
@@ -218,6 +221,15 @@ export default function App() {
 
             <button
               type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setShowRecurring(true)}
+              title="新建可以按规则重复的任务"
+            >
+              ↻ 重复任务
+            </button>
+
+            <button
+              type="button"
               className="btn btn--primary btn--sm"
               onClick={() => setShowQuickAdd((v) => !v)}
               title="新建任务（Ctrl+N）"
@@ -281,6 +293,18 @@ export default function App() {
           onClose={() => setEditing(null)}
           onSaved={async () => {
             pushToast('success', '已保存')
+            await reload()
+            await useApp.getState().refreshOverview()
+          }}
+        />
+      )}
+
+      {/* 新建重复任务（§5） */}
+      {showRecurring && (
+        <RecurringTaskDialog
+          onClose={() => setShowRecurring(false)}
+          onCreated={async () => {
+            pushToast('success', '重复任务已创建，后续发生已按规则生成')
             await reload()
             await useApp.getState().refreshOverview()
           }}

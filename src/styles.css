@@ -2482,6 +2482,216 @@ input[type='number'].input--compact {
   min-width: 0;
 }
 
+/* =============================================================================
+   重复任务（规则编辑器 / 预览 / 范围选择）
+   ============================================================================= */
+
+.ruleeditor {
+  padding: 4px 0;
+}
+
+.rulerow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.input--tiny {
+  width: 62px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 0.85em;
+  text-align: center;
+}
+
+/* 星期选择 */
+.weekpicker {
+  display: flex;
+  gap: 5px;
+}
+
+.weekbtn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  font-size: 0.85em;
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.weekbtn:hover {
+  border-color: var(--c-border-strong);
+}
+
+.weekbtn--on {
+  color: var(--c-accent-text);
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+/* 被"仅工作日"隐含选中的状态：用描边而非填充，与显式选中区分 */
+.weekbtn--implied {
+  color: var(--c-accent);
+  background: var(--c-accent-soft);
+  border-color: var(--c-accent);
+}
+
+/* 每月日期选择：31 个小格子 */
+.daypicker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(30px, 1fr));
+  gap: 3px;
+  max-width: 420px;
+}
+
+.daybtn {
+  display: grid;
+  place-items: center;
+  height: 26px;
+  font-size: 0.78em;
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.daybtn:hover {
+  border-color: var(--c-border-strong);
+}
+
+.daybtn--on {
+  color: var(--c-accent-text);
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+/* 规则预览 */
+.rulepreview {
+  padding: 10px 12px;
+  margin-top: 6px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.rulepreview__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  font-size: 0.85em;
+  font-weight: 550;
+  color: var(--c-text-2);
+}
+
+.rulepreview__rrule {
+  padding: 2px 7px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.82em;
+  font-weight: 400;
+  color: var(--c-text-3);
+  background: var(--c-surface);
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+
+.rulepreview__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  gap: 2px 12px;
+  padding-left: 20px;
+  margin: 0;
+  font-size: 0.82em;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 范围选择对话框中的系列概况 */
+.scopeinfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 8px 11px;
+  margin: 10px 0;
+  font-size: 0.84em;
+  color: var(--c-text-2);
+  background: var(--c-surface-2);
+  border-radius: var(--radius);
+}
+
+.scopeinfo strong {
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.radio--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.radio--disabled:hover {
+  background: none;
+  border-color: var(--c-border);
+}
+
+.histcheck {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  margin-top: 10px;
+  font-size: 0.85em;
+  line-height: 1.55;
+  background: var(--c-warn-soft);
+  border: 1px solid var(--c-warn);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.histcheck input {
+  margin-top: 3px;
+  accent-color: var(--c-warn);
+}
+
+/* 系列详情（任务卡片展开区） */
+.seriesinfo {
+  padding: 8px 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px dashed var(--c-border);
+}
+
+.seriesinfo__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  font-size: 0.84em;
+  color: var(--c-text-2);
+}
+
+.seriesinfo__rule {
+  padding: 3px 8px;
+  font-size: 0.9em;
+  color: var(--c-accent);
+  background: var(--c-accent-soft);
+  border-radius: 999px;
+}
+
+.seriesinfo__segments {
+  margin-top: 6px;
+  font-size: 0.8em;
+  color: var(--c-text-3);
+}
+
+
 
 
 
