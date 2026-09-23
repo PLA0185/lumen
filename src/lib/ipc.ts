@@ -42,6 +42,8 @@ export const CMD = {
   taskBulk: 'task_bulk',
   todayOverview: 'today_overview',
   setRemindersPaused: 'set_reminders_paused',
+  tasksInRange: 'tasks_in_range',
+  taskReschedule: 'task_reschedule',
 } as const
 
 /**
@@ -186,3 +188,11 @@ export const getTodayOverview = (
   nowUtc?: string,
 ): Promise<TodayOverview> =>
   call<TodayOverview>(CMD.todayOverview, { dayStartUtc, dayEndUtc, nowUtc: nowUtc ?? null })
+
+/** 日历视图：查询落在指定 UTC 范围内的任务 */
+export const tasksInRange = (startUtc: string, endUtc: string): Promise<Task[]> =>
+  call<Task[]>(CMD.tasksInRange, { startUtc, endUtc })
+
+/** 拖拽改期：把任务的计划时间移到新日期（保留原时刻，不影响截止时间） */
+export const rescheduleTask = (id: string, newDateUtc: string): Promise<Task> =>
+  call<Task>(CMD.taskReschedule, { id, newDateUtc })

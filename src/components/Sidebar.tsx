@@ -27,6 +27,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'today', icon: '☀', label: '今天' },
       { id: 'tomorrow', icon: '⛅', label: '明天' },
       { id: 'week', icon: '🗓', label: '本周' },
+      { id: 'calendar', icon: '📅', label: '日历' },
       { id: 'inbox', icon: '📥', label: '收件箱' },
       { id: 'all', icon: '📋', label: '全部任务' },
     ],

@@ -146,6 +146,8 @@ pub fn run() {
             commands::task_bulk,
             commands::today_overview,
             commands::set_reminders_paused,
+            commands::tasks_in_range,
+            commands::task_reschedule,
             // ---- 项目 / 分类 / 标签（§4.2）----
             organize::project_list,
             organize::project_create,

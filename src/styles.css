@@ -1834,5 +1834,228 @@ input[type='number'].input--compact {
   width: 74px;
 }
 
+/* =============================================================================
+   日历视图（日 / 周 / 月 + 拖拽改期）
+   ============================================================================= */
+
+.calendar {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.calbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.calbar__nav {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.calbar__label {
+  min-width: 190px;
+  font-size: 0.95em;
+  font-weight: 600;
+  text-align: center;
+}
+
+.calhint {
+  margin-bottom: 12px;
+  font-size: 0.82em;
+  line-height: 1.6;
+  color: var(--c-text-3);
+}
+
+.calweekhead {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-bottom: 5px;
+  font-size: 0.78em;
+  font-weight: 600;
+  color: var(--c-text-3);
+  text-align: center;
+}
+
+.calgrid {
+  display: grid;
+  gap: 6px;
+}
+
+.calgrid--month {
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.calgrid--week {
+  grid-template-columns: repeat(7, 1fr);
+  min-height: 420px;
+}
+
+.calgrid--day {
+  grid-template-columns: 1fr;
+  min-height: 440px;
+}
+
+.calcell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 6px 7px;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.calcell--compact {
+  min-height: 88px;
+}
+
+.calcell--tall {
+  min-height: 200px;
+}
+
+.calcell--muted {
+  opacity: 0.5;
+}
+
+.calcell--today {
+  border-color: var(--c-accent);
+  background: linear-gradient(180deg, var(--c-accent-soft), transparent 30%), var(--c-surface);
+}
+
+/* 拖拽悬停：边框与背景一起变化，不依赖颜色单独表达 */
+.calcell--drop {
+  background: var(--c-accent-soft);
+  border-color: var(--c-accent);
+  border-style: dashed;
+}
+
+.calcell__head {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.calcell__day {
+  font-size: 0.9em;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.calcell--today .calcell__day {
+  color: var(--c-accent);
+}
+
+.calcell__wd {
+  font-size: 0.75em;
+  color: var(--c-text-3);
+}
+
+.calcell__count {
+  margin-left: auto;
+  padding: 0 5px;
+  font-size: 0.72em;
+  color: var(--c-text-3);
+  background: var(--c-surface-2);
+  border-radius: 999px;
+}
+
+.calcell__drop-hint {
+  padding: 2px 5px;
+  margin-bottom: 3px;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--c-accent-text);
+  text-align: center;
+  background: var(--c-accent);
+  border-radius: var(--radius-sm);
+}
+
+.calcell__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 日历中的任务条 */
+.calchip {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  padding: 3px 6px;
+  font-size: 0.8em;
+  line-height: 1.35;
+  background: var(--c-surface-2);
+  border-left: 3px solid var(--c-border-strong);
+  border-radius: 5px;
+  cursor: grab;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.calchip:hover {
+  background: var(--c-surface-hover);
+}
+
+.calchip:active {
+  cursor: grabbing;
+}
+
+.calchip--done {
+  opacity: 0.55;
+}
+
+.calchip--done .calchip__title {
+  text-decoration: line-through;
+}
+
+.calchip--overdue {
+  border-left-color: var(--c-danger);
+  color: var(--c-danger);
+  background: var(--c-danger-soft);
+}
+
+.calchip--high {
+  border-left-color: var(--c-prio-3);
+}
+
+.calchip__time {
+  flex: none;
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.calchip__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calchip__mark {
+  flex: none;
+  opacity: 0.7;
+}
+
+/* 宽屏下让月视图每格更宽，窄屏自动压缩 */
+@media (max-width: 1100px) {
+  .calchip__time {
+    display: none;
+  }
+}
+
+
 
 

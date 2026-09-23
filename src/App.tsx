@@ -14,6 +14,7 @@ import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
+import { CalendarView } from './components/CalendarView'
 import { bucketOf } from './lib/datetime'
 import type { Task, ViewId } from './lib/types'
 
@@ -29,6 +30,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'projects',
   'tags',
   'settings',
+  'calendar',
 ])
 
 /** 使用组织管理界面的视图（项目与分类、标签） */
@@ -331,6 +333,11 @@ function TaskArea({
   // 设置页（外观、数据与备份、提醒、关于）
   if (view === 'settings') {
     return <SettingsView />
+  }
+
+  // 日历视图（日 / 周 / 月 + 拖拽改期）
+  if (view === 'calendar') {
+    return <CalendarView />
   }
 
   // 未实现的视图：明确说明，而不是假装能用

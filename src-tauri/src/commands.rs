@@ -887,6 +887,130 @@ pub async fn today_overview(
     })
 }
 
+/// 日历视图：查询落在指定时间范围内的任务。
+///
+/// 与 `task_list` 的区别在于**归属判定规则**（§4.2 要求界面明确说明规则）：
+/// 日历把任务显示到"它所属的那一天"，因此用 COALESCE(planned_at, due_at)
+/// 作为落点；没有计划时间也没有截止时间的任务不会出现在日历中
+/// （它们只属于列表视图）。
+///
+/// 前端按本地时区算出范围边界后传入 UTC，后端不做任何本地时区假设。
+#[tauri::command]
+pub async fn tasks_in_range(
+    state: State<'_, AppState>,
+    start_utc: String,
+    end_utc: String,
+) -> AppResult<Vec<Task>> {
+    let db = &state.db;
+    let start = validate_time("范围起点", &start_utc)?;
+    let end = validate_time("范围终点", &end_utc)?;
+    if end <= start {
+        return Err(AppError::validation("时间范围的终点必须晚于起点"));
+    }
+
+    // 已归档与已删除的不进日历；已完成仍显示（用户想知道那天做了什么）
+    let rows = sqlx::query_as::<_, Task>(
+        "SELECT * FROM tasks
+         WHERE deleted_at IS NULL
+           AND status <> 'archived'
+           AND COALESCE(planned_at, due_at) IS NOT NULL
+           AND COALESCE(planned_at, due_at) >= ?1
+           AND COALESCE(planned_at, due_at) < ?2
+         ORDER BY COALESCE(planned_at, due_at) ASC, priority DESC, created_at ASC",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_all(db.pool())
+    .await?;
+
+    Ok(rows)
+}
+
+/// 计算改期后的新计划时间。
+///
+/// 抽成纯函数是为了可测试——这段语义很容易写错，而错了用户会莫名发现
+/// 时间变成 00:00。
+///
+/// 规则：
+/// - 原任务是**精确时间**（has_planned_time = 1）→ 保留原时刻，只换日期；
+/// - 原任务是**仅日期**（has_planned_time = 0）→ 用目标日期的零点，保持"仅日期"；
+/// - 原本没有计划时间 → 直接用目标日期，仍标为"仅日期"（用户只拖了一下，
+///   不该因此把任务变成有时刻的）。
+///
+/// 返回 `(新的 UTC 时间字符串, 是否含具体时刻)`。
+fn compute_rescheduled_at(
+    old_planned: Option<&str>,
+    old_has_time: i64,
+    target: chrono::DateTime<chrono::Utc>,
+) -> (String, bool) {
+    use chrono::Timelike;
+
+    let old = old_planned
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc));
+
+    match old {
+        Some(old_dt) if old_has_time == 1 => {
+            // 把原时刻搬到新日期。用 with_hour/with_minute 逐级设置并兜底，
+            // 避免夏令时切换日出现不存在的本地时刻导致 panic。
+            let moved = target
+                .with_hour(old_dt.hour())
+                .and_then(|d| d.with_minute(old_dt.minute()))
+                .and_then(|d| d.with_second(old_dt.second()))
+                .unwrap_or(target);
+            (to_db_time(moved), true)
+        }
+        _ => (to_db_time(target), false),
+    }
+}
+
+/// 拖拽改期：把任务的计划时间移动到新的日期（§4.3「拖拽改期前展示目标日期」）。
+///
+/// 语义要点：
+/// - 只改 `planned_at`，**不动 `due_at`**。任务书 §4.1 明确三个时间字段含义不同，
+///   拖日历改的是"安排在什么时候做"，不是"什么时候必须交"。
+/// - 保留原有的**时刻**（见 `compute_rescheduled_at`）。
+/// - 重复任务的实例可单独改期（§5「仅此次」得以成立）：因为 occurrence_key
+///   不变，所以这不会在旧日期生成副本，也不会影响同系列的其他发生。
+#[tauri::command]
+pub async fn task_reschedule(
+    state: State<'_, AppState>,
+    id: String,
+    new_date_utc: String,
+) -> AppResult<Task> {
+    let db = &state.db;
+    let existing = get_task_row(db, &id).await?;
+    if existing.deleted_at.is_some() {
+        return Err(AppError::conflict("任务在回收站中，无法改期"));
+    }
+
+    let target = chrono::DateTime::parse_from_rfc3339(&new_date_utc)
+        .map_err(|_| {
+            AppError::validation(format!("目标日期格式不正确：{new_date_utc}"))
+                .with_hint("请使用 ISO-8601 且带时区")
+        })?
+        .with_timezone(&chrono::Utc);
+
+    let (new_at, has_time) =
+        compute_rescheduled_at(existing.planned_at.as_deref(), existing.has_planned_time, target);
+
+    let now = to_db_time(utc_now());
+    sqlx::query(
+        "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3 WHERE id = ?4",
+    )
+    .bind(&new_at)
+    .bind(has_time as i64)
+    .bind(&now)
+    .bind(&id)
+    .execute(db.pool())
+    .await?;
+
+    // 改了计划时间，相对型提醒必须跟着走（§4.3）
+    crate::reminders::on_task_time_changed(db, &id).await;
+
+    get_task_row(db, &id).await
+}
+
 /// 数据目录信息（§9：提供数据目录查看、一键打开日志目录）
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1076,5 +1200,78 @@ mod tests {
         assert_eq!(validate_opt_time("计划时间", None).unwrap(), None);
         let s = String::new();
         assert_eq!(validate_opt_time("计划时间", Some(&s)).unwrap(), None);
+    }
+
+    // =========================================================================
+    // 拖拽改期（§4.3）
+    // =========================================================================
+
+    fn utc(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    /// 精确时间的任务改期后必须**保留原时刻**。
+    /// 这是最容易写错的一点：若丢失时刻，用户会莫名发现任务变成 00:00。
+    #[test]
+    fn reschedule_preserves_time_of_day() {
+        // 注意时区：北京 10-05 00:00 == UTC 10-04 16:00，
+        // 所以"保留 01:00 时刻"后落在 UTC 的 10-04 01:00
+        let target = utc("2026-10-05T00:00:00+08:00");
+        let (got, has_time) =
+            compute_rescheduled_at(Some("2026-09-25T01:00:00.000Z"), 1, target);
+        assert!(has_time, "原任务含具体时刻，改期后仍应含时刻");
+        assert_eq!(got, "2026-10-04T01:00:00.000Z");
+    }
+
+    /// 仅日期的任务改期后仍是"仅日期"，不能被升级成有时刻。
+    #[test]
+    fn reschedule_keeps_date_only_unchanged() {
+        let target = utc("2026-10-05T00:00:00+08:00");
+        let (got, has_time) =
+            compute_rescheduled_at(Some("2026-09-25T00:00:00.000Z"), 0, target);
+        assert!(!has_time, "原任务是仅日期，改期后仍应是仅日期");
+        assert_eq!(got, "2026-10-04T16:00:00.000Z", "应为目标日期的本地零点所对应的 UTC");
+    }
+
+    /// 原本没有计划时间的任务，拖到某天后仍标记为"仅日期"。
+    #[test]
+    fn reschedule_without_previous_plan_marks_date_only() {
+        let target = utc("2026-10-05T00:00:00+08:00");
+        let (_, has_time) = compute_rescheduled_at(None, 0, target);
+        assert!(!has_time, "用户只拖了一下，不应因此把任务变成有时刻");
+    }
+
+    /// 输出必须是固定宽度 UTC，否则会破坏全库的字典序比较。
+    #[test]
+    fn reschedule_output_is_fixed_width() {
+        let target = utc("2026-10-05T00:00:00+08:00");
+        for (old, ht) in [
+            (Some("2026-09-25T01:00:00.000Z"), 1),
+            (Some("2026-09-25T00:00:00.000Z"), 0),
+            (None, 0),
+        ] {
+            let (got, _) = compute_rescheduled_at(old, ht, target);
+            assert_eq!(got.len(), 24, "时间字符串必须固定 24 字符：{got}");
+            assert!(got.ends_with('Z'), "必须以 Z 结尾：{got}");
+        }
+    }
+
+    /// 时间字符串非法时应安全回退为"仅日期"，而不是 panic 或写坏数据。
+    #[test]
+    fn reschedule_handles_malformed_previous_value() {
+        let target = utc("2026-10-05T00:00:00+08:00");
+        let (got, has_time) = compute_rescheduled_at(Some("不是时间"), 1, target);
+        assert!(!has_time, "无法解析时应回退为仅日期");
+        assert_eq!(got.len(), 24);
+    }
+
+    /// 跨日边界：原时刻为 23:30 UTC，改期后仍是 23:30 UTC。
+    #[test]
+    fn reschedule_preserves_late_evening_time() {
+        let target = utc("2026-12-31T00:00:00Z");
+        let (got, _) = compute_rescheduled_at(Some("2026-09-25T23:30:00.000Z"), 1, target);
+        assert_eq!(got, "2026-12-31T23:30:00.000Z");
     }
 }
