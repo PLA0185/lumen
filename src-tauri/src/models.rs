@@ -1,4 +1,4 @@
-//! 任务相关数据模型与 IPC 输入/输出类型。
+﻿//! 任务相关数据模型与 IPC 输入/输出类型。
 //!
 //! 命名与语义严格对齐任务书 §4.1：
 //! **计划时间（planned_at）、截止时间（due_at）、提醒时间（reminders.remind_at）
@@ -86,6 +86,10 @@ pub struct Task {
     pub is_pinned: i64,
     pub is_favorite: i64,
 
+    /// 周期跨度：我在这个周期内完成（none/day/week/month/quarter/year）。
+    /// 与 planned_at（哪一天做）、due_at（何时必须交）互补（§4.1）。
+    pub period_type: String,
+
     pub series_id: Option<String>,
     pub occurrence_key: Option<String>,
     pub occurrence_index: Option<i64>,
@@ -166,6 +170,10 @@ pub struct CreateTaskInput {
     #[serde(default)]
     pub is_favorite: Option<bool>,
 
+    /// 周期跨度（可选）：none/day/week/month/quarter/year
+    #[serde(default)]
+    pub period_type: Option<String>,
+
     /// 标签 ID 列表
     #[serde(default)]
     pub tag_ids: Vec<String>,
@@ -218,6 +226,9 @@ pub struct UpdateTaskInput {
     pub is_pinned: Option<bool>,
     #[serde(default)]
     pub is_favorite: Option<bool>,
+    /// 周期跨度（可选）：none/day/week/month/quarter/year
+    #[serde(default)]
+    pub period_type: Option<String>,
 
     /// 显式清空（对应 UI 上的"移除日期"操作）
     #[serde(default)]
@@ -263,6 +274,9 @@ pub struct TaskQuery {
     /// 是否只看重复任务：None = 不限，Some(true) = 只看重复，Some(false) = 只看非重复
     #[serde(default)]
     pub is_recurring: Option<bool>,
+    /// 按周期跨度筛选（空表示不限）；周任务/月任务视图使用
+    #[serde(default)]
+    pub period_types: Vec<String>,
     /// 是否只看已逾期
     #[serde(default)]
     pub overdue_only: bool,
@@ -389,6 +403,7 @@ mod tests {
             sort_order: 0.0,
             is_pinned: 0,
             is_favorite: 0,
+            period_type: "none".into(),
             series_id: None,
             occurrence_key: None,
             occurrence_index: None,
@@ -424,6 +439,7 @@ mod tests {
             sort_order: 0.0,
             is_pinned: 0,
             is_favorite: 0,
+            period_type: "none".into(),
             series_id: None,
             occurrence_key: None,
             occurrence_index: None,

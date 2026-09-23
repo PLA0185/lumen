@@ -36,6 +36,12 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'settings',
   'calendar',
   'board',
+  'stats',
+  // 周期任务视图：与"本周安排"是不同维度（按任务自身的周期跨度筛选）
+  'period-week',
+  'period-month',
+  'period-quarter',
+  'period-year',
 ])
 
 /** 使用组织管理界面的视图（项目与分类、标签） */

@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from 'react'
 import type { Task } from '../lib/types'
+import { PERIOD_BADGES, PERIOD_LABELS } from '../lib/types'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
@@ -207,6 +208,15 @@ export function TaskCard({
 
             {overdue && <span className="badge badge--overdue">已逾期</span>}
             {done && <span className="badge badge--done">已完成</span>}
+            {/* 周期跨度徽标：让用户一眼看出这是"这周做完就行"而不是某天的具体安排 */}
+            {task.periodType && task.periodType !== 'none' && (
+              <span
+                className="badge badge--period"
+                title={`周期任务：${PERIOD_LABELS[task.periodType]}完成即可，不绑定到具体某一天`}
+              >
+                {PERIOD_BADGES[task.periodType]}
+              </span>
+            )}
             {isRecurring && (
               <span className="badge badge--recurring" title="这是重复任务的一次发生">
                 ↻ 重复

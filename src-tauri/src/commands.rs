@@ -134,6 +134,31 @@ fn validate_status(s: &str) -> AppResult<&'static str> {
     })
 }
 
+/// 校验周期跨度（§4.1 的"这周/这个月做完就行"维度）。
+///
+/// 与 planned_at / due_at 互补，三者语义不同：
+/// - `period_type` 表达"我在这个周期内完成"，**允许没有具体日期**；
+/// - `planned_at`  表达"我打算这一天的这个时刻做"；
+/// - `due_at`      表达"我必须在此之前交"。
+///
+/// 关键规则：period 型任务若没有 planned_at，**不会出现在「今天」视图**。
+/// 否则"这周做完就行"的任务会每天弹出，反而比不定时间更烦人。
+fn validate_period(v: &str) -> AppResult<&'static str> {
+    Ok(match v.trim() {
+        "none" | "" => "none",
+        "day" => "day",
+        "week" => "week",
+        "month" => "month",
+        "quarter" => "quarter",
+        "year" => "year",
+        other => {
+            return Err(AppError::validation(format!("周期跨度非法：{other}")).with_hint(
+                "允许值：none（不限）/ day / week / month / quarter / year",
+            ))
+        }
+    })
+}
+
 /// 校验时间字符串必须是 RFC-3339，并**规范化**为固定宽度的 UTC 形式。
 ///
 /// 为什么必须规范化成固定宽度（毫秒三位 + `Z`）：
@@ -257,7 +282,8 @@ pub async fn task_create(
             estimated_minutes, actual_minutes,
             completed_at, created_at, updated_at,
             sort_order, is_pinned, is_favorite,
-            series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception
+            series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception,
+            period_type
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5,
             ?6, ?7, ?8, ?9,
@@ -265,7 +291,8 @@ pub async fn task_create(
             ?14, 0,
             ?15, ?16, ?16,
             ?17, ?18, ?19,
-            NULL, NULL, NULL, 'single', 0
+            NULL, NULL, NULL, 'single', 0,
+            ?20
          )",
     )
     .bind(&id)
@@ -288,6 +315,10 @@ pub async fn task_create(
     .bind(sort_order)
     .bind(input.is_pinned.unwrap_or(false) as i64)
     .bind(input.is_favorite.unwrap_or(false) as i64)
+    // 周期跨度：允许为空（默认 none）
+    .bind(validate_period(
+        input.period_type.as_deref().unwrap_or("none"),
+    )?)
     .execute(&mut *tx)
     .await?;
 
@@ -436,6 +467,10 @@ pub async fn task_update(
     }
     if let Some(v) = input.is_favorite {
         sep.push("is_favorite = ").push_bind(v as i64);
+    }
+    // 周期跨度：传空串视为"取消周期"，与前端"不限"选项一致
+    if let Some(v) = input.period_type.as_deref() {
+        sep.push("period_type = ").push_bind(validate_period(v)?.to_string());
     }
 
     sep.push("updated_at = ").push_bind(now);
@@ -590,6 +625,20 @@ pub async fn task_list(state: State<'_, AppState>, query: TaskQuery) -> AppResul
             sep.push_bind(v.to_string());
         }
         sep.push_unseparated(")");
+    }
+
+    // 周期跨度过滤（「周任务」「月任务」等视图使用）
+    if !query.period_types.is_empty() {
+        let mut valid: Vec<&'static str> = Vec::new();
+        for p in &query.period_types {
+            valid.push(validate_period(p)?);
+        }
+        b.push(" AND period_type IN (");
+        let mut psep = b.separated(", ");
+        for v in valid {
+            psep.push_bind(v.to_string());
+        }
+        psep.push_unseparated(")");
     }
 
     if let Some(pid) = query.project_id.as_deref().filter(|s| !s.is_empty()) {
@@ -1177,6 +1226,62 @@ mod tests {
         let err = validate_status("nope").unwrap_err();
         assert!(err.message.contains("nope"), "错误消息应包含非法值便于排查");
         assert!(err.hint.as_deref().unwrap_or("").contains("todo"));
+    }
+
+    // =========================================================================
+    // 周期跨度（§4.1：这周/这个月做完就行）
+    // =========================================================================
+
+    #[test]
+    fn period_accepts_all_six_values() {
+        for (input, expected) in [
+            ("none", "none"),
+            ("day", "day"),
+            ("week", "week"),
+            ("month", "month"),
+            ("quarter", "quarter"),
+            ("year", "year"),
+        ] {
+            assert_eq!(validate_period(input).unwrap(), expected, "输入 {input}");
+        }
+    }
+
+    /// 空字符串视为"不限"：前端下拉框在某些状态可能提交空值，
+    /// 把它当成非法值会让用户困惑于"我明明没设周期却报错"。
+    #[test]
+    fn empty_period_means_none() {
+        assert_eq!(validate_period("").unwrap(), "none");
+        assert_eq!(validate_period("  ").unwrap(), "none");
+    }
+
+    #[test]
+    fn period_trims_whitespace() {
+        assert_eq!(validate_period(" week ").unwrap(), "week");
+        assert_eq!(validate_period("\tmonth\n").unwrap(), "month");
+    }
+
+    /// 非法值必须报错且列出允许值——静默当"不限"会让用户的设置悄悄失效
+    #[test]
+    fn invalid_period_is_rejected_with_allowed_values() {
+        for bad in ["weekly", "WEEK", "月", "1", "forever", "week "] {
+            if bad.trim() == "week" {
+                continue; // 这是合法的
+            }
+            let e = validate_period(bad).unwrap_err();
+            assert!(e.message.contains(bad.trim()), "错误应包含非法值：{}", e.message);
+            let hint = e.hint.unwrap_or_default();
+            assert!(hint.contains("week"), "提示应列出允许值：{hint}");
+            assert!(hint.contains("year"), "提示应包含 year：{hint}");
+        }
+    }
+
+    /// 大小写敏感是刻意的：数据库 CHECK 约束用的是小写，
+    /// 若这里宽松接受 'WEEK' 会写库失败并抛出难以理解的数据库错误。
+    #[test]
+    fn period_is_case_sensitive_by_design() {
+        assert!(validate_period("WEEK").is_err());
+        assert!(validate_period("Week").is_err());
+        assert!(validate_period("week").is_ok());
     }
 
     #[test]

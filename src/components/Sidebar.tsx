@@ -26,11 +26,23 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { id: 'today', icon: '☀', label: '今天' },
       { id: 'tomorrow', icon: '⛅', label: '明天' },
-      { id: 'week', icon: '🗓', label: '本周' },
+      { id: 'week', icon: '🗓', label: '本周安排' },
       { id: 'calendar', icon: '📅', label: '日历' },
       { id: 'board', icon: '▦', label: '看板' },
       { id: 'inbox', icon: '📥', label: '收件箱' },
       { id: 'all', icon: '📋', label: '全部任务' },
+    ],
+  },
+  {
+    // 周期任务与上面的「今天/本周安排」是**不同维度**：
+    // 上面按计划时间筛选（任务有具体日期），这里按任务自身的周期跨度筛选
+    // （任务没有具体日期，只声明"这周/这个月做完就行"）。命名必须区分开。
+    label: '周期任务',
+    items: [
+      { id: 'period-week', icon: '⑦', label: '周任务' },
+      { id: 'period-month', icon: '㊳', label: '月任务' },
+      { id: 'period-quarter', icon: '◲', label: '季度任务' },
+      { id: 'period-year', icon: '❶', label: '年任务' },
     ],
   },
   {
@@ -55,7 +67,26 @@ export const NAV_GROUPS: NavGroup[] = [
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   today: { title: '今天', subtitle: '计划时间落在今天的所有任务' },
   tomorrow: { title: '明天', subtitle: '计划时间落在明天的所有任务' },
-  week: { title: '本周', subtitle: '本周一到周日计划的任务（含已过去的日子）' },
+  week: {
+    title: '本周安排',
+    subtitle: '计划时间落在本周一到周日的任务（按日期筛选，含已过去的日子）',
+  },
+  'period-week': {
+    title: '周任务',
+    subtitle: '标记为「本周内完成」的任务——不绑定到具体某一天，这周做完即可',
+  },
+  'period-month': {
+    title: '月任务',
+    subtitle: '标记为「本月内完成」的任务——不绑定到具体某一天，这个月做完即可',
+  },
+  'period-quarter': {
+    title: '季度任务',
+    subtitle: '标记为「本季度内完成」的任务，适合阶段性目标',
+  },
+  'period-year': {
+    title: '年任务',
+    subtitle: '标记为「今年内完成」的任务，适合年度目标',
+  },
   inbox: { title: '收件箱', subtitle: '尚未归属任何项目的未完成任务' },
   all: { title: '全部任务', subtitle: '所有未归档任务' },
   calendar: { title: '日历', subtitle: '按日、周、月查看任务安排，可拖拽改期' },

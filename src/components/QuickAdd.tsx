@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 快速添加表单（§4.4）。
  *
  * 核心要求：自然语言解析的结果**必须在保存前可见可改**。
@@ -12,7 +12,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { parseQuickInput } from '../lib/nlp'
 import { combineDateTime } from '../lib/datetime'
-import type { Task } from '../lib/types'
+import type { PeriodType, Task } from '../lib/types'
 
 interface QuickAddProps {
   /** 保存成功后回调，用于刷新列表 */
@@ -30,6 +30,8 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
   const [dateStr, setDateStr] = useState('')
   const [timeStr, setTimeStr] = useState('')
   const [priority, setPriority] = useState(0)
+  /** 周期跨度：这周/这个月做完就行，不必定到某天 */
+  const [periodType, setPeriodType] = useState<PeriodType>('none')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** 用户是否手动改过日期；改过之后不再用解析值覆盖（避免"我改的又被冲掉"） */
@@ -59,6 +61,7 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
     setDateStr('')
     setTimeStr('')
     setPriority(0)
+    setPeriodType('none')
     setError(null)
     setDateTouched(false)
   }, [])
@@ -81,6 +84,7 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
       const task = await ipc.createTask({
         title,
         priority: priority || undefined,
+        periodType: periodType === 'none' ? undefined : periodType,
         plannedAt: dt?.utc ?? null,
         hasPlannedTime: dt?.hasTime ?? false,
         tagIds,
@@ -172,6 +176,26 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
             <option value={1}>低</option>
             <option value={2}>中</option>
             <option value={3}>高</option>
+          </select>
+        </label>
+
+        {/* 周期跨度：用于"这周/这个月做完就行"的任务。
+            选中后**不需要**填具体日期，因此这里不做联动清空，
+            用户想同时指定日期也可以。 */}
+        <label className="field">
+          周期
+          <select
+            value={periodType}
+            aria-label="周期跨度"
+            title="标记为某个周期内完成即可，不必绑定到具体某一天"
+            onChange={(e) => setPeriodType(e.target.value as PeriodType)}
+          >
+            <option value="none">不限</option>
+            <option value="day">今日内</option>
+            <option value="week">本周内</option>
+            <option value="month">本月内</option>
+            <option value="quarter">本季度内</option>
+            <option value="year">今年内</option>
           </select>
         </label>
         {dateStr && (

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 任务编辑对话框（任务书 §4.1 完整字段集）。
  *
  * ## 关键设计：三个时间字段必须分得清
@@ -28,7 +28,8 @@ import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/datetime'
-import type { Task, TaskStatus } from '../lib/types'
+import type { PeriodType, Task, TaskStatus } from '../lib/types'
+import { PERIOD_LABELS } from '../lib/types'
 import type { Category, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
 
 function errText(e: unknown): string {
@@ -75,6 +76,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   // 标记
   const [isPinned, setIsPinned] = useState(task.isPinned === 1)
   const [isFavorite, setIsFavorite] = useState(task.isFavorite === 1)
+  /** 周期跨度：表达"这周/这个月做完就行"，不绑定具体日期 */
+  const [periodType, setPeriodType] = useState<PeriodType>(task.periodType ?? 'none')
 
   // 选项数据
   const [projects, setProjects] = useState<ProjectWithCount[]>([])
@@ -178,6 +181,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         actualMinutes: actual.trim() ? Number(actual) : 0,
         isPinned,
         isFavorite,
+        periodType,
       }
 
       if (planned) {
@@ -515,6 +519,41 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
               })}
             </div>
           )}
+        </div>
+
+        {/* ---------------- 周期跨度 ---------------- */}
+        <div className="formrow">
+          <span className="formlabel">周期跨度</span>
+          <div className="periodpick">
+            {(
+              [
+                'none',
+                'day',
+                'week',
+                'month',
+                'quarter',
+                'year',
+              ] as PeriodType[]
+            ).map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={`tagtoggle${periodType === p ? ' tagtoggle--on' : ''}`}
+                aria-pressed={periodType === p}
+                onClick={() => setPeriodType(p)}
+              >
+                {p === 'none' ? '不限' : `${PERIOD_LABELS[p]}内完成`}
+              </button>
+            ))}
+          </div>
+          <p className="setgroup__hint" style={{ marginTop: 5 }}>
+            周期跨度用于「这件事这周做完就行，不用定到某一天」这类任务。
+            它<strong>不替代</strong>计划时间与截止时间：计划时间决定它出现在哪一天、
+            日历显示在哪里；截止时间决定何时算逾期；周期只是声明一个柔性的完成窗口。
+            <br />
+            标记周期且<strong>不填计划时间</strong>的任务不会出现在「今天」视图里，
+            只会出现在对应的「周期任务」视图中——避免每天弹出提醒。
+          </p>
         </div>
 
         {/* ---------------- 标记 ---------------- */}

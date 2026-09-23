@@ -102,6 +102,22 @@ export function buildQuery(s: {
       q.plannedFrom = today.start
       q.plannedTo = today.end
       break
+    // ---------------- 周期任务视图 ----------------
+    // 与上面的"今天/本周"是**不同维度**：这里按任务自身的周期跨度筛选，
+    // 因此**不加时间范围条件**——"这周做完就行"的任务本来就没有具体计划日，
+    // 加时间过滤会让它永远查不出来。
+    case 'period-week':
+      q.periodTypes = ['week']
+      break
+    case 'period-month':
+      q.periodTypes = ['month']
+      break
+    case 'period-quarter':
+      q.periodTypes = ['quarter']
+      break
+    case 'period-year':
+      q.periodTypes = ['year']
+      break
     case 'tomorrow': {
       const d = new Date()
       d.setDate(d.getDate() + 1)

@@ -27,6 +27,7 @@ pub mod backup;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod focus;
 pub mod models;
 pub mod organize;
 pub mod recurrence;
@@ -358,6 +359,15 @@ pub fn run() {
             stats::goals_list,
             stats::goal_create,
             stats::goal_delete,
+            // ---- 专注模式（§4.4）----
+            focus::focus_start,
+            focus::focus_current,
+            focus::focus_pause,
+            focus::focus_resume,
+            focus::focus_end,
+            focus::focus_cancel,
+            focus::focus_summary,
+            focus::focus_format_seconds,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");

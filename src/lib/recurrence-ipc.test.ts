@@ -276,6 +276,7 @@ describe('isRecurring', () => {
     sortOrder: 0,
     isPinned: 0,
     isFavorite: 0,
+    periodType: 'none',
     seriesId: null,
     occurrenceKey: null,
     occurrenceIndex: null,
