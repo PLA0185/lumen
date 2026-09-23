@@ -24,6 +24,7 @@ import { PrintReport } from './components/PrintReport'
 import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
 import * as bus from './lib/bus'
+import * as win from './lib/window-ipc'
 import type { Task, ViewId } from './lib/types'
 import { Icon } from './components/Icons'
 
@@ -97,6 +98,56 @@ export default function App() {
     filterNote?: string
   } | null>(null)
   const [exporting, setExporting] = useState(false)
+
+  // --------------------- 悬浮窗开关（顶栏一键） ---------------------
+  /**
+   * 悬浮窗原本只能去「设置 → 窗口」或托盘菜单里开，用户找不到入口。
+   * 它是个"桌面上随手看今天"的组件，就应该在主界面一眼可及，
+   * 因此顶栏放一个开关，并在打开时顺带说明它出现在哪。
+   */
+  const [floatingOn, setFloatingOn] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const s = await win.windowFloatingState()
+        setFloatingOn(s.enabled)
+      } catch {
+        // 非 Tauri 环境或窗口不存在时保持未知，按钮显示为"未开启"
+      }
+    })()
+  }, [])
+
+  // 从设置页或托盘改动时保持同步
+  useEffect(() => {
+    let unlisten: (() => void) | undefined
+    void (async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        unlisten = await listen<win.WindowConfig>('floating-config', (e) => {
+          setFloatingOn(e.payload.floatingEnabled)
+        })
+      } catch {
+        // 忽略：不同步只是显示状态旧一点，不影响功能
+      }
+    })()
+    return () => unlisten?.()
+  }, [])
+
+  const toggleFloating = useCallback(async () => {
+    try {
+      const cfg = await win.windowApplyAction(floatingOn ? 'hide_floating' : 'show_floating')
+      setFloatingOn(cfg.floatingEnabled)
+      pushToast(
+        'info',
+        cfg.floatingEnabled
+          ? '悬浮窗已打开：在屏幕右下角，可拖动、可改大小与透明度，鼠标穿透在它自己的顶栏切换'
+          : '悬浮窗已隐藏（随时可在这里或托盘菜单重新打开）',
+      )
+    } catch (e) {
+      pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+    }
+  }, [floatingOn, pushToast])
 
   // ------------------------------ 启动 ------------------------------
   useEffect(() => {
@@ -376,6 +427,23 @@ export default function App() {
                 </button>
               )}
             </div>
+
+            {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
+            <button
+              type="button"
+              className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}
+              aria-pressed={floatingOn === true}
+              disabled={floatingOn === null}
+              onClick={() => void toggleFloating()}
+              title={
+                floatingOn
+                  ? '隐藏桌面上的悬浮今日小窗'
+                  : '打开悬浮今日小窗（默认出现在屏幕右下角）'
+              }
+            >
+              <Icon name="pin" size={15} />
+              悬浮窗
+            </button>
 
             <button
               type="button"

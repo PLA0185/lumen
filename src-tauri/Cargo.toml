@@ -1,6 +1,6 @@
 [package]
 name = "lumen"
-version = "0.2.1"
+version = "0.2.2"
 description = "Lumen —— 本地优先的智能任务管理（可选 AI 辅助）"
 authors = ["Lumen"]
 edition = "2021"
