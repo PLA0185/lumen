@@ -16,6 +16,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod organize;
+pub mod reminders;
 pub mod subtasks;
 
 use std::sync::atomic::Ordering;
@@ -103,6 +104,11 @@ pub fn run() {
 
             app.manage(AppState::new(db));
 
+            // ---------------- 提醒调度（§4.3） ----------------
+            // 官方通知插件的 schedule 在桌面端会被忽略（已核实其源码注释），
+            // 因此调度由我们自己的轮询循环负责，数据库是唯一事实来源。
+            reminders::spawn(app.handle().clone());
+
             // ---------------- 系统托盘（§8.6） ----------------
             if let Err(e) = setup_tray(app.handle()) {
                 // 托盘失败不应阻止应用启动：用户仍可通过主窗口使用
@@ -171,6 +177,16 @@ pub fn run() {
             subtasks::dependency_dependents,
             subtasks::dependency_remove,
             subtasks::dependency_is_blocked,
+            // ---- 提醒（§4.3）----
+            reminders::reminder_create,
+            reminders::reminder_list,
+            reminders::reminder_set_enabled,
+            reminders::reminder_delete,
+            reminders::reminder_snooze,
+            reminders::reminder_scheduler_status,
+            reminders::reminder_set_grace,
+            reminders::reminder_check_missed,
+            reminders::reminder_list_pending,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");

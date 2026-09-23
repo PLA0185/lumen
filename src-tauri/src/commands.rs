@@ -28,6 +28,12 @@ pub struct AppState {
     pub db: Db,
     /// 提醒调度是否处于暂停状态（§8.6 托盘「暂停提醒」）
     pub reminders_paused: std::sync::atomic::AtomicBool,
+    /// 调度循环是否应停止（退出流程使用）
+    pub scheduler_stopped: std::sync::atomic::AtomicBool,
+    /// 程序关闭期间错过的提醒，最多补发多少分钟内的（0 = 不补发）
+    /// §4.3 要求"重启、休眠唤醒后重算待提醒项，避免漏发或重复轰炸"，
+    /// 这个窗口就是"漏发"与"轰炸"之间的平衡点，且可由用户调整。
+    pub missed_grace_minutes: std::sync::atomic::AtomicI64,
 }
 
 impl AppState {
@@ -36,6 +42,10 @@ impl AppState {
         Self {
             db,
             reminders_paused: std::sync::atomic::AtomicBool::new(false),
+            scheduler_stopped: std::sync::atomic::AtomicBool::new(false),
+            // 默认 6 小时：足以覆盖"关机一晚后开机"的常见场景，
+            // 又不至于把上周的提醒全部倒出来。
+            missed_grace_minutes: std::sync::atomic::AtomicI64::new(6 * 60),
         }
     }
 }
@@ -407,6 +417,18 @@ pub async fn task_update(
     }
 
     tx.commit().await?;
+
+    // §4.3：「重算待提醒项」。用户改了计划/截止时间后，所有相对型提醒
+    // （如"到期前 30 分钟"）都必须跟着移动，否则会在错误时间响起。
+    // 只在时间字段可能变化时才重算，避免无谓的写操作。
+    if input.planned_at.is_some()
+        || input.due_at.is_some()
+        || input.clear_planned_at
+        || input.clear_due_at
+    {
+        crate::reminders::on_task_time_changed(db, &id).await;
+    }
+
     get_task_row(db, &id).await
 }
 

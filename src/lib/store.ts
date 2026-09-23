@@ -33,6 +33,9 @@ export interface Toast {
 interface AppStore {
   // ------------------------------ 数据 ------------------------------
   tasks: Task[]
+  /** 任务 ID → 子任务进度。列表页**批量**获取一次，
+   * 而不是让每张卡片各查一次，否则 1000 条任务会产生 1000 次查询（§10）。 */
+  progressMap: Record<string, { total: number; done: number; percent: number | null }>
   loadState: LoadState
   /** 加载失败时的可读原因 */
   loadError: string | null
@@ -145,6 +148,7 @@ export function buildQuery(s: {
 
 export const useApp = create<AppStore>((set, get) => ({
   tasks: [],
+  progressMap: {},
   loadState: 'idle',
   loadError: null,
   overview: null,
@@ -177,7 +181,23 @@ export const useApp = create<AppStore>((set, get) => ({
     set({ loadState: 'loading', loadError: null })
     try {
       const tasks = await ipc.listTasks(buildQuery(s))
-      set({ tasks, loadState: 'ready', loadError: null })
+
+      // 批量取子任务进度。失败不应让整个列表报错——
+      // 进度只是辅助信息，主数据仍然可用。
+      let progressMap: Record<string, { total: number; done: number; percent: number | null }> = {}
+      if (tasks.length > 0) {
+        try {
+          const { subtaskProgressBatch } = await import('./organize-ipc')
+          const rows = await subtaskProgressBatch(tasks.map((t) => t.id))
+          progressMap = Object.fromEntries(
+            rows.map((p) => [p.taskId, { total: p.total, done: p.done, percent: p.percent }]),
+          )
+        } catch {
+          progressMap = {}
+        }
+      }
+
+      set({ tasks, progressMap, loadState: 'ready', loadError: null })
     } catch (e) {
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
       set({ loadState: 'error', loadError: msg })

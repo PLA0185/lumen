@@ -1322,3 +1322,270 @@ input[type='color'] {
   background: var(--c-warn-soft);
 }
 
+/* =============================================================================
+   阶段 2：可展开卡片、提醒、子任务、依赖
+   ============================================================================= */
+
+/* 卡片改为纵向：第一行是主信息，展开区在下方 */
+.task {
+  display: block;
+}
+
+.task__main {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+}
+
+.task--expanded {
+  border-color: var(--c-border-strong);
+  box-shadow: var(--shadow);
+}
+
+/* 任务正文区域可点击展开，给出指针与轻微反馈 */
+.task:not(.task--done) .task__body {
+  cursor: pointer;
+}
+
+.task__detail {
+  margin-top: 11px;
+  margin-left: 30px;
+  padding-top: 11px;
+  border-top: 1px solid var(--c-border);
+  cursor: default;
+  animation: detail-in var(--dur) var(--ease);
+}
+
+@keyframes detail-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 卡片内的小号复选框（子任务用） */
+.task__check--sm {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+}
+
+/* 行内进度条（任务卡片上） */
+.task__progress {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress--inline {
+  width: 46px;
+  flex: none;
+}
+
+/* ----------------------------- 提醒 ----------------------------- */
+.reminders {
+  margin-top: 14px;
+}
+
+.reminders__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--c-text-3);
+}
+
+.reminders__empty {
+  margin: 6px 0;
+  font-size: 0.85em;
+  color: var(--c-text-3);
+}
+
+.remlist {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+  margin: 0 0 8px;
+  list-style: none;
+}
+
+.remrow {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 4px 8px;
+  font-size: 0.85em;
+  background: var(--c-surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.remrow__kind {
+  flex: none;
+  font-weight: 550;
+}
+
+.remrow__time {
+  flex: 1;
+  min-width: 0;
+  color: var(--c-text-2);
+  overflow-wrap: anywhere;
+}
+
+.remrow__actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.remnew {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.remnew__hint {
+  margin-top: 5px;
+  font-size: 0.8em;
+  color: var(--c-warn);
+}
+
+.input--compact {
+  height: 28px;
+  font-size: 0.85em;
+}
+
+/* 状态小标签 */
+.chip {
+  flex: none;
+  padding: 0 6px;
+  font-size: 0.82em;
+  color: var(--c-text-3);
+  background: var(--c-surface);
+  border-radius: 999px;
+}
+
+.chip--ok {
+  color: var(--c-ok);
+  background: var(--c-ok-soft);
+}
+
+.chip--warn {
+  color: var(--c-warn);
+  background: var(--c-warn-soft);
+}
+
+.chip--muted {
+  color: var(--c-text-3);
+  background: var(--c-surface-2);
+}
+
+/* ----------------------------- 子任务 ----------------------------- */
+.subtasks {
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px dashed var(--c-border);
+}
+
+.sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  margin: 0 0 6px;
+  list-style: none;
+}
+
+.subtask__title {
+  cursor: text;
+}
+
+.subnew {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.subnew .input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ----------------------------- 依赖 ----------------------------- */
+.deps {
+  padding-top: 2px;
+}
+
+.deps__group {
+  margin-bottom: 8px;
+}
+
+.deps__label {
+  margin-bottom: 3px;
+  font-size: 0.8em;
+  color: var(--c-text-3);
+}
+
+.dependency__title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dependency__state {
+  flex: none;
+  font-size: 0.88em;
+  opacity: 0.85;
+}
+
+.dependency--info {
+  color: var(--c-info);
+  background: var(--c-accent-soft);
+}
+
+.depspicker {
+  padding: 9px;
+  margin-top: 6px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+}
+
+.depspicker__list {
+  max-height: 190px;
+  padding: 0;
+  margin: 7px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.depspicker__empty {
+  padding: 10px 4px;
+  font-size: 0.83em;
+  line-height: 1.5;
+  color: var(--c-text-3);
+}
+
+.depspicker__item {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 0.88em;
+  text-align: left;
+  border-radius: var(--radius-sm);
+}
+
+.depspicker__item:hover:not(:disabled) {
+  background: var(--c-surface-hover);
+}
+
+.depspicker__item:disabled {
+  opacity: 0.5;
+}
+
+

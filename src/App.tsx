@@ -35,6 +35,7 @@ const ORGANIZE_VIEWS = new Set<ViewId>(['projects', 'tags'])
 export default function App() {
   const {
     tasks,
+    progressMap,
     loadState,
     loadError,
     overview,
@@ -248,6 +249,7 @@ export default function App() {
           <TaskArea
             view={view}
             tasks={sortedTasks}
+            progressMap={progressMap}
             loadState={loadState}
             loadError={loadError}
             search={search}
@@ -290,6 +292,8 @@ export default function App() {
 interface TaskAreaProps {
   view: ViewId
   tasks: Task[]
+  /** 任务 ID → 子任务进度（列表页批量取得） */
+  progressMap: Record<string, { total: number; done: number; percent: number | null }>
   loadState: string
   loadError: string | null
   search: string
@@ -305,6 +309,7 @@ interface TaskAreaProps {
 function TaskArea({
   view,
   tasks,
+  progressMap,
   loadState,
   loadError,
   search,
@@ -418,6 +423,7 @@ function TaskArea({
           key={t.id}
           task={t}
           mode={view === 'trash' ? 'trash' : 'normal'}
+          progress={progressMap[t.id]}
           onToggle={onToggle}
           onDelete={onDelete}
           onRestore={onRestore}
