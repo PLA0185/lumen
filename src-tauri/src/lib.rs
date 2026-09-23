@@ -18,6 +18,7 @@ pub mod db;
 pub mod error;
 pub mod models;
 pub mod organize;
+pub mod recurrence;
 pub mod reminders;
 pub mod subtasks;
 
