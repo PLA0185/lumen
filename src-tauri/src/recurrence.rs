@@ -492,7 +492,11 @@ fn days_in_month(year: i32, month: u32) -> u32 {
     (first_next - first_this).num_days() as u32
 }
 
-/// 判断某年是否闰年
+/// 判断某年是否闰年（格里高利规则）。
+///
+/// 仅用于测试与断言：展开逻辑通过 chrono 的日期运算天然处理闰年，
+/// 不需要自己判断天数，因此标注 cfg(test) 避免生产构建出现死代码。
+#[cfg(test)]
 fn is_leap(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }

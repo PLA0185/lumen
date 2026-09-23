@@ -13,7 +13,7 @@ from pathlib import Path
 
 DEFAULT_DB = Path(os.environ["APPDATA"]) / "com.pla0185.aitodo" / "aitodo.db"
 
-# 迁移必须创建的表（与 migrations/0001_init.sql 一一对应）
+# 迁移必须创建的表（与 migrations/ 一一对应）
 EXPECTED_TABLES = [
     "app_meta",
     "attachments",
@@ -27,6 +27,8 @@ EXPECTED_TABLES = [
     "task_dependencies",
     "task_series",
     "task_series_segments",
+    # migration 0002：单次跳过记录（§5「单次取消显示为该次跳过」）
+    "task_series_skips",
     "task_tags",
     "tasks",
 ]

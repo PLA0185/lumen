@@ -19,6 +19,7 @@ pub mod error;
 pub mod models;
 pub mod organize;
 pub mod recurrence;
+pub mod recurrence_service;
 pub mod reminders;
 pub mod subtasks;
 
@@ -207,6 +208,17 @@ pub fn run() {
             attachments::attachment_remove,
             attachments::attachment_reveal,
             attachments::attachment_check,
+            // ---- 重复系列（§5）----
+            recurrence_service::recurring_create,
+            recurrence_service::recurring_preview,
+            recurrence_service::recurring_materialize,
+            recurrence_service::recurring_get,
+            recurrence_service::recurring_occurrences,
+            recurrence_service::recurring_stats,
+            recurrence_service::recurring_edit_instance,
+            recurrence_service::recurring_skip_occurrence,
+            recurrence_service::recurring_delete,
+            recurrence_service::recurring_scope_info,
         ])
         .run(tauri::generate_context!())
         .expect("AiTodo 启动失败");
