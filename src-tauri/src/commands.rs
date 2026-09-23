@@ -94,15 +94,24 @@ fn validate_status(s: &str) -> AppResult<&'static str> {
     })
 }
 
-/// 校验时间字符串必须是 UTC ISO-8601，否则排序与比较语义会被破坏。
+/// 校验时间字符串必须是 RFC-3339，并**规范化**为固定宽度的 UTC 形式。
 ///
-/// §4.3：时间区分"仅日期"和"精确时间"。此处只校验格式；
-/// 是否含时刻由 `has_*_time` 表达，且要求仅日期时时间部分归一为 00:00:00。
+/// 为什么必须规范化成固定宽度（毫秒三位 + `Z`）：
+/// 全库时间以 TEXT 存储，列表排序、区间筛选（`planned_at >= ?`）与逾期判断
+/// 全都依赖**字符串字典序**。字典序要等价于时间序，前提是所有值宽度一致：
+///   `2026-09-22T20:00:00Z`   ← 20 字符
+///   `2026-09-22T20:00:00.000Z` ← 24 字符
+/// 两者混存时，`'2026-09-22T20:00:00Z' > '2026-09-22T20:00:00.000Z'`
+/// （因为 'Z' > '.'），排序与比较结果都会错乱。
+/// 因此这里一律经 `to_db_time` 归一化，而不是把用户输入原样回显。
+///
+/// §4.3：是否含具体时刻由 `has_*_time` 表达，与本函数的格式无关。
 fn validate_time(field: &str, raw: &str) -> AppResult<String> {
     let parsed = chrono::DateTime::parse_from_rfc3339(raw).map_err(|_| {
         AppError::validation(format!("{field}格式不正确：{raw}"))
             .with_hint("请使用 ISO-8601 且带时区，例如 2026-09-23T09:00:00+08:00")
     })?;
+    // with_timezone(Utc) + to_db_time 保证输出恒为 `YYYY-MM-DDTHH:MM:SS.sssZ`
     Ok(to_db_time(parsed.with_timezone(&chrono::Utc)))
 }
 
@@ -1009,19 +1018,41 @@ mod tests {
         assert!(validate_time("截止时间", "").is_err());
     }
 
+    /// 固定宽度是字典序可比较的前提。
+    ///
+    /// 注意时区换算：北京 2026-09-23 01:00 (+08:00) 实际等于
+    /// **UTC 2026-09-22 17:00**，比 UTC 2026-09-22 20:00 更早。
+    /// 这个测试刻意包含一次跨日换算，防止把"本地时刻的大小"
+    /// 误当成"UTC 时刻的大小"。
+    #[test]
+    fn time_comparison_is_lexicographically_safe() {
+        let earlier = validate_time("x", "2026-09-23T01:00:00+08:00").unwrap();
+        let later = validate_time("x", "2026-09-22T20:00:00Z").unwrap();
+
+        // 所有产出必须等宽，否则字符串比较会失效
+        assert_eq!(earlier.len(), 24, "时间字符串必须固定 24 字符宽");
+        assert_eq!(later.len(), 24, "时间字符串必须固定 24 字符宽");
+        assert!(earlier.ends_with('Z'), "必须归一为 UTC 并以 Z 结尾");
+
+        assert_eq!(earlier, "2026-09-22T17:00:00.000Z");
+        assert_eq!(later, "2026-09-22T20:00:00.000Z");
+        // 字典序必须与时间序一致
+        assert!(earlier < later, "UTC 17:00 应早于 UTC 20:00");
+    }
+
+    /// 相反方向也要成立，避免"单向巧合"掩盖问题。
+    #[test]
+    fn lexicographic_order_holds_across_days() {
+        let a = validate_time("x", "2026-09-22T23:59:59Z").unwrap();
+        let b = validate_time("x", "2026-09-23T00:00:01Z").unwrap();
+        assert!(a < b, "跨日边界必须保持字典序");
+    }
+
     #[test]
     fn empty_string_time_is_treated_as_unset_not_as_error() {
         // 前端表单清空日期后常提交 ""，必须视为"未设置"
         assert_eq!(validate_opt_time("计划时间", None).unwrap(), None);
         let s = String::new();
         assert_eq!(validate_opt_time("计划时间", Some(&s)).unwrap(), None);
-    }
-
-    #[test]
-    fn time_comparison_is_lexicographically_safe() {
-        // 全库时间统一为固定宽度 UTC 字符串，字符串比较等价于时间比较
-        let a = validate_time("x", "2026-09-23T01:00:00+08:00").unwrap();
-        let b = validate_time("x", "2026-09-22T20:00:00Z").unwrap();
-        assert!(b < a, "2026-09-22T20:00Z 早于 2026-09-23T01:00Z");
     }
 }
