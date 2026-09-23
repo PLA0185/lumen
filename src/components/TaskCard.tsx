@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 任务卡片（§4.1 / §3）。
  *
  * 视觉要求：明确的完成状态、截止时间与优先级提示；
@@ -16,6 +16,7 @@ import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
 import { DependencyEditor } from './DependencyEditor'
 import { AttachmentList } from './AttachmentList'
+import { FocusPanel } from './FocusPanel'
 import * as rec from '../lib/recurrence-ipc'
 import type { ScopeInfo } from '../lib/recurrence-ipc'
 
@@ -310,6 +311,13 @@ export function TaskCard({
           {isRecurring && <SeriesInfo taskId={task.id} />}
           <SubtaskList taskId={task.id} />
           <AttachmentList taskId={task.id} />
+          {/* 专注计时绑定到这个任务：结束后时长累加到 actual_minutes */}
+          <div className="focusblock">
+            <div className="subtasks__head">
+              <span>专注</span>
+            </div>
+            <FocusPanel taskId={task.id} taskTitle={task.title} compact />
+          </div>
           <ReminderEditor
             taskId={task.id}
             hasPlanned={Boolean(task.plannedAt)}

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 统计与成长页（任务书 §7）。
  *
  * ## 一条必须遵守的界面要求
@@ -26,10 +26,61 @@ import * as st from '../lib/stats-ipc'
 import { scheduleConflicts } from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
+import * as focus from '../lib/focus-ipc'
 import type { GrowthConfig, GrowthOverview, PeriodStats } from '../lib/stats-ipc'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
+}
+
+/**
+ * 专注记录区块（§4.4）。
+ *
+ * 与统计页放在一起而不是单独一页：专注是"投入"的度量，
+ * 与完成数量、耗时并列看才有意义（§7 要求统计基于同一份真实数据）。
+ */
+function FocusSection() {
+  const [summary, setSummary] = useState<focus.FocusSummary | null>(null)
+
+  useEffect(() => {
+    void focus
+      .focusSummary()
+      .then(setSummary)
+      .catch(() => {
+        // 专注数据是附加信息，失败不打断统计页
+      })
+  }, [])
+
+  if (!summary) return null
+
+  return (
+    <div className="setgroup">
+      <h3 className="setgroup__title">专注记录</h3>
+      <div className="statcards">
+        <div className="statcard">
+          <div className="statcard__label">今日专注</div>
+          <div className="statcard__value">{focus.formatHms(summary.todaySeconds)}</div>
+          <div className="statcard__sub">共 {summary.todaySessions} 轮（只计已完成的）</div>
+        </div>
+        <div className="statcard">
+          <div className="statcard__label">本周专注</div>
+          <div className="statcard__value">{focus.formatHms(summary.weekSeconds)}</div>
+          <div className="statcard__sub">本周从周一算起</div>
+        </div>
+      </div>
+      <p className="setgroup__hint">
+        只统计「完成并记录」的专注轮次。被放弃或中断的时长不计入，
+        以免把离开电脑的时间算成有效投入。
+        {summary.activeSession && (
+          <>
+            <br />
+            当前有一轮专注正在进行中（
+            {focus.FOCUS_STATE_LABELS[summary.activeSession.state]}）。
+          </>
+        )}
+      </p>
+    </div>
+  )
 }
 
 /** 可选的统计区间 */
@@ -486,6 +537,9 @@ export function StatsView() {
           </ul>
         )}
       </div>
+
+      {/* ---------------- 专注记录（§4.4） ---------------- */}
+      <FocusSection />
 
       {/* ---------------- 成长与游戏化 ---------------- */}
       <div className="setgroup">
