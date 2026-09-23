@@ -24,6 +24,7 @@ import { WindowSettings } from './WindowSettings'
 import { AiPanel } from './AiPanel'
 import type { BackupEntry, ImportPreview } from '../lib/backup-ipc'
 import type { DataPaths } from '../lib/types'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -311,7 +312,7 @@ export function SettingsView() {
         <div className="alert alert--error" role="alert" style={{ marginTop: 12 }}>
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}
@@ -695,7 +696,7 @@ export function SettingsView() {
                         aria-label={`预览 ${b.fileName}`}
                         onClick={() => void previewFromList(b.path)}
                       >
-                        👁
+                        <Icon name="search" size={15} />
                       </button>
                       <button
                         type="button"
@@ -704,7 +705,7 @@ export function SettingsView() {
                         aria-label={`定位 ${b.fileName}`}
                         onClick={() => void revealFile(b.path)}
                       >
-                        📂
+                        <Icon name="folder-open" size={15} />
                       </button>
                       <button
                         type="button"
@@ -713,7 +714,7 @@ export function SettingsView() {
                         aria-label={`删除 ${b.fileName}`}
                         onClick={() => void deleteBackup(b)}
                       >
-                        ✕
+                        <Icon name="close" size={14} />
                       </button>
                     </span>
                   </li>

@@ -24,6 +24,7 @@ import * as focus from '../lib/focus-ipc'
 import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
 import type { FocusSummary, FocusView } from '../lib/focus-ipc'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -209,7 +210,7 @@ export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelPro
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

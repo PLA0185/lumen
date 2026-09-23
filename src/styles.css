@@ -321,9 +321,22 @@ select {
 
 .nav-item__icon {
   flex: none;
+  display: grid;
+  place-items: center;
   width: 18px;
-  font-size: 1em;
-  text-align: center;
+  height: 18px;
+  /* 图标继承文字色，因此未选中是次级文字色、选中是强调色，
+     深浅主题自动适配，不需要为 emoji 单独处理配色 */
+  color: var(--c-text-3);
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.nav-item:hover .nav-item__icon {
+  color: var(--c-text-2);
+}
+
+.nav-item[aria-current='page'] .nav-item__icon {
+  color: var(--c-accent);
 }
 
 .nav-item__label {
@@ -957,6 +970,65 @@ select {
 .toast--reminder {
   border-left-color: var(--c-warn);
   background: var(--c-warn-soft);
+}
+
+/* 提示条图标：与左侧色条同色，比 emoji 更克制也更容易看清 */
+.toast__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--c-text-3);
+}
+
+.toast__icon--success {
+  color: var(--c-ok);
+}
+
+.toast__icon--error {
+  color: var(--c-danger);
+}
+
+.toast__icon--reminder {
+  color: var(--c-warn);
+}
+
+.toast__icon--info {
+  color: var(--c-info);
+}
+
+/* ---------------------------------------------------------------------------
+   图标与文字的对齐
+   ---------------------------------------------------------------------------
+   自绘图标是 inline 的 SVG，默认会以基线对齐，和中文混排时容易偏下。
+   这里统一让按钮/标签里的图标垂直居中，避免出现"有的图标高一点、
+   有的低一点"的观感——这正是当初用 emoji 时最明显的问题。 */
+.btn,
+.icon-btn,
+.chip,
+.badge,
+.nav-item,
+.tab,
+.calchip__mark,
+.seriesinfo__rule,
+.floating__btn,
+.floating__item-btn,
+.floating__add-btn {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.icon-btn svg,
+.floating__btn svg,
+.floating__item-btn svg,
+.floating__add-btn svg {
+  display: block;
+}
+
+.badge svg,
+.chip svg {
+  display: block;
 }
 
 @keyframes toast-in {

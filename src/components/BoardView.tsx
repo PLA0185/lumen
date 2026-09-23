@@ -20,6 +20,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
 import type { Task, TaskStatus } from '../lib/types'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -117,7 +118,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}
@@ -198,7 +199,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
                             {overdue && <span className="badge badge--overdue">已逾期</span>}
                             {t.seriesId && (
                               <span className="badge badge--recurring" title="重复任务的一次发生">
-                                ↻
+                                <Icon name="repeat" size={14} />
                               </span>
                             )}
                             {timeText && <span>{timeText}</span>}
@@ -212,7 +213,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
                               aria-label={`编辑「${t.title}」`}
                               onClick={() => onEdit(t)}
                             >
-                              ✎
+                              <Icon name="edit" size={15} />
                             </button>
                           </div>
                         </article>

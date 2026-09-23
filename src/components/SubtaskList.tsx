@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Subtask } from '../lib/organize-ipc'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -174,7 +175,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
                 title="删除子任务"
                 onClick={() => void remove(s)}
               >
-                ✕
+                <Icon name="close" size={14} />
               </button>
             </li>
           ))}
@@ -206,7 +207,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

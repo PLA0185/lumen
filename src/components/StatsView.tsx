@@ -28,6 +28,7 @@ import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
 import * as focus from '../lib/focus-ipc'
 import type { GrowthConfig, GrowthOverview, PeriodStats } from '../lib/stats-ipc'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -181,7 +182,7 @@ export function StatsView() {
       <div className="state">
         <div className="state__inner">
           <div className="state__icon" aria-hidden="true">
-            ⚠
+            <Icon name="alert" size={30} strokeWidth={1.5} />
           </div>
           <div className="state__title">统计加载失败</div>
           <div className="state__text selectable">{error ?? '未知错误'}</div>
@@ -232,7 +233,7 @@ export function StatsView() {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}
@@ -530,7 +531,7 @@ export function StatsView() {
                     }
                   }}
                 >
-                  ✕
+                  <Icon name="close" size={14} />
                 </button>
               </li>
             ))}
@@ -672,7 +673,7 @@ export function StatsView() {
               {growth.achievements.map((a) => (
                 <li key={a.id} className={`achrow${a.achieved ? ' achrow--done' : ''}`}>
                   <span className="achrow__icon" aria-hidden="true">
-                    {a.achieved ? '🏆' : '○'}
+                    <Icon name={a.achieved ? 'star' : 'completed'} size={17} />
                   </span>
                   <span className="achrow__body">
                     <span className="achrow__name">{a.name}</span>

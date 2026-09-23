@@ -25,6 +25,7 @@ import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
 import * as bus from './lib/bus'
 import type { Task, ViewId } from './lib/types'
+import { Icon } from './components/Icons'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
@@ -348,7 +349,7 @@ export default function App() {
           <div className="topbar__actions">
             <div className="search">
               <span className="search__icon" aria-hidden="true">
-                ⌕
+                <Icon name="search" size={15} />
               </span>
               <input
                 className="search__input selectable"
@@ -371,7 +372,7 @@ export default function App() {
                     void reload()
                   }}
                 >
-                  ✕
+                  <Icon name="close" size={14} />
                 </button>
               )}
             </div>
@@ -413,7 +414,7 @@ export default function App() {
               onClick={() => void doExportPdf()}
               title="把当前列表导出为 PDF（含项目、标签、时间等字段）"
             >
-              {exporting ? '导出中…' : '⤓ PDF'}
+              {exporting ? '导出中…' : <><Icon name="download" size={15} /> PDF</>}
             </button>
 
             <button
@@ -422,7 +423,7 @@ export default function App() {
               onClick={() => setShowRecurring(true)}
               title="新建可以按规则重复的任务"
             >
-              ↻ 重复任务
+              <Icon name="repeat" size={15} /> 重复任务
             </button>
 
             <button
@@ -431,7 +432,7 @@ export default function App() {
               onClick={() => setShowQuickAdd((v) => !v)}
               title="新建任务（Ctrl+N）"
             >
-              ＋ 新建
+              <Icon name="plus" size={15} /> 新建
             </button>
           </div>
         </header>
@@ -519,14 +520,19 @@ export default function App() {
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast--${t.kind}`}>
-            <span aria-hidden="true">
-              {t.kind === 'success'
-                ? '✓'
-                : t.kind === 'error'
-                  ? '⚠'
-                  : t.kind === 'reminder'
-                    ? '⏰'
-                    : 'ℹ'}
+            <span className={`toast__icon toast__icon--${t.kind}`} aria-hidden="true">
+              <Icon
+                name={
+                  t.kind === 'success'
+                    ? 'completed'
+                    : t.kind === 'error'
+                      ? 'alert'
+                      : t.kind === 'reminder'
+                        ? 'clock'
+                        : 'info'
+                }
+                size={16}
+              />
             </span>
             <span style={{ flex: 1 }}>{t.text}</span>
             {/* 提醒条提供跳转：这是"点击通知打开任务"在桌面端的可用替代 */}
@@ -548,7 +554,7 @@ export default function App() {
               aria-label="关闭提示"
               onClick={() => dismissToast(t.id)}
             >
-              ✕
+              <Icon name="close" size={14} />
             </button>
           </div>
         ))}
@@ -658,7 +664,7 @@ function TaskArea({
       <div className="state">
         <div className="state__inner">
           <div className="state__icon" aria-hidden="true">
-            🚧
+            <Icon name="info" size={30} strokeWidth={1.5} />
           </div>
           <div className="state__title">「{VIEW_META[view]?.title ?? view}」尚未实现</div>
           <div className="state__text">
@@ -692,7 +698,7 @@ function TaskArea({
       <div className="state">
         <div className="state__inner">
           <div className="state__icon" aria-hidden="true">
-            ⚠
+            <Icon name="alert" size={30} strokeWidth={1.5} />
           </div>
           <div className="state__title">任务加载失败</div>
           <div className="state__text selectable">{loadError ?? '未知错误'}</div>
@@ -712,7 +718,11 @@ function TaskArea({
       <div className="state">
         <div className="state__inner">
           <div className="state__icon" aria-hidden="true">
-            {isSearch ? '⌕' : view === 'trash' ? '🗑' : view === 'completed' ? '✓' : '☰'}
+            <Icon
+              name={isSearch ? 'search' : view === 'trash' ? 'trash' : view === 'completed' ? 'completed' : 'list'}
+              size={30}
+              strokeWidth={1.5}
+            />
           </div>
           <div className="state__title">
             {isSearch
@@ -733,7 +743,7 @@ function TaskArea({
           {!isSearch && view !== 'trash' && view !== 'completed' && (
             <div className="state__actions">
               <button type="button" className="btn btn--primary" onClick={onNew}>
-                ＋ 新建任务
+                <Icon name="plus" size={15} /> 新建任务
               </button>
             </div>
           )}

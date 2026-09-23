@@ -15,6 +15,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import type { DependencyItem } from '../lib/organize-ipc'
 import type { Task } from '../lib/types'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -114,7 +115,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
         <span>依赖</span>
         {blocked && (
           <span className="chip chip--warn" title="存在未完成的前置任务">
-            ⚠ 被阻塞
+            <Icon name="alert" size={13} /> 被阻塞
           </span>
         )}
       </div>
@@ -132,7 +133,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
                   key={d.dependsOnId}
                   className={`dependency${d.isDone ? '' : ' dependency--blocking'}`}
                 >
-                  <span aria-hidden="true">{d.isDone ? '✓' : '⧗'}</span>
+                  <span aria-hidden="true"><Icon name={d.isDone ? 'completed' : 'clock'} size={14} /></span>
                   <span className="dependency__title">{d.title}</span>
                   <span className="dependency__state">
                     {d.isDone ? '已完成' : '未完成（阻塞中）'}
@@ -144,7 +145,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
                     title="解除此依赖"
                     onClick={() => void remove(d.dependsOnId)}
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 </div>
               ))}
@@ -177,7 +178,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
 
       {!picking ? (
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => void openPicker()}>
-          ＋ 添加前置任务
+          <Icon name="plus" size={15} /> 添加前置任务
         </button>
       ) : (
         <div className="depspicker">
@@ -228,7 +229,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

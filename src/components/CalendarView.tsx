@@ -22,6 +22,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { fromUtcIso, toUtcIso } from '../lib/datetime'
 import type { Task } from '../lib/types'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -221,7 +222,7 @@ export function CalendarView() {
         <span className="calchip__title">{t.title}</span>
         {t.seriesId && (
           <span className="calchip__mark" aria-label="重复任务">
-            ↻
+            <Icon name="repeat" size={13} />
           </span>
         )}
       </div>
@@ -354,7 +355,7 @@ export function CalendarView() {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

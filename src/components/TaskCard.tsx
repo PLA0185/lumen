@@ -19,6 +19,7 @@ import { AttachmentList } from './AttachmentList'
 import { FocusPanel } from './FocusPanel'
 import * as rec from '../lib/recurrence-ipc'
 import type { ScopeInfo } from '../lib/recurrence-ipc'
+import { Icon } from './Icons'
 
 /**
  * 重复系列信息块（§5）。
@@ -70,7 +71,7 @@ function SeriesInfo({ taskId }: { taskId: string }) {
     <div className="seriesinfo">
       <div className="seriesinfo__row">
         <span className="seriesinfo__rule" title="这是重复任务的一次发生">
-          ↻ 第 {info.occurrenceIndex ?? '?'} 次发生
+          <Icon name="repeat" size={13} /> 第 {info.occurrenceIndex ?? '?'} 次发生
         </span>
         <span>
           系列共 <strong>{info.totalInstances ?? 0}</strong> 次
@@ -279,7 +280,7 @@ export function TaskCard({
             )}
             {isRecurring && (
               <span className="badge badge--recurring" title="这是重复任务的一次发生">
-                ↻ 重复
+                <Icon name="repeat" size={13} /> 重复
               </span>
             )}
 
@@ -318,7 +319,7 @@ export function TaskCard({
                 aria-label={`恢复「${task.title}」`}
                 onClick={() => onRestore?.(task.id)}
               >
-                ↺
+                <Icon name="restore" size={15} />
               </button>
               <button
                 type="button"
@@ -327,7 +328,7 @@ export function TaskCard({
                 aria-label={`永久删除「${task.title}」`}
                 onClick={() => onPurge?.(task.id)}
               >
-                ✕
+                <Icon name="close" size={14} />
               </button>
             </>
           ) : (
@@ -339,7 +340,7 @@ export function TaskCard({
                 aria-label={`复制「${task.title}」`}
                 onClick={() => onDuplicate?.(task)}
               >
-                ⧉
+                <Icon name="copy" size={15} />
               </button>
               <button
                 type="button"
@@ -348,7 +349,7 @@ export function TaskCard({
                 aria-label={`编辑「${task.title}」`}
                 onClick={() => onEdit?.(task)}
               >
-                ✎
+                <Icon name="edit" size={15} />
               </button>
               <button
                 type="button"
@@ -367,7 +368,7 @@ export function TaskCard({
                 aria-label={`将「${task.title}」移入回收站`}
                 onClick={() => onDelete(task.id)}
               >
-                ✕
+                <Icon name="close" size={14} />
               </button>
             </>
           )}

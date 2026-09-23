@@ -32,6 +32,7 @@ import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
 import { TaskEditor } from './TaskEditor'
 import type { FloatingState } from '../lib/window-ipc'
 import type { Task } from '../lib/types'
+import { Icon } from './Icons'
 
 /** 拖动结束后再落库的延迟：拖动过程中会连续触发 resize 事件 */
 const SIZE_SAVE_DELAY = 400
@@ -324,7 +325,7 @@ export function FloatingToday() {
               aria-label={state?.alwaysOnTop ? '取消置顶' : '置顶显示'}
               onClick={() => void act('toggle_floating_top')}
             >
-              📌
+              <Icon name="pin" size={15} />
             </button>
             <button
               type="button"
@@ -333,7 +334,7 @@ export function FloatingToday() {
               aria-label="开启鼠标穿透"
               onClick={() => void act('toggle_floating_click_through')}
             >
-              ⊘
+              <Icon name="ban" size={15} />
             </button>
             <button
               type="button"
@@ -342,7 +343,7 @@ export function FloatingToday() {
               aria-label="隐藏悬浮窗"
               onClick={() => void act('hide_floating')}
             >
-              ✕
+              <Icon name="close" size={14} />
             </button>
           </span>
         )}
@@ -393,7 +394,7 @@ export function FloatingToday() {
                   disabled={clickThrough}
                   onClick={() => void toggle(t.id, !isDone)}
                 >
-                  {isDone ? '✓' : ''}
+                  {isDone ? <Icon name="completed" size={11} strokeWidth={2.4} /> : null}
                 </button>
 
                 {editing ? (
@@ -449,7 +450,7 @@ export function FloatingToday() {
                 )}
                 {t.seriesId && (
                   <span className="floating__mark" title="重复任务的一次发生">
-                    ↻
+                    <Icon name="repeat" size={13} />
                   </span>
                 )}
 
@@ -462,7 +463,7 @@ export function FloatingToday() {
                   disabled={clickThrough}
                   onClick={() => setFullEditing(t)}
                 >
-                  ✎
+                  <Icon name="edit" size={15} />
                 </button>
               </li>
             )
@@ -476,7 +477,7 @@ export function FloatingToday() {
         <footer className="floating__foot" data-drag-region>
           <label className="floating__opacity" data-no-drag>
             <span className="floating__opacity-label" aria-hidden="true">
-              ◐
+              <Icon name="contrast" size={14} />
             </span>
             <input
               type="range"
@@ -565,7 +566,7 @@ function FloatingAdd({
         disabled={busy || !text.trim()}
         onClick={() => void submit()}
       >
-        ＋
+        <Icon name="plus" size={15} />
       </button>
     </div>
   )

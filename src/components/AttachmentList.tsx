@@ -18,6 +18,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import * as att from '../lib/attachment-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Attachment } from '../lib/attachment-ipc'
+import { Icon, iconForMime, type IconName } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -31,17 +32,15 @@ function humanSize(bytes: number | null): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-/** 按 MIME 或扩展名给一个图标 */
-function iconFor(a: Attachment): string {
-  const m = a.mimeType ?? ''
-  if (m.startsWith('image/')) return '🖼'
-  if (m === 'application/pdf') return '📕'
-  if (m.startsWith('audio/')) return '🎵'
-  if (m.startsWith('video/')) return '🎬'
-  if (m.includes('zip') || m.includes('rar') || m.includes('7z')) return '🗜'
-  if (m.includes('word') || m.includes('excel') || m.includes('presentation')) return '📄'
-  if (m.startsWith('text/') || m === 'application/json') return '📃'
-  return '📎'
+/**
+ * 按 MIME 选图标。
+ *
+ * 统一走 `Icons.tsx` 的 `iconForMime`：原来的实现返回 emoji
+ * （🖼 📕 🎵 🎬 🗜 📄 📃 📎），与其它地方的自绘图标完全不是一个体系，
+ * 而且是彩色的，在深色主题里格外突兀。
+ */
+function iconNameFor(a: Attachment): IconName {
+  return iconForMime(a.mimeType ?? '')
 }
 
 export function AttachmentList({ taskId }: { taskId: string }) {
@@ -139,7 +138,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
             return (
               <li key={a.id} className={`attachrow${gone ? ' attachrow--missing' : ''}`}>
                 <span className="attachrow__icon" aria-hidden="true">
-                  {iconFor(a)}
+                  <Icon name={iconNameFor(a)} size={16} />
                 </span>
                 <span className="attachrow__name" title={a.fileName}>
                   {a.fileName}
@@ -161,7 +160,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
                     aria-label={`定位附件 ${a.fileName}`}
                     onClick={() => void reveal(a)}
                   >
-                    📂
+                    <Icon name="folder-open" size={15} />
                   </button>
                   <button
                     type="button"
@@ -170,7 +169,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
                     aria-label={`移除附件 ${a.fileName}`}
                     onClick={() => void remove(a)}
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 </span>
               </li>
@@ -203,7 +202,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

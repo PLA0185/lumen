@@ -32,6 +32,7 @@ import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/da
 import type { PeriodType, Task, TaskStatus } from '../lib/types'
 import { PERIOD_LABELS } from '../lib/types'
 import type { Category, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -405,7 +406,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                       setPlannedTime('')
                     }}
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 )}
               </div>
@@ -439,7 +440,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                       setDueTime('')
                     }}
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 )}
               </div>

@@ -4,13 +4,17 @@
  *
  * 未实现的视图在此**不出现**，而不是放一个点不动的按钮——
  * 任务书 §3 明确禁止"假按钮或占位功能"。
+ *
+ * 图标全部来自 `Icons.tsx` 的统一 SVG 集：初版用的是 emoji + 文字符号
+ * （☀ 📅 ⑦ ① 混排），粗细与配色都对不齐，看起来像随手拼的。
  */
 
+import { Icon, type IconName } from './Icons'
 import type { ViewId } from '../lib/types'
 
 interface NavEntry {
   id: ViewId
-  icon: string
+  icon: IconName
   label: string
 }
 
@@ -24,13 +28,13 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '任务',
     items: [
-      { id: 'today', icon: '☀', label: '今天' },
-      { id: 'tomorrow', icon: '⛅', label: '明天' },
-      { id: 'week', icon: '🗓', label: '本周安排' },
-      { id: 'calendar', icon: '📅', label: '日历' },
-      { id: 'board', icon: '▦', label: '看板' },
-      { id: 'inbox', icon: '📥', label: '收件箱' },
-      { id: 'all', icon: '📋', label: '全部任务' },
+      { id: 'today', icon: 'today', label: '今天' },
+      { id: 'tomorrow', icon: 'tomorrow', label: '明天' },
+      { id: 'week', icon: 'week', label: '本周安排' },
+      { id: 'calendar', icon: 'calendar', label: '日历' },
+      { id: 'board', icon: 'board', label: '看板' },
+      { id: 'inbox', icon: 'inbox', label: '收件箱' },
+      { id: 'all', icon: 'list', label: '全部任务' },
     ],
   },
   {
@@ -39,26 +43,26 @@ export const NAV_GROUPS: NavGroup[] = [
     // （任务没有具体日期，只声明"这周/这个月做完就行"）。命名必须区分开。
     label: '周期任务',
     items: [
-      { id: 'period-week', icon: '⑦', label: '周任务' },
-      { id: 'period-month', icon: '㊳', label: '月任务' },
-      { id: 'period-quarter', icon: '◲', label: '季度任务' },
-      { id: 'period-year', icon: '❶', label: '年任务' },
+      { id: 'period-week', icon: 'period-week', label: '周任务' },
+      { id: 'period-month', icon: 'period-month', label: '月任务' },
+      { id: 'period-quarter', icon: 'period-quarter', label: '季度任务' },
+      { id: 'period-year', icon: 'period-year', label: '年任务' },
     ],
   },
   {
     label: '整理',
     items: [
-      { id: 'projects', icon: '📁', label: '项目与分类' },
-      { id: 'tags', icon: '🏷', label: '标签' },
-      { id: 'completed', icon: '✓', label: '已完成' },
-      { id: 'trash', icon: '🗑', label: '回收站' },
+      { id: 'projects', icon: 'projects', label: '项目与分类' },
+      { id: 'tags', icon: 'tags', label: '标签' },
+      { id: 'completed', icon: 'completed', label: '已完成' },
+      { id: 'trash', icon: 'trash', label: '回收站' },
     ],
   },
   {
     label: '其他',
     items: [
-      { id: 'stats', icon: '📊', label: '统计' },
-      { id: 'settings', icon: '⚙', label: '设置' },
+      { id: 'stats', icon: 'stats', label: '统计' },
+      { id: 'settings', icon: 'settings', label: '设置' },
     ],
   },
 ]
@@ -110,8 +114,10 @@ export function Sidebar({ current, onSelect, counts, version }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
+        {/* 品牌标记用"光"的意象自绘，而不是一个字母——
+            初版这里还留着改名前的 A */}
         <span className="sidebar__logo" aria-hidden="true">
-          A
+          <Icon name="today" size={17} strokeWidth={1.9} />
         </span>
         <span className="sidebar__title">Lumen</span>
         {version && <span className="sidebar__version">v{version}</span>}
@@ -134,7 +140,7 @@ export function Sidebar({ current, onSelect, counts, version }: SidebarProps) {
                   onClick={() => onSelect(it.id)}
                 >
                   <span className="nav-item__icon" aria-hidden="true">
-                    {it.icon}
+                    <Icon name={it.icon} size={18} />
                   </span>
                   <span className="nav-item__label">{it.label}</span>
                   {typeof count === 'number' && count > 0 && (

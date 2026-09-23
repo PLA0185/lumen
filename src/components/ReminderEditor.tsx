@@ -14,6 +14,7 @@ import * as rem from '../lib/reminder-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Reminder, ReminderKind } from '../lib/reminder-ipc'
 import { fromUtcIso } from '../lib/datetime'
+import { Icon } from './Icons'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -184,7 +185,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
                       }
                     }}
                   >
-                    {r.isEnabled === 1 ? '⏸' : '▶'}
+                    <Icon name={r.isEnabled === 1 ? 'pause' : 'play'} size={14} />
                   </button>
                   <button
                     type="button"
@@ -200,7 +201,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
                       }
                     }}
                   >
-                    ✕
+                    <Icon name="close" size={14} />
                   </button>
                 </span>
               </li>
@@ -266,7 +267,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}

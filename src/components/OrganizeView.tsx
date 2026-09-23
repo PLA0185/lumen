@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Category, OrphanStrategy, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
+import { Icon } from './Icons'
 
 /** 统一的错误文案提取 */
 function errText(e: unknown): string {
@@ -542,7 +543,7 @@ export function OrganizeView() {
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
-            ✕
+            <Icon name="close" size={14} />
           </button>
         </div>
       )}
@@ -586,7 +587,7 @@ export function OrganizeView() {
                       {p.isArchived === 1 && <span className="tagchip">已归档</span>}
                       {p.isFavorite === 1 && (
                         <span className="tagchip tagchip--fav" title="已收藏">
-                          ★
+                          <Icon name="star" size={15} />
                         </span>
                       )}
                     </span>
@@ -607,7 +608,7 @@ export function OrganizeView() {
                         setEditName(p.name)
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={15} />
                     </button>
                     <button
                       type="button"
@@ -623,7 +624,7 @@ export function OrganizeView() {
                         }
                       }}
                     >
-                      {p.isArchived === 1 ? '↺' : '📦'}
+                      <Icon name={p.isArchived === 1 ? 'restore' : 'archive'} size={15} />
                     </button>
                     <button
                       type="button"
@@ -632,7 +633,7 @@ export function OrganizeView() {
                       aria-label={`合并项目 ${p.name}`}
                       onClick={() => setMerging({ kind: '项目', sourceId: p.id })}
                     >
-                      ⇥
+                      <Icon name="merge" size={15} />
                     </button>
                     <button
                       type="button"
@@ -641,7 +642,7 @@ export function OrganizeView() {
                       aria-label={`删除项目 ${p.name}`}
                       onClick={() => void askDelete('项目', p.id, p.name)}
                     >
-                      ✕
+                      <Icon name="close" size={14} />
                     </button>
                   </span>
                 </li>
@@ -689,7 +690,7 @@ export function OrganizeView() {
                         setEditName(c.name)
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={15} />
                     </button>
                     <button
                       type="button"
@@ -698,7 +699,7 @@ export function OrganizeView() {
                       aria-label={`合并分类 ${c.name}`}
                       onClick={() => setMerging({ kind: '分类', sourceId: c.id })}
                     >
-                      ⇥
+                      <Icon name="merge" size={15} />
                     </button>
                     <button
                       type="button"
@@ -707,7 +708,7 @@ export function OrganizeView() {
                       aria-label={`删除分类 ${c.name}`}
                       onClick={() => void askDelete('分类', c.id, c.name)}
                     >
-                      ✕
+                      <Icon name="close" size={14} />
                     </button>
                   </span>
                 </li>
@@ -753,7 +754,7 @@ export function OrganizeView() {
                         setEditName(t.name)
                       }}
                     >
-                      ✎
+                      <Icon name="edit" size={15} />
                     </button>
                     <button
                       type="button"
@@ -762,7 +763,7 @@ export function OrganizeView() {
                       aria-label={`合并标签 ${t.name}`}
                       onClick={() => setMerging({ kind: '标签', sourceId: t.id })}
                     >
-                      ⇥
+                      <Icon name="merge" size={15} />
                     </button>
                     <button
                       type="button"
@@ -771,7 +772,7 @@ export function OrganizeView() {
                       aria-label={`删除标签 ${t.name}`}
                       onClick={() => void deleteTag(t.id, t.name)}
                     >
-                      ✕
+                      <Icon name="close" size={14} />
                     </button>
                   </span>
                 </li>
