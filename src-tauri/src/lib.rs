@@ -250,11 +250,10 @@ pub fn run() {
                         app.exit(0);
                     }
                 }
-                WindowEvent::Moved(_) => {
-                    // 记住悬浮窗位置（§8 多显示器断连后找回）
-                    if window.label() == window_mgr::FLOATING {
-                        window_mgr::remember_floating_position(window.app_handle());
-                    }
+                // 记住悬浮窗位置（§8 多显示器断连后找回）。
+                // 用 match guard 而不是嵌套 if：正是 clippy 提示的那种可折叠写法。
+                WindowEvent::Moved(_) if window.label() == window_mgr::FLOATING => {
+                    window_mgr::remember_floating_position(window.app_handle());
                 }
                 _ => {}
             }
@@ -459,7 +458,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Lumen —— 智能任务管理")
         // 左键单击切换主窗口显隐，符合 Windows 托盘交互习惯
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| handle_tray_menu(app, event))
+        // 直接传函数指针，避免多余的闭包包装
+        .on_menu_event(handle_tray_menu)
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,

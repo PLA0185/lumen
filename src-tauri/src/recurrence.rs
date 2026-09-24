@@ -67,10 +67,11 @@ impl Freq {
 }
 
 /// 结束条件
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EndCondition {
-    /// 永不结束
+    /// 永不结束（默认）
+    #[default]
     Never,
     /// 直到某个本地日期（含当日）
     Until {
@@ -82,12 +83,6 @@ pub enum EndCondition {
         /// 次数
         count: i64,
     },
-}
-
-impl Default for EndCondition {
-    fn default() -> Self {
-        Self::Never
-    }
 }
 
 /// 一条完整的重复规则（对外的结构化表示）
@@ -305,7 +300,8 @@ impl RecurrenceRule {
                     let nth: i8 = value
                         .parse()
                         .map_err(|_| AppError::validation(format!("BYSETPOS 不是整数：{value}")))?;
-                    if nth == 0 || nth > 5 || nth < -1 {
+                    // 0 不是合法的"第几个"；范围是 1–5 或 -1（最后一个）
+                    if nth == 0 || !(-1..=5).contains(&nth) {
                         return Err(AppError::validation(format!("BYSETPOS 超出范围：{nth}"))
                             .with_hint("允许 1–5（第几个）或 -1（最后一个）"));
                     }
@@ -616,10 +612,11 @@ impl RecurrenceRule {
         }
 
         // 年规则的月份过滤
-        if self.freq == Freq::Yearly && !self.by_month.is_empty() {
-            if !self.by_month.contains(&(d.month() as u8)) {
-                return false;
-            }
+        if self.freq == Freq::Yearly
+            && !self.by_month.is_empty()
+            && !self.by_month.contains(&(d.month() as u8))
+        {
+            return false;
         }
 
         // 每月第 N 个星期 X

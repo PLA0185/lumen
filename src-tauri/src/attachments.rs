@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn attachment_limits_are_sane() {
         assert_eq!(MAX_ATTACHMENT_BYTES, 200 * 1024 * 1024);
-        assert!(MAX_PER_TASK > 0 && MAX_PER_TASK <= 1000);
+        const { assert!(MAX_PER_TASK > 0 && MAX_PER_TASK <= 1000) };
         const { assert!(MAX_ATTACHMENT_BYTES >= 10 * 1024 * 1024) };
     }
 

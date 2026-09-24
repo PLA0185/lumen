@@ -756,10 +756,10 @@ mod tests {
     #[test]
     fn limits_are_sane() {
         assert_eq!(DEFAULT_POMODORO_MINUTES, 25, "默认番茄钟应为 25 分钟");
-        assert!(MIN_MINUTES >= 1);
-        assert!(MAX_MINUTES <= 24 * 60);
+        const { assert!(MIN_MINUTES >= 1) };
+        const { assert!(MAX_MINUTES <= 24 * 60) };
         // 中断判定系数必须大于 1，否则正常完成的会话会被误判为中断
-        assert!(INTERRUPT_FACTOR > 1);
+        const { assert!(INTERRUPT_FACTOR > 1) };
     }
 
     /// 中断判定阈值要足够宽松：一个 25 分钟的番茄钟不应因为多跑了

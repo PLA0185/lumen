@@ -159,9 +159,8 @@ pub struct SchedulerStatus {
     pub expired_count: i64,
 }
 
-/// 全局暂停标志由 `AppState` 持有（托盘菜单也会改它）。
+/// 全局暂停标志由 `AppState` 持有（托盘菜单也会改它）；
 /// 调度循环每 tick 检查一次，因此暂停是秒级生效的。
-
 /// 计算某条提醒的绝对触发时刻。
 ///
 /// 返回 `Ok(None)` 表示"该提醒当前无法确定时刻"（例如所依赖的时间字段为空），
@@ -210,14 +209,8 @@ fn compute_remind_at(
     let result = match kind {
         ReminderKind::AtDue => base(due_at)?,
         ReminderKind::AtPlanned => base(planned_at)?,
-        ReminderKind::BeforeDue => match base(due_at)? {
-            Some(d) => Some(d - off.unwrap_or_default()),
-            None => None,
-        },
-        ReminderKind::BeforePlanned => match base(planned_at)? {
-            Some(d) => Some(d - off.unwrap_or_default()),
-            None => None,
-        },
+        ReminderKind::BeforeDue => base(due_at)?.map(|d| d - off.unwrap_or_default()),
+        ReminderKind::BeforePlanned => base(planned_at)?.map(|d| d - off.unwrap_or_default()),
         ReminderKind::Custom => match custom_at {
             Some(s) if !s.trim().is_empty() => Some(parse(s)?),
             _ => return Err(AppError::validation("自定义提醒必须提供 remindAt 时间")),

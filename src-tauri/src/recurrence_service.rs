@@ -182,7 +182,10 @@ fn build_rule_timeline(
         .format("%Y-%m-%d")
         .to_string();
     out.push((
-        base.rule_version.min(1).max(1),
+        // 基线分段的"规则版本"恒为 1：分段只在用户选择"此次及以后"
+        // 修改规则时产生，第 1 段永远是原始规则。
+        // 之前写成 `.min(1).max(1)`，clippy 直接判为常量（而且确实绕）。
+        1,
         base_anchor,
         base_rule,
         FieldOverride::default(),
@@ -340,7 +343,9 @@ async fn materialize_range(
         if created >= limit {
             break;
         }
-        if key < range_start_utc.to_string() || key >= range_end_utc.to_string() {
+        // occurrence_key 是固定宽度的 UTC 字符串，字典序即时间序，
+        // 因此这里直接比较字符串；用 as_str() 避免为每次比较都做一次分配
+        if key.as_str() < range_start_utc || key.as_str() >= range_end_utc {
             continue;
         }
         if existing_keys.contains(&key) || skip_keys.contains(&key) {
@@ -536,7 +541,7 @@ pub async fn create_recurring_impl(
             .with_hint("例如「每年 2 月 30 日」这样的规则永远不会发生")
     })?;
 
-    let pair = occurrences_to_utc(&[first_occ.clone()], &tzid);
+    let pair = occurrences_to_utc(std::slice::from_ref(&first_occ), &tzid);
     let first_utc = to_db_time(pair[0].1);
 
     let task_id = uuid::Uuid::now_v7().to_string();
@@ -1056,7 +1061,7 @@ pub async fn edit_instance_impl(
         );
     };
 
-    let series = get_series(&state, &series_id).await?;
+    let series = get_series(state, &series_id).await?;
     let now = to_db_time(utc_now());
 
     match scope {
@@ -1155,12 +1160,12 @@ pub async fn edit_instance_impl(
             // "只改这一次"的操作失败，而不是留下时间与提醒不一致的实例。
             crate::reminders::on_task_time_changed(db, &task_id).await?;
 
-            return Ok(ScopeActionResult {
+            Ok(ScopeActionResult {
                 affected: 1,
                 affected_history: 0,
                 regenerated: 0,
                 message: "已只修改这一次；同系列的其它发生不受影响".to_string(),
-            });
+            })
         }
 
         // ------------------------------------------------------------------
@@ -1252,7 +1257,7 @@ pub async fn edit_instance_impl(
                  清理 {purged} 个旧实例，重新生成 {regenerated} 个"
             );
 
-            return Ok(ScopeActionResult {
+            Ok(ScopeActionResult {
                 affected: purged as i64,
                 affected_history: history,
                 regenerated: regenerated as i64,
@@ -1260,7 +1265,7 @@ pub async fn edit_instance_impl(
                     "已修改这一次及以后的所有发生（规则版本 {next_ver}）；\
                      之前的 {history} 个已完成记录保持不变"
                 ),
-            });
+            })
         }
 
         // ------------------------------------------------------------------
@@ -1367,7 +1372,7 @@ pub async fn edit_instance_impl(
 
             tx.commit().await?;
 
-            return Ok(ScopeActionResult {
+            Ok(ScopeActionResult {
                 affected,
                 affected_history: 0,
                 regenerated: 0,
@@ -1375,7 +1380,7 @@ pub async fn edit_instance_impl(
                     "已修改整个系列（本次同步了 {affected} 个未完成实例）；\
                      已完成的 {history} 个历史记录保持原样"
                 ),
-            });
+            })
         }
     }
 }

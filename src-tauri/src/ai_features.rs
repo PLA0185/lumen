@@ -1905,14 +1905,14 @@ mod tests {
     #[test]
     fn default_does_not_send_notes() {
         // 这是一条安全默认值：备注常含敏感信息
-        assert!(!DEFAULT_SEND_NOTES);
+        const { assert!(!DEFAULT_SEND_NOTES) };
     }
 
     // ------------------------- 阈值与上限 -------------------------
 
     #[test]
     fn limits_are_sane() {
-        assert!(MAX_ITEMS >= 10 && MAX_ITEMS <= 200);
+        const { assert!(MAX_ITEMS >= 10 && MAX_ITEMS <= 200) };
         // 预览不能长期驻留内存
         assert!(PREVIEW_TTL.as_secs() >= 60);
         assert!(PREVIEW_TTL.as_secs() <= 24 * 3600);

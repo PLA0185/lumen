@@ -764,9 +764,12 @@ mod tests {
     /// §8.3：不透明度必须有合理下限，"防止完全不可见"
     #[test]
     fn opacity_is_clamped_to_readable_range() {
-        let mut c = WindowConfig::default();
+        // 下面会连续改同一个字段来验证各种越界值的收敛结果
+        let mut c = WindowConfig {
+            floating_opacity: 0.0,
+            ..WindowConfig::default()
+        };
 
-        c.floating_opacity = 0.0;
         c.normalize();
         assert_eq!(c.floating_opacity, OPACITY_MIN, "低于下限应被抬到下限");
 
@@ -786,14 +789,16 @@ mod tests {
     #[test]
     fn opacity_min_is_readable() {
         // 下限不能低到让文字不可读
-        assert!(OPACITY_MIN >= 0.2, "下限过低会让文字不可读");
-        assert!(OPACITY_MIN <= 0.5, "下限过高会失去半透明的意义");
+        const { assert!(OPACITY_MIN >= 0.2, "下限过低会让文字不可读") };
+        const { assert!(OPACITY_MIN <= 0.5, "下限过高会失去半透明的意义") };
     }
 
     #[test]
     fn unknown_close_action_falls_back_to_tray() {
-        let mut c = WindowConfig::default();
-        c.close_action = "explode".into();
+        let mut c = WindowConfig {
+            close_action: "explode".into(),
+            ..WindowConfig::default()
+        };
         c.normalize();
         assert_eq!(c.close_action, "tray", "未知关闭行为应回落到最安全的值");
     }
@@ -934,16 +939,18 @@ mod tests {
 
     #[test]
     fn config_roundtrips_through_json() {
-        let mut c = WindowConfig::default();
-        c.floating_enabled = true;
-        c.floating_opacity = 0.8;
+        let mut c = WindowConfig {
+            floating_enabled: true,
+            floating_opacity: 0.8,
+            ..WindowConfig::default()
+        };
         c.floating_x = Some(100.0);
         c.floating_y = Some(200.0);
         c.main_always_on_top = true;
 
         let s = serde_json::to_string(&c).unwrap();
         let back: WindowConfig = serde_json::from_str(&s).unwrap();
-        assert_eq!(back.floating_enabled, true);
+        assert!(back.floating_enabled, "往返后应保持启用");
         assert!((back.floating_opacity - 0.8).abs() < 1e-9);
         assert_eq!(back.floating_x, Some(100.0));
         assert!(back.main_always_on_top);

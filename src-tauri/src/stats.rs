@@ -1122,11 +1122,13 @@ mod tests {
     #[test]
     fn xp_is_fixed_per_task_not_time_based() {
         assert_eq!(XP_PER_TASK, 10);
-        assert!(XP_HIGH_PRIORITY_BONUS > 0);
+        const { assert!(XP_HIGH_PRIORITY_BONUS > 0) };
         // 高优先级奖励应当显著小于基础值，避免用户只刷高优先级
-        assert!(
-            XP_HIGH_PRIORITY_BONUS < XP_PER_TASK,
-            "高优先级奖励不应超过基础经验，否则会诱导用户把所有任务标成高优先级"
-        );
+        const {
+            assert!(
+                XP_HIGH_PRIORITY_BONUS < XP_PER_TASK,
+                "高优先级奖励不应超过基础经验，否则会诱导用户把所有任务标成高优先级"
+            )
+        };
     }
 }

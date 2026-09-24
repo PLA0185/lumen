@@ -891,7 +891,8 @@ async fn prune_auto_backups(db: &Db, keep: i64) -> AppResult<usize> {
     }
 
     // 新的在前，删掉超出的
-    autos.sort_by(|a, b| b.0.cmp(&a.0));
+    // 降序：新的在前。`Reverse` 比手写比较函数更直白，也更难写错方向
+    autos.sort_by_key(|a| std::cmp::Reverse(a.0));
     let mut removed = 0usize;
     for (_, path) in autos.iter().skip(keep as usize) {
         if std::fs::remove_file(path).is_ok() {
@@ -1081,7 +1082,7 @@ pub async fn export_markdown(state: State<'_, AppState>, path: String) -> AppRes
         }
         let note: String = r.try_get("note_md")?;
         if !note.trim().is_empty() {
-            md.push_str("\n");
+            md.push('\n');
             for line in note.lines() {
                 md.push_str(&format!("    {line}\n"));
             }
@@ -1681,8 +1682,8 @@ mod tests {
     /// 保留份数必须落在允许区间，避免用户填 0 导致所有备份被删。
     #[test]
     fn keep_range_is_sane() {
-        assert!(KEEP_MIN >= 1, "至少保留 1 份，否则自动备份失去意义");
-        assert!(KEEP_MAX >= KEEP_MIN);
+        const { assert!(KEEP_MIN >= 1, "至少保留 1 份，否则自动备份失去意义") };
+        const { assert!(KEEP_MAX >= KEEP_MIN) };
         assert_eq!(DEFAULT_KEEP, 10);
     }
 
