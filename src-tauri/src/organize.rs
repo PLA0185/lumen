@@ -511,9 +511,13 @@ pub async fn project_delete(
     id: String,
     strategy: OrphanStrategy,
 ) -> AppResult<i64> {
-    get_project(&state, &id).await?;
+    project_delete_impl(&state.db, &id, strategy).await
+}
+
+pub async fn project_delete_impl(db: &Db, id: &str, strategy: OrphanStrategy) -> AppResult<i64> {
+    get_project_row(db, id).await?;
     let now = to_db_time(utc_now());
-    let mut tx = state.db.pool().begin().await?;
+    let mut tx = db.pool().begin().await?;
 
     // 两种策略都必须给出明确的影响面数字，供 UI 反馈（§4.2）
     let affected: i64 = match strategy {
@@ -523,7 +527,7 @@ pub async fn project_delete(
              WHERE project_id = ?2 AND deleted_at IS NULL",
         )
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64,
@@ -534,16 +538,39 @@ pub async fn project_delete(
              WHERE project_id = ?2 AND deleted_at IS NULL",
         )
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64,
     };
 
+    match strategy {
+        OrphanStrategy::Detach => {
+            sqlx::query("UPDATE task_series_template SET project_id = NULL WHERE project_id = ?1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE task_series_segments SET override_project_id = NULL WHERE override_project_id = ?1")
+                .bind(id).execute(&mut *tx).await?;
+        }
+        OrphanStrategy::CascadeSoftDelete => {
+            // Deleting existing tasks must also stop their series from
+            // recreating the same project's future tasks on a calendar visit.
+            sqlx::query(
+                "UPDATE task_series SET terminated_from_occurrence_key = '1970-01-01T00:00:00.000Z'
+                WHERE id IN (SELECT series_id FROM task_series_template WHERE project_id = ?1
+                  UNION SELECT series_id FROM task_series_segments WHERE override_project_id = ?1)",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
     // 项目本身软删除（保留记录以便"撤销"与审计）
     sqlx::query("UPDATE projects SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?;
 
@@ -583,6 +610,14 @@ pub async fn merge_project_impl(db: &Db, input: &MergeInput) -> AppResult<i64> {
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64;
+
+        sqlx::query("UPDATE task_series_template SET project_id = ?1 WHERE project_id = ?2")
+            .bind(&input.target_id)
+            .bind(src)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE task_series_segments SET override_project_id = ?1 WHERE override_project_id = ?2")
+            .bind(&input.target_id).bind(src).execute(&mut *tx).await?;
 
         sqlx::query("UPDATE projects SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
             .bind(&now)
@@ -735,9 +770,13 @@ pub async fn category_delete(
     id: String,
     strategy: OrphanStrategy,
 ) -> AppResult<i64> {
-    get_category(&state, &id).await?;
+    category_delete_impl(&state.db, &id, strategy).await
+}
+
+pub async fn category_delete_impl(db: &Db, id: &str, strategy: OrphanStrategy) -> AppResult<i64> {
+    get_category_row(db, id).await?;
     let now = to_db_time(utc_now());
-    let mut tx = state.db.pool().begin().await?;
+    let mut tx = db.pool().begin().await?;
 
     let affected = match strategy {
         OrphanStrategy::Detach => sqlx::query(
@@ -745,7 +784,7 @@ pub async fn category_delete(
              WHERE category_id = ?2 AND deleted_at IS NULL",
         )
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64,
@@ -754,15 +793,34 @@ pub async fn category_delete(
              WHERE category_id = ?2 AND deleted_at IS NULL",
         )
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64,
     };
 
+    match strategy {
+        OrphanStrategy::Detach => {
+            sqlx::query(
+                "UPDATE task_series_template SET category_id = NULL WHERE category_id = ?1",
+            )
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE task_series_segments SET override_category_id = NULL WHERE override_category_id = ?1")
+                .bind(id).execute(&mut *tx).await?;
+        }
+        OrphanStrategy::CascadeSoftDelete => {
+            sqlx::query("UPDATE task_series SET terminated_from_occurrence_key = '1970-01-01T00:00:00.000Z'
+                WHERE id IN (SELECT series_id FROM task_series_template WHERE category_id = ?1
+                  UNION SELECT series_id FROM task_series_segments WHERE override_category_id = ?1)")
+                .bind(id).execute(&mut *tx).await?;
+        }
+    }
+
     sqlx::query("UPDATE categories SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
         .bind(&now)
-        .bind(&id)
+        .bind(id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -804,6 +862,14 @@ pub async fn merge_category_impl(db: &Db, input: &MergeInput) -> AppResult<i64> 
         .execute(&mut *tx)
         .await?
         .rows_affected() as i64;
+
+        sqlx::query("UPDATE task_series_template SET category_id = ?1 WHERE category_id = ?2")
+            .bind(&input.target_id)
+            .bind(src)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE task_series_segments SET override_category_id = ?1 WHERE override_category_id = ?2")
+            .bind(&input.target_id).bind(src).execute(&mut *tx).await?;
 
         sqlx::query("UPDATE categories SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
             .bind(&now)
@@ -967,6 +1033,10 @@ pub async fn tag_delete(state: State<'_, AppState>, id: String) -> AppResult<i64
         .bind(&id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM task_series_tags WHERE tag_id = ?1")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("UPDATE tags SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
         .bind(&now)
         .bind(&id)
@@ -1011,6 +1081,18 @@ pub async fn merge_tag_impl(db: &Db, input: &MergeInput) -> AppResult<i64> {
         .rows_affected() as i64;
 
         sqlx::query("DELETE FROM task_tags WHERE tag_id = ?1")
+            .bind(src)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_series_tags (series_id, tag_id)
+            SELECT series_id, ?1 FROM task_series_tags WHERE tag_id = ?2",
+        )
+        .bind(&input.target_id)
+        .bind(src)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM task_series_tags WHERE tag_id = ?1")
             .bind(src)
             .execute(&mut *tx)
             .await?;
