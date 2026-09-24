@@ -10,7 +10,9 @@
  * 不使用"删除成功"这种掩盖后果的反馈。
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Category, OrphanStrategy, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
@@ -268,6 +270,7 @@ function MergeDialog({ kind, items, initialSourceId, busy, onCancel, onConfirm }
 type Tab = 'projects' | 'categories' | 'tags'
 
 export function OrganizeView() {
+  const gate = useMemo(createRequestGate, [])
   const [tab, setTab] = useState<Tab>('projects')
   const [projects, setProjects] = useState<ProjectWithCount[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -302,6 +305,7 @@ export function OrganizeView() {
   } | null>(null)
 
   const reload = useCallback(async () => {
+    const token = gate.begin()
     setLoading(true)
     setError(null)
     try {
@@ -310,19 +314,24 @@ export function OrganizeView() {
         org.categoryList(),
         org.tagList(),
       ])
+      if (!gate.isCurrent(token)) return
       setProjects(p)
       setCategories(c)
       setTags(t)
     } catch (e) {
-      setError(errText(e))
+      if (gate.isCurrent(token)) setError(errText(e))
     } finally {
-      setLoading(false)
+      if (gate.isCurrent(token)) setLoading(false)
     }
-  }, [includeArchived])
+  }, [gate, includeArchived])
 
   useEffect(() => {
     void reload()
-  }, [reload])
+    const off = onDataChanged(['tasks', 'organization', 'all'], () => void reload())
+    return () => { off(); gate.invalidate() }
+  }, [gate, reload])
+
+  useEffect(() => () => gate.dispose(), [gate])
 
   /** 提示条自动消失 */
   useEffect(() => {

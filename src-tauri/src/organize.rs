@@ -1056,6 +1056,13 @@ pub async fn task_tags_set(
     if exists == 0 {
         return Err(AppError::not_found("任务", &task_id));
     }
+    let recurring: Option<String> = sqlx::query_scalar("SELECT series_id FROM tasks WHERE id = ?1")
+        .bind(&task_id)
+        .fetch_one(state.db.pool())
+        .await?;
+    if recurring.is_some() {
+        return Err(AppError::conflict("重复任务标签请通过范围编辑接口修改"));
+    }
 
     // 逐个校验标签存在，避免写入悬空关联
     for tid in tag_ids.iter().filter(|s| !s.is_empty()) {

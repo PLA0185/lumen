@@ -275,9 +275,8 @@ export function createBoardPaging(deps: BoardPagingDeps): BoardPaging {
   /**
    * 任务数据变了时调用（第三轮任务书 §5.4 / 收口 §11、§16 的看板侧）。
    *
-   * 别的窗口主动广播时会走到这里；**本窗口自己**发的广播则由 `BoardView`
-   * 用 `bus.onTasksChanged(..., { includeSelf: true })` 送进来——看板有自己
-   * 独立的分页状态，主窗口在看板上用 QuickAdd 建的任务不会经过主列表的刷新。
+   * `BoardView` 从统一 Data Change 层接收本窗口或其它窗口的变更后调用这里。
+   * 看板有独立分页状态，QuickAdd 建的任务必须使它从第一页重取。
    *
    * 彻底解决要换 keyset 分页；本轮按任务书允许的方式处理：
    *

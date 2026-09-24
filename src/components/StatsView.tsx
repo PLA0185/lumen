@@ -25,6 +25,8 @@ import * as st from '../lib/stats-ipc'
 // 因为它属于"排程辅助"这一组能力。
 import { scheduleConflicts } from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
 import { useApp } from '../lib/store'
 import * as focus from '../lib/focus-ipc'
 import type { GrowthConfig, GrowthOverview, PeriodStats } from '../lib/stats-ipc'
@@ -44,12 +46,18 @@ function FocusSection() {
   const [summary, setSummary] = useState<focus.FocusSummary | null>(null)
 
   useEffect(() => {
-    void focus
-      .focusSummary()
-      .then(setSummary)
-      .catch(() => {
+    let generation = 0
+    const reload = () => {
+      const token = ++generation
+      void focus.focusSummary().then((next) => {
+        if (token === generation) setSummary(next)
+      }).catch(() => {
         // 专注数据是附加信息，失败不打断统计页
       })
+    }
+    reload()
+    const off = onDataChanged(['focus', 'tasks', 'all'], reload)
+    return () => { generation++; off() }
   }, [])
 
   if (!summary) return null
@@ -93,6 +101,7 @@ const RANGES: Array<{ days: number; label: string }> = [
 ]
 
 export function StatsView() {
+  const gate = useMemo(createRequestGate, [])
   const pushToast = useApp((s) => s.pushToast)
   const [days, setDays] = useState(30)
   const [stats, setStats] = useState<PeriodStats | null>(null)
@@ -108,6 +117,7 @@ export function StatsView() {
   const [newTarget, setNewTarget] = useState(10)
 
   const reload = useCallback(async () => {
+    const token = gate.begin()
     setLoading(true)
     try {
       const [p, g, cfg, gs, cf] = await Promise.all([
@@ -118,6 +128,7 @@ export function StatsView() {
         // 冲突检测失败不应让整页报错——它是附加信息
         scheduleConflicts().catch(() => []),
       ])
+      if (!gate.isCurrent(token)) return
       setStats(p)
       setGrowth(g)
       setGrowthCfg(cfg)
@@ -125,15 +136,22 @@ export function StatsView() {
       setConflicts(cf)
       setError(null)
     } catch (e) {
-      setError(errText(e))
+      if (gate.isCurrent(token)) setError(errText(e))
     } finally {
-      setLoading(false)
+      if (gate.isCurrent(token)) setLoading(false)
     }
-  }, [days])
+  }, [days, gate])
 
   useEffect(() => {
     void reload()
-  }, [reload])
+    const off = onDataChanged(['tasks', 'focus', 'stats', 'all'], () => void reload())
+    return () => {
+      off()
+      gate.invalidate()
+    }
+  }, [gate, reload])
+
+  useEffect(() => () => gate.dispose(), [gate])
 
   /** 趋势图的最大值，用于计算柱高 */
   const maxDaily = useMemo(() => {

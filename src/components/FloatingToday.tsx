@@ -24,14 +24,15 @@
  *   因此"悬浮窗里能做的事"和主窗口一致，而不是只能加一条任务。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as win from '../lib/window-ipc'
 import * as ipc from '../lib/ipc'
-import * as bus from '../lib/bus'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
 import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
 import { TaskEditor } from './TaskEditor'
 import type { FloatingState } from '../lib/window-ipc'
-import type { Task } from '../lib/types'
+import type { Task, TaskQuery } from '../lib/types'
 import { Icon } from './Icons'
 
 /** 拖动结束后再落库的延迟：拖动过程中会连续触发 resize 事件 */
@@ -40,7 +41,10 @@ const SIZE_SAVE_DELAY = 400
 const OPACITY_SAVE_DELAY = 250
 
 export function FloatingToday() {
+  const gate = useMemo(createRequestGate, [])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [total, setTotal] = useState(0)
+  const [doneTotal, setDoneTotal] = useState(0)
   const [state, setState] = useState<FloatingState | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -58,29 +62,38 @@ export function FloatingToday() {
   const opacityTimer = useRef<number | undefined>(undefined)
 
   const reload = useCallback(async () => {
+    const token = gate.begin()
     try {
       const r = todayRange()
-      const [list, st] = await Promise.all([
+      const query: TaskQuery = {
+        statuses: ['todo', 'doing', 'waiting', 'done'],
+        plannedFrom: r.start,
+        plannedTo: r.end,
+      }
+      const [list, allCount, doneCount, st] = await Promise.all([
         ipc.listTasks({
-          statuses: ['todo', 'doing', 'waiting', 'done'],
-          plannedFrom: r.start,
-          plannedTo: r.end,
+          ...query,
           sortBy: 'manual',
           limit: 100,
         }),
+        ipc.countTasks(query),
+        ipc.countTasks({ ...query, statuses: ['done'] }),
         win.windowFloatingState(),
       ])
+      if (!gate.isCurrent(token)) return
       setTasks(list)
+      setTotal(allCount.total)
+      setDoneTotal(doneCount.total)
       setState(st)
       setOpacity(st.opacity)
       document.documentElement.style.setProperty('--floating-opacity', String(st.opacity))
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (gate.isCurrent(token)) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (gate.isCurrent(token)) setLoading(false)
     }
-  }, [])
+  }, [gate])
 
   useEffect(() => {
     void reload()
@@ -88,12 +101,15 @@ export function FloatingToday() {
     const t = window.setInterval(() => void reload(), 60_000)
     // 主窗口里的增删改会广播 tasks-changed，收到就立刻刷新，
     // 不必等下一次定时轮询——"改了没反应"最容易被当成没保存。
-    const off = bus.onTasksChanged(() => void reload())
+    const off = onDataChanged(['tasks', 'all'], () => void reload())
     return () => {
       window.clearInterval(t)
       off()
+      gate.invalidate()
     }
-  }, [reload])
+  }, [gate, reload])
+
+  useEffect(() => () => gate.dispose(), [gate])
 
   /** 监听后端广播的配置变化，实时更新不透明度与穿透提示 */
   useEffect(() => {
@@ -180,7 +196,6 @@ export function FloatingToday() {
       await ipc.toggleTaskDone(id, done)
       await reload()
       // 让主窗口也立刻看到这次勾选
-      void bus.notifyTasksChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -198,7 +213,6 @@ export function FloatingToday() {
     try {
       await ipc.updateTask(id, { title: next })
       await reload()
-      void bus.notifyTasksChanged()
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -220,7 +234,6 @@ export function FloatingToday() {
         hasPlannedTime: false,
       })
       await reload()
-      void bus.notifyTasksChanged()
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -229,8 +242,7 @@ export function FloatingToday() {
     }
   }
 
-  const done = tasks.filter((t) => t.status === 'done').length
-  const open = tasks.length - done
+  const open = total - doneTotal
   const clickThrough = state?.clickThrough ?? false
 
   /**
@@ -313,7 +325,7 @@ export function FloatingToday() {
       <header className="floating__head" data-drag-region>
         <span className="floating__title">今日</span>
         <span className="floating__count">
-          {open > 0 ? `${open} 项待办` : tasks.length > 0 ? '全部完成 ✓' : '暂无安排'}
+          {open > 0 ? `${open} 项待办` : total > 0 ? '全部完成 ✓' : '暂无安排'}
         </span>
         {!clickThrough && (
           <span className="floating__tools" data-no-drag>
@@ -360,6 +372,13 @@ export function FloatingToday() {
       {error && (
         <div className="floating__error" role="alert">
           {error}
+        </div>
+      )}
+
+      {total > tasks.length && (
+        <div className="floating__hint">
+          仅显示前 {tasks.length} 项，共 {total} 项。
+          <button type="button" onClick={() => void act('show_main')}>在主窗口查看全部</button>
         </div>
       )}
 
@@ -512,8 +531,7 @@ export function FloatingToday() {
           onSaved={async () => {
             setFullEditing(null)
             await reload()
-            void bus.notifyTasksChanged()
-          }}
+                }}
         />
       )}
     </div>
@@ -649,7 +667,6 @@ function QuickAddBody({ onCreated }: { onCreated: (title: string) => void | Prom
       setText('')
       await onCreated(title)
       // 快速添加窗创建后，主窗口与悬浮窗都应立刻看到
-      void bus.notifyTasksChanged()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

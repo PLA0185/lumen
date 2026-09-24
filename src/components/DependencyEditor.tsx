@@ -13,6 +13,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as org from '../lib/organize-ipc'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
 import type { DependencyItem } from '../lib/organize-ipc'
 import type { Task } from '../lib/types'
 import { Icon } from './Icons'
@@ -27,9 +29,12 @@ interface DependencyEditorProps {
 }
 
 export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
+  const candidateGate = useMemo(createRequestGate, [])
   const [deps, setDeps] = useState<DependencyItem[]>([])
   const [dependents, setDependents] = useState<DependencyItem[]>([])
   const [candidates, setCandidates] = useState<Task[]>([])
+  const [candidateTotal, setCandidateTotal] = useState(0)
+  const [candidateLoading, setCandidateLoading] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [picking, setPicking] = useState(false)
@@ -55,32 +60,48 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
 
   useEffect(() => {
     void reload()
+    return onDataChanged(['dependencies', 'tasks', 'all'], () => void reload())
   }, [reload])
 
-  /** 选择前置任务时按需拉取候选列表（避免每次展开卡片都查库） */
-  const openPicker = async () => {
-    setPicking(true)
-    setError(null)
-    try {
-      const list = await ipc.listTasks({ limit: 200, sortBy: 'due' })
-      setCandidates(list)
-    } catch (e) {
-      setError(errText(e))
-      setPicking(false)
+  const loadCandidates = useCallback(async (offset: number) => {
+    const token = candidateGate.begin()
+    const query = {
+      statuses: ['todo', 'doing', 'waiting'] as Array<'todo' | 'doing' | 'waiting'>,
+      search: search.trim() || null,
     }
-  }
+    setCandidateLoading(true)
+    try {
+      const [list, count] = await Promise.all([
+        ipc.listTasks({ ...query, limit: 50, offset, sortBy: 'due' }),
+        ipc.countTasks(query),
+      ])
+      if (!candidateGate.isCurrent(token)) return
+      setCandidates((old) => offset === 0 ? list : [...old, ...list])
+      setCandidateTotal(count.total)
+      setError(null)
+    } catch (e) {
+      if (candidateGate.isCurrent(token)) setError(errText(e))
+    } finally {
+      if (candidateGate.isCurrent(token)) setCandidateLoading(false)
+    }
+  }, [candidateGate, search])
+
+  useEffect(() => {
+    if (!picking) return
+    const timer = window.setTimeout(() => void loadCandidates(0), 250)
+    return () => { window.clearTimeout(timer); candidateGate.invalidate() }
+  }, [candidateGate, loadCandidates, picking])
+
+  useEffect(() => () => candidateGate.dispose(), [candidateGate])
 
   /** 候选：排除自身、已存在的前置、以及已完成任务（已完成的不构成阻塞） */
   const filtered = useMemo(() => {
     const existing = new Set(deps.map((d) => d.dependsOnId))
-    const kw = search.trim().toLowerCase()
     return candidates
       .filter((t) => t.id !== taskId)
       .filter((t) => !existing.has(t.id))
       .filter((t) => t.status !== 'done' && t.status !== 'archived')
-      .filter((t) => (kw ? t.title.toLowerCase().includes(kw) : true))
-      .slice(0, 40)
-  }, [candidates, deps, taskId, search])
+  }, [candidates, deps, taskId])
 
   const add = async (dependsOnId: string) => {
     setBusy(true)
@@ -177,7 +198,7 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
       )}
 
       {!picking ? (
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => void openPicker()}>
+        <button type="button" className="btn btn--ghost btn--sm" onClick={() => setPicking(true)}>
           <Icon name="plus" size={15} /> 添加前置任务
         </button>
       ) : (
@@ -212,6 +233,14 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
               ))
             )}
           </ul>
+          {candidateLoading && <p className="setgroup__hint">正在搜索…</p>}
+          <p className="setgroup__hint">已读取 {candidates.length} / {candidateTotal} 条匹配任务</p>
+          {candidates.length < candidateTotal && (
+            <button type="button" className="btn btn--quiet btn--sm"
+              disabled={candidateLoading} onClick={() => void loadCandidates(candidates.length)}>
+              加载更多
+            </button>
+          )}
           <button
             type="button"
             className="btn btn--quiet btn--sm"

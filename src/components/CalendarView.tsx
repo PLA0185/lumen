@@ -21,6 +21,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { fromUtcIso, toUtcIso } from '../lib/datetime'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
+import * as recurrence from '../lib/recurrence-ipc'
 import type { Task } from '../lib/types'
 import { Icon } from './Icons'
 
@@ -75,9 +78,12 @@ function weekDays(anchor: Date): Date[] {
 }
 
 export function CalendarView() {
+  const gate = useMemo(createRequestGate, [])
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()))
   const [tasks, setTasks] = useState<Task[]>([])
+  const [calendarTotal, setCalendarTotal] = useState(0)
+  const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   /** 拖拽悬停的目标日期，用于高亮与提示 */
@@ -100,20 +106,33 @@ export function CalendarView() {
   }, [days, anchor])
 
   const reload = useCallback(async () => {
+    const token = gate.begin()
     setLoading(true)
     try {
-      setTasks(await ipc.tasksInRange(range.start, range.end))
+      await recurrence.recurringEnsureRange(range.start, range.end)
+      const page = await ipc.tasksInRange(range.start, range.end)
+      if (!gate.isCurrent(token)) return
+      setTasks(page.rows)
+      setCalendarTotal(page.total)
+      setTruncated(page.truncated)
       setError(null)
     } catch (e) {
-      setError(errText(e))
+      if (gate.isCurrent(token)) setError(errText(e))
     } finally {
-      setLoading(false)
+      if (gate.isCurrent(token)) setLoading(false)
     }
-  }, [range.start, range.end])
+  }, [gate, range.start, range.end])
 
   useEffect(() => {
     void reload()
-  }, [reload])
+    const off = onDataChanged(['tasks', 'all'], () => void reload())
+    return () => {
+      off()
+      gate.invalidate()
+    }
+  }, [gate, reload])
+
+  useEffect(() => () => gate.dispose(), [gate])
 
   /** 按本地日期分桶 */
   const buckets = useMemo(() => {
@@ -155,8 +174,8 @@ export function CalendarView() {
   }, [mode, anchor])
 
   /** 执行拖拽改期 */
-  const dropOn = async (target: Date) => {
-    const id = dragging
+  const dropOn = async (target: Date, droppedId: string) => {
+    const id = droppedId || dragging
     setDragOver(null)
     setDragging(null)
     if (!id) return
@@ -250,16 +269,17 @@ export function CalendarView() {
           .filter(Boolean)
           .join(' ')}
         onDragOver={(e) => {
-          if (!dragging) return
+          // React may not have committed the drag-start state before the
+          // browser's first dragover. The transfer payload is the stable ID.
+          if (!dragging && !e.dataTransfer.types.includes('text/plain')) return
           // preventDefault 是允许 drop 的前提
           e.preventDefault()
           e.dataTransfer.dropEffect = 'move'
           setDragOver(key)
         }}
-        onDragLeave={() => setDragOver((k) => (k === key ? null : k))}
         onDrop={(e) => {
           e.preventDefault()
-          void dropOn(d)
+          void dropOn(d, e.dataTransfer.getData('text/plain'))
         }}
         onClick={() => {
           // 点空白处切换到该日视图，方便聚焦某一天
@@ -357,6 +377,12 @@ export function CalendarView() {
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
             <Icon name="close" size={14} />
           </button>
+        </div>
+      )}
+      {truncated && (
+        <div className="alert" role="status">
+          当前范围有 {calendarTotal} 项任务，日历仅显示前 {tasks.length} 项。
+          请缩小日期范围，或在列表视图查看全部。
         </div>
       )}
 

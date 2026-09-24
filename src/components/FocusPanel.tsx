@@ -19,7 +19,9 @@
  * 计时器服务于人，不该反过来打断人。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { onDataChanged } from '../lib/data-change'
+import { createRequestGate } from '../lib/request-gate'
 import * as focus from '../lib/focus-ipc'
 import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
@@ -39,6 +41,7 @@ interface FocusPanelProps {
 }
 
 export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelProps) {
+  const gate = useMemo(createRequestGate, [])
   const pushToast = useApp((s) => s.pushToast)
   const [view, setView] = useState<FocusView | null>(null)
   const [summary, setSummary] = useState<FocusSummary | null>(null)
@@ -53,21 +56,27 @@ export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelPro
   const lastSyncRef = useRef(0)
 
   const reload = useCallback(async () => {
+    const token = gate.begin()
     try {
       const [cur, sum] = await Promise.all([focus.focusCurrent(), focus.focusSummary()])
+      if (!gate.isCurrent(token)) return
       setView(cur)
       setSummary(sum)
       setError(null)
     } catch (e) {
-      setError(errText(e))
+      if (gate.isCurrent(token)) setError(errText(e))
     } finally {
-      setLoading(false)
+      if (gate.isCurrent(token)) setLoading(false)
     }
-  }, [])
+  }, [gate])
 
   useEffect(() => {
     void reload()
-  }, [reload])
+    const off = onDataChanged(['focus', 'tasks', 'all'], () => void reload())
+    return () => { off(); gate.invalidate() }
+  }, [gate, reload])
+
+  useEffect(() => () => gate.dispose(), [gate])
 
   /**
    * 本地时钟：每 200ms 推进一次显示。
@@ -84,18 +93,19 @@ export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelPro
       const now = Date.now()
       if (now - lastSyncRef.current > 15_000) {
         lastSyncRef.current = now
+        const token = gate.begin()
         // 同步失败不打扰用户：本地显示仍在走，后端值稍后会对上
         void focus
           .focusCurrent()
           .then((cur) => {
-            if (cur) setView(cur)
+            if (cur && gate.isCurrent(token)) setView(cur)
           })
           .catch(() => {})
       }
     }, 200)
 
     return () => window.clearInterval(id)
-  }, [view?.state])
+  }, [gate, view?.state])
 
   /** 由本地推进推算的显示秒数 */
   const displaySeconds = (() => {

@@ -19,13 +19,8 @@
  * 看板自己分页（每页 `PAGE_SIZE` + 「加载更多」），而 OFFSET 分页在数据集变化时
  * 天然不稳定：已经加载了 1..200，另一个窗口删掉第 50 条，再用 OFFSET 200 取下一页
  * 就会**漏掉**原来的第 201 条。所以数据一改，看板必须作废在飞请求、
- * 从第一页重取——这与 `App.tsx` 里主列表接 `bus.onTasksChanged` 是同一套做法。
- *
- * 区别只有一处：**看板要连自己窗口发的事件也收**（`includeSelf: true`）。
- * 主列表的 `handleExternalChange` 在写操作后自己就会刷新，所以 `bus` 默认忽略
- * 本窗口的事件是对的；但看板有**自己独立的分页状态**——主窗口在看板上用
- * QuickAdd 新建任务时，事件 `from` 与监听窗口标签都是 `main`，
- * 默认过滤会把这条事件吞掉，看板就停在旧数据上（看不到刚建的任务）。
+ * 从第一页重取。统一 Data Change 层在本窗口同步回调、跨窗口通过 Tauri event
+ * 回调；看板独立的分页状态也会收到 QuickAdd 写入，避免错过新任务。
  *
  * "分页 + 代际作废"的逻辑全部放在 `../lib/board-paging` 的无 DOM 状态机里：
  * 本仓库没有 jsdom / testing-library，逻辑留在组件里就等于测不到（§13）。
@@ -34,7 +29,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
-import * as bus from '../lib/bus'
+import { onDataChanged } from '../lib/data-change'
 import { PAGE_SIZE } from '../lib/store'
 import { createBoardPaging } from '../lib/board-paging'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
@@ -102,9 +97,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
     // `includeSelf: true` 是看板与主列表的唯一区别：主窗口自己发的变更
     // （例如在看板上用 QuickAdd 新建任务）也必须让看板刷新——
     // 看板的分页状态独立于主列表，收不到这条事件就会一直显示旧数据。
-    const off = bus.onTasksChanged(() => void paging.handleExternalChange(), {
-      includeSelf: true,
-    })
+    const off = onDataChanged(['tasks', 'all'], () => void paging.handleExternalChange())
 
     return () => {
       off()
