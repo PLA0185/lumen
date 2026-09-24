@@ -13,11 +13,11 @@
 //! - 合并要转移任务、软删除源项，并且**回收站里的任务不受影响**。
 
 use crate::commands::{
-    create_task_impl, duplicate_task_impl, reorder_task_impl, update_task_impl, AppState,
-    ReorderInput,
+    create_task_impl, duplicate_task_impl, list_tasks_impl, reorder_task_impl, update_task_impl,
+    AppState, ReorderInput,
 };
 use crate::db::Db;
-use crate::models::{CreateTaskInput, UpdateTaskInput};
+use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
 use crate::organize::{
     merge_category_impl, merge_project_impl, merge_tag_impl, MergeInput,
 };
@@ -340,6 +340,147 @@ async fn subtask_update_generates_valid_sql() {
     .expect("取消勾选必须能保存");
     assert_eq!(undone.is_done, 0);
     assert!(undone.completed_at.is_none());
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// =============================================================================
+// 收件箱筛选语义（整改任务书 §2）
+// =============================================================================
+//
+// 曾经的 Bug：前端用 `projectId = null` 表达"没有项目的任务"，但 null 过 IPC
+// 会变成 Rust 的 `None`，与"不限制项目"完全一样，于是收件箱退化成"所有未完成
+// 任务"。现在用显式的 `without_project` 区分三种语义；下面按任务书 §2.4 的
+// 三条任务（A/B/C）逐一验收。
+
+/// 按查询条件取任务标题（排序后，便于断言）
+async fn titles_of(db: &Db, query: TaskQuery) -> Vec<String> {
+    let mut v: Vec<String> = list_tasks_impl(db, query)
+        .await
+        .expect("查询任务")
+        .into_iter()
+        .map(|t| t.title)
+        .collect();
+    v.sort();
+    v
+}
+
+#[tokio::test]
+async fn inbox_shows_only_tasks_without_project() {
+    let (state, dir) = setup("inbox-semantics").await;
+    let db = &state.db;
+    let project = insert_org(db, "projects", "P1").await;
+
+    // A：未归属项目、todo
+    create_task_impl(db, task("A-无项目待办")).await.unwrap();
+    // B：归属项目 P1、todo
+    create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "B-有项目待办".into(),
+            project_id: Some(project.clone()),
+            ..task("")
+        },
+    )
+    .await
+    .unwrap();
+    // C：未归属项目、已完成
+    let c = create_task_impl(db, task("C-无项目已完成")).await.unwrap();
+    sqlx::query("UPDATE tasks SET status = 'done', completed_at = '2026-09-23T02:00:00.000Z' WHERE id = ?1")
+        .bind(&c.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    // 收件箱：只有 A
+    let inbox = titles_of(
+        db,
+        TaskQuery {
+            without_project: true,
+            statuses: vec!["todo".into(), "doing".into(), "waiting".into()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        inbox,
+        vec!["A-无项目待办"],
+        "收件箱应只含未归属项目的未完成任务"
+    );
+
+    // 「全部任务」仍要能看到 B
+    let all = titles_of(
+        db,
+        TaskQuery {
+            statuses: vec!["todo".into(), "doing".into(), "waiting".into(), "done".into()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(all.contains(&"B-有项目待办".to_string()), "全部任务应包含 B");
+    assert_eq!(all.len(), 3, "全部任务应有 3 条，实际：{all:?}");
+
+    // 按指定项目筛选不受 without_project 影响
+    let only_p1 = titles_of(
+        db,
+        TaskQuery {
+            project_id: Some(project.clone()),
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(only_p1, vec!["B-有项目待办"]);
+
+    // 同时传两个条件时行为必须确定：without_project 优先
+    let both = titles_of(
+        db,
+        TaskQuery {
+            without_project: true,
+            project_id: Some(project),
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        both,
+        vec!["A-无项目待办"],
+        "without_project 应优先于 project_id"
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn none_project_id_alone_means_unlimited() {
+    // 反向保护：不传 without_project 时，project_id 为 None 表示"不限项目"，
+    // 不能被误当成"只要没有项目的"。这条测试锁住"null ≠ 空项目"这个语义。
+    let (state, dir) = setup("inbox-null").await;
+    let db = &state.db;
+    let project = insert_org(db, "projects", "P1").await;
+    create_task_impl(db, task("无项目")).await.unwrap();
+    create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "有项目".into(),
+            project_id: Some(project),
+            ..task("")
+        },
+    )
+    .await
+    .unwrap();
+
+    let unlimited = titles_of(
+        db,
+        TaskQuery {
+            project_id: None,
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await;
+    assert_eq!(unlimited.len(), 2, "不传条件时应返回全部，实际：{unlimited:?}");
 
     let _ = std::fs::remove_dir_all(dir);
 }

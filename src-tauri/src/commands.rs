@@ -617,7 +617,11 @@ pub async fn task_purge_all_deleted(state: State<'_, AppState>) -> AppResult<Pur
 /// 按条件查询任务列表（§4.1 搜索 + 组合筛选 + 可切换排序）。
 #[tauri::command]
 pub async fn task_list(state: State<'_, AppState>, query: TaskQuery) -> AppResult<Vec<Task>> {
-    let db = &state.db;
+    list_tasks_impl(&state.db, query).await
+}
+
+/// 列表查询的实现（与 Tauri 解耦，便于集成测试与报告导出直接调用）。
+pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> {
     let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM tasks WHERE 1 = 1");
 
     // 删除状态
@@ -655,7 +659,11 @@ pub async fn task_list(state: State<'_, AppState>, query: TaskQuery) -> AppResul
         psep.push_unseparated(")");
     }
 
-    if let Some(pid) = query.project_id.as_deref().filter(|s| !s.is_empty()) {
+    // 项目筛选：三种语义必须分清（详见 `TaskQuery::without_project` 的注释）。
+    // 曾经的写法是"projectId 为 None 就当没这个条件"，导致收件箱退化成全部任务。
+    if query.without_project {
+        b.push(" AND project_id IS NULL");
+    } else if let Some(pid) = query.project_id.as_deref().filter(|s| !s.is_empty()) {
         b.push(" AND project_id = ").push_bind(pid.to_string());
     }
     if let Some(cid) = query.category_id.as_deref().filter(|s| !s.is_empty()) {

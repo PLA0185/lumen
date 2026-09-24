@@ -1,4 +1,4 @@
-﻿//! 任务相关数据模型与 IPC 输入/输出类型。
+//! 任务相关数据模型与 IPC 输入/输出类型。
 //!
 //! 命名与语义严格对齐任务书 §4.1：
 //! **计划时间（planned_at）、截止时间（due_at）、提醒时间（reminders.remind_at）
@@ -252,6 +252,23 @@ pub struct TaskQuery {
     pub statuses: Vec<String>,
     #[serde(default)]
     pub project_id: Option<String>,
+    /// 只看**没有归属项目**的任务（`project_id IS NULL`）。
+    ///
+    /// 为什么需要单独一个布尔字段：`projectId: null` 经过 IPC 会反序列化成
+    /// `None`，与"压根没传这个条件"完全一样，于是
+    /// 「收件箱 = 没有项目的未完成任务」会退化成「所有未完成任务」。
+    /// 用一个显式字段把三种语义彻底分开：
+    ///
+    /// | 想要的效果 | 传法 |
+    /// | --- | --- |
+    /// | 不限项目 | 两个都不传 |
+    /// | 只查没有项目的 | `withoutProject = true` |
+    /// | 查指定项目 | `projectId = "..."` |
+    ///
+    /// `without_project` 优先于 `project_id`：同时传是调用方的错，
+    /// 但后端必须给出确定行为，而不是取决于判断顺序。
+    #[serde(default)]
+    pub without_project: bool,
     #[serde(default)]
     pub category_id: Option<String>,
     #[serde(default)]

@@ -158,8 +158,12 @@ export function buildQuery(s: {
       q.statuses = []
       break
     case 'inbox':
-      // 收件箱 = 没有项目的未完成任务（§4.2 项目语义明确）
-      q.projectId = null
+      // 收件箱 = 没有归属项目的未完成任务（§4.2 项目语义明确）。
+      //
+      // 这里**必须**用 withoutProject 而不是 `projectId = null`：
+      // null 走 IPC 会变成 Rust 的 None，与"不限制项目"完全同义，
+      // 收件箱就会退化成"所有未完成任务"。语义区分在 TaskQuery 里做了明确设计。
+      q.withoutProject = true
       q.statuses = ['todo', 'doing', 'waiting']
       break
     case 'all':

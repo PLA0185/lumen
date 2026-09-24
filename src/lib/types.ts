@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 前端类型定义。
  *
  * 与 Rust 侧保持一致：结构体使用 `#[serde(rename_all = "camelCase")]`，
@@ -154,6 +154,13 @@ export interface UpdateTaskInput {
 export interface TaskQuery {
   statuses?: TaskStatus[]
   projectId?: string | null
+  /**
+   * 只看**没有归属项目**的任务。
+   *
+   * 别用 `projectId: null` 表达这个意思：null 经过 IPC 会变成 Rust 的 `None`，
+   * 与"不限制项目"无法区分，收件箱会退化成"所有未完成任务"。
+   */
+  withoutProject?: boolean
   categoryId?: string | null
   tagIds?: string[]
   priorities?: number[]
