@@ -100,6 +100,51 @@ pub fn relative_stored_path(data_dir: &Path, abs: &Path) -> String {
     }
 }
 
+/// 把受控附件路径标准化成用于**身份比较**的字符串（不代表真实文件位置）。
+///
+/// ## 为什么需要它（第三轮任务书 §14 / §15 / §16）
+///
+/// 孤儿清理要回答的问题是"磁盘上这个文件是否仍被数据库引用"，做法是两边各算
+/// 一个字符串再比。而**第二轮整改之前**写进库的 `stored_path` 是**绝对路径**，
+/// 它的盘符与目录大小写可能与当前 `data_dir` 不同（`C:\Users\…` vs `c:\users\…`），
+/// 分隔符也可能是 `/`。
+///
+/// `relative_stored_path()` 内部用 `strip_prefix`，它**逐组件精确比较**：
+/// 大小写不同就匹配不上，于是回退成绝对路径字符串，而与扫描得到的
+/// `attachments/<uuid>.pdf` 对不上 → **仍被引用的 live 副本被误判成孤儿删除**（数据破坏级）。
+///
+/// 因此这里不再依赖任何前缀匹配：先把相对/绝对都变成绝对路径，
+/// 再做词法归一化（`.`、`..`、结尾分隔符），最后按平台折叠差异：
+///
+/// | 平台 | 处理 |
+/// | --- | --- |
+/// | Windows | 转小写、`/` 统一成 `\`（NTFS 默认大小写不敏感） |
+/// | 其它 | **保持大小写敏感**，只做词法归一化，不把 Windows 专有语义扩散出去 |
+///
+/// ## 只用于身份比较
+///
+/// 返回值是**比较键**，不是可用的文件位置：Windows 上它是小写的，直接拿去
+/// 打开文件在大小写敏感的卷上会失败。**绝不能**用它决定 symlink 的删除目标——
+/// 删除始终交给 `safe_remove_managed_copy()`（只删目录项、不跟随链接）。
+fn normalize_managed_identity(data_dir: &Path, stored_or_abs: &str) -> String {
+    let abs = lexical_normalize(&resolve_stored_path(data_dir, stored_or_abs));
+    let raw = abs.to_string_lossy().to_string();
+
+    if cfg!(windows) {
+        // `/` 与 `\` 在 Windows 上是等价分隔符，统一成 `\` 后再折叠大小写。
+        // 结尾多余分隔符：`lexical_normalize` 按组件重建，本就不会留下尾分隔符，
+        // 这里再兜一次，防止 `…\attachments\` 与 `…\attachments` 算成两个身份。
+        // 盘符根（`C:\`）的尾分隔符要保留，否则会把根目录写成 `c:`。
+        let mut s = raw.replace('/', "\\");
+        while s.len() > 1 && s.ends_with('\\') && !s.ends_with(":\\") {
+            s.pop();
+        }
+        s.to_lowercase()
+    } else {
+        raw
+    }
+}
+
 /// 受控附件目录：`<数据目录>/attachments`
 fn attachments_dir(state: &AppState) -> PathBuf {
     attachments_dir_of(state.db.data_dir())
@@ -666,9 +711,13 @@ pub async fn cleanup_orphans_impl(db: &Db) -> AppResult<OrphanCleanupResult> {
     .await?;
     let referenced: std::collections::HashSet<String> = referenced
         .into_iter()
-        // 统一成"相对数据目录、正斜杠"的形式再比较，
-        // 这样老数据里的绝对路径与新写的相对路径能对上同一个文件
-        .map(|(p,)| relative_stored_path(&data_dir, &resolve_stored_path(&data_dir, &p)))
+        // 统一成"平台内的同一身份"再比较（第三轮任务书 §14 / §15 / §16）。
+        //
+        // 这里曾经用 `relative_stored_path(strip_prefix)`：它**逐组件精确比较**，
+        // 于是老数据里"同样位置但大小写不同（且可能用 `/` 分隔）"的绝对路径
+        // 匹配不上、回退成绝对路径字符串，与扫描得到的 `attachments/<uuid>.pdf`
+        // 对不上 —— 仍被引用的 live 副本会被当成孤儿删掉。
+        .map(|(p,)| normalize_managed_identity(&data_dir, &p))
         .collect();
 
     if !root.is_dir() {
@@ -738,8 +787,11 @@ pub async fn cleanup_orphans_impl(db: &Db) -> AppResult<OrphanCleanupResult> {
             continue;
         }
 
-        let rel = relative_stored_path(&data_dir, &path);
-        if referenced.contains(&rel) {
+        // 与引用集合**必须用同一个**标准化函数：两边只要有一边走的是
+        // 大小写敏感的前缀匹配，判断就会失真。删除动作本身不受影响——
+        // 下面仍然按原始路径交给 `safe_remove_managed_copy()`（只删目录项）。
+        let key = normalize_managed_identity(&data_dir, &path.to_string_lossy());
+        if referenced.contains(&key) {
             kept += 1;
             continue;
         }
@@ -1149,6 +1201,194 @@ mod tests {
 
         // 不存在的文件返回 None 而不是 panic（添加附件时不应因此失败）
         assert!(try_hash_file(&dir.join("missing.txt")).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // 第三轮 §14 / §15 / §16：legacy 绝对路径的大小写身份标准化
+    // =========================================================================
+
+    /// 同一个受控附件的各种写法必须标准化成**同一个**身份；
+    /// 不同副本（不同 UUID）必须得到不同结果。
+    #[test]
+    fn normalize_managed_identity_matches_case_and_separator_variants() {
+        let data_dir = Path::new(r"C:\Users\Me\AppData\Roaming\com.pla0185.lumen");
+        let id = "0192f1c4-0000-7000-8000-0123456789ab";
+        let relative = format!("attachments/{id}.pdf");
+        let expected = normalize_managed_identity(data_dir, &relative);
+
+        // 跨平台：`.` 与 `..` 都要被词法折叠掉（词法归一化不依赖文件系统）
+        let dotted = format!("attachments/./{id}.pdf");
+        assert_eq!(
+            normalize_managed_identity(data_dir, &dotted),
+            expected,
+            "带 `.` 的写法必须与干净写法是同一个身份"
+        );
+        let backtrack = format!("attachments/别的目录/../{id}.pdf");
+        assert_eq!(
+            normalize_managed_identity(data_dir, &backtrack),
+            expected,
+            "带 `..` 的写法必须与干净写法是同一个身份"
+        );
+
+        if cfg!(windows) {
+            // legacy 绝对路径：盘符、目录、文件名全大写，而且用 `/` 作分隔符
+            let legacy_abs = format!(
+                "C:/USERS/ME/APPDATA/ROAMING/COM.PLA0185.LUMEN/ATTACHMENTS/{}.PDF",
+                id.to_uppercase()
+            );
+            assert_eq!(
+                normalize_managed_identity(data_dir, &legacy_abs),
+                expected,
+                "Windows 上大小写不同、分隔符不同的绝对路径必须与相对路径算作同一个附件"
+            );
+
+            // `\` 与 `/` 混用
+            let mixed =
+                format!("C:/Users\\Me/AppData\\Roaming/com.pla0185.lumen/attachments/{id}.pdf");
+            assert_eq!(
+                normalize_managed_identity(data_dir, &mixed),
+                expected,
+                "分隔符混用不能改变身份"
+            );
+
+            // 结尾多一个分隔符
+            let trailing = format!("{relative}\\");
+            assert_eq!(
+                normalize_managed_identity(data_dir, &trailing),
+                expected,
+                "结尾多余的分隔符不能改变身份"
+            );
+        } else {
+            // 非 Windows 平台保持大小写敏感：不能为了 Windows 把别的平台搞坏
+            let upper_rel = format!("attachments/{}.pdf", id.to_ascii_uppercase());
+            assert_ne!(
+                normalize_managed_identity(data_dir, &upper_rel),
+                expected,
+                "非 Windows 平台大小写不同就是不同文件，不能被折叠成同一个身份"
+            );
+        }
+
+        // 不同 UUID ⇒ 不同身份（不能把所有附件都归一成同一个键，那会让孤儿永远清不掉）
+        let other = format!("attachments/{}.pdf", uuid::Uuid::now_v7());
+        assert_ne!(normalize_managed_identity(data_dir, &other), expected);
+    }
+
+    /// 数据库里 legacy 的**绝对路径**与当前 `data_dir` 大小写/分隔符不同时，
+    /// 那个仍被引用的 live 副本**绝不能被当成孤儿删掉**（第三轮 §14 的核心缺陷）。
+    ///
+    /// 修复前的实际行为：`cleanup_orphans_impl` 的引用集合走
+    /// `relative_stored_path()`（内部是 `strip_prefix`，逐组件精确比较），
+    /// 大小写一变就匹配不上、回退成绝对路径字符串，与扫描得到的
+    /// `attachments/<uuid>.pdf` 对不上 ⇒ 仍被引用的文件被删除。
+    ///
+    /// 只在 Windows 上跑：本用例的前提是"路径大小写不敏感、`/` 与 `\` 等价"。
+    /// 非 Windows 把 `A.pdf` 与 `a.pdf` 当成两个不同的文件，
+    /// 这里构造的"同一个位置的另一种写法"根本不成立。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn legacy_absolute_stored_path_with_different_case_is_still_referenced() {
+        let dir = std::env::temp_dir().join(format!("lumen-case-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.expect("初始化临时数据库");
+        let att_dir = dir.join("attachments");
+        std::fs::create_dir_all(&att_dir).unwrap();
+
+        // attachments.task_id 有外键约束，先建一个任务
+        let task_id = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, sort_order, created_at, updated_at)
+             VALUES (?1, ?2, 'todo', 0, ?3, ?3)",
+        )
+        .bind(&task_id)
+        .bind("大小写身份测试")
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        // 磁盘上的真实文件：UUID 命名（Lumen 唯一会生成的形态）
+        let att_id = uuid::Uuid::now_v7().to_string();
+        let file_name = format!("{att_id}.pdf");
+        let live_file = att_dir.join(&file_name);
+        std::fs::write(&live_file, b"%PDF-1.4 legacy").unwrap();
+
+        // 数据库里那条"第二轮整改之前"的记录：**同一个位置**，
+        // 但盘符/目录/文件名全大写，并且用 `/` 作分隔符。
+        // 只大写 ASCII，避免 `to_uppercase()` 把非 ASCII 字符变长而指向别处。
+        let legacy_stored = format!(
+            "{}/ATTACHMENTS/{}",
+            dir.to_string_lossy()
+                .to_ascii_uppercase()
+                .replace('\\', "/"),
+            file_name.to_ascii_uppercase()
+        );
+
+        // 前提校验 1：这个写法确实与真实路径不同，否则本用例测不出东西
+        assert_ne!(
+            Path::new(&legacy_stored),
+            live_file.as_path(),
+            "构造的 legacy 路径必须与真实路径大小写不同"
+        );
+        // 前提校验 2：**旧实现**在这个大小写变体上确实会回退成绝对路径字符串，
+        // 这正是 live 副本被误删的根因。这条断言红了说明用例前提已变，需要重新评估。
+        assert_eq!(
+            relative_stored_path(&dir, Path::new(&legacy_stored)),
+            legacy_stored,
+            "旧实现（strip_prefix 精确比较）应在此回退成绝对路径"
+        );
+
+        sqlx::query(
+            "INSERT INTO attachments
+                (id, task_id, file_name, mime_type, byte_size, sha256, storage_mode,
+                 external_path, stored_path, created_at)
+             VALUES (?1, ?2, ?3, 'application/pdf', ?4, NULL, 'copied', NULL, ?5, ?6)",
+        )
+        .bind(&att_id)
+        .bind(&task_id)
+        .bind(&file_name)
+        .bind(12i64)
+        .bind(&legacy_stored)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let r = cleanup_orphans_impl(&db).await.expect("孤儿清理");
+
+        assert!(
+            live_file.exists(),
+            "仍被数据库引用的副本绝不能被当作孤儿删除：{}",
+            live_file.display()
+        );
+        assert!(r.kept >= 1, "被引用的副本必须计入 kept，实际：{r:?}");
+        assert_eq!(
+            r.removed, 0,
+            "没有任何文件该被删掉，实际删了：{:?}",
+            r.removed_files
+        );
+        assert!(
+            !r.removed_files.contains(&file_name),
+            "被引用的副本不能出现在删除清单里"
+        );
+
+        // 对照：真孤儿仍然必须被删掉——防止"把误判改成一律不删"这种假修复
+        let orphan_name = format!("{}.bin", uuid::Uuid::now_v7());
+        let orphan = att_dir.join(&orphan_name);
+        std::fs::write(&orphan, b"orphan").unwrap();
+
+        let r2 = cleanup_orphans_impl(&db).await.expect("第二次孤儿清理");
+        assert!(!orphan.exists(), "真正的孤儿文件仍应被清理");
+        assert_eq!(
+            r2.removed, 1,
+            "第二次只应删掉那个真孤儿，实际：{:?}",
+            r2.removed_files
+        );
+        assert!(
+            live_file.exists(),
+            "补跑一次清理后，被引用的副本依然不能被删"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
