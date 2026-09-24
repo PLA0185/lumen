@@ -1,13 +1,37 @@
 name: Release
 
-# 打 tag（形如 v0.2.0）时自动构建 Windows 安装包并发布 Release。
+# 打 tag（形如 v0.2.3）时自动构建 Windows 安装包并发布 Release。
 #
-# 关键点（官方文档里没写清、但漏了就会导致自动更新失效的地方）：
-# - `createUpdaterArtifacts: true` 让构建产出 `*-setup.exe.sig` 签名文件；
-# - action 的参数名是 **`uploadUpdaterJson`**，不是 `includeUpdaterJson`；
+# ## 这套工作流是"可选"的
+#
+# 本项目的 Release 一直是**手动**发布的（构建 + 上传 `setup.exe`、`.sig`、
+# `latest.json`）。这个工作流是给"以后想交给 CI"准备的，因此它必须做到两件事：
+#
+# 1. **没配签名密钥时不报红**。第一次打 tag 时，因为仓库里没有
+#    `TAURI_SIGNING_PRIVATE_KEY`，构建会直接失败——用户看到的是四条红色
+#    失败通知，却分不清"没配置"还是"代码坏了"。现在先检测再决定是否继续，
+#    跳过时只在日志里留一条 notice。签名无法关闭（官方原文
+#    "This cannot be disabled."），所以没有密钥就没有"能用的更新包"，
+#    跳过比产出一个装不上的包更诚实。
+# 2. **与手动发布的 Release 共存**：用 `tagName` 定位已存在的 Release 并更新
+#    其资产，而不是新建一个。
+#
+# ## 启用方法
+#
+# 在仓库 Settings → Secrets and variables → Actions 添加两个 Secret：
+#   - `TAURI_SIGNING_PRIVATE_KEY`：`lumen-updater.key` 的**文件内容**
+#   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：该密钥的密码
+#
+# 注意：Windows 上没法用环境变量传空密码（PowerShell 与 .NET 都会把空串
+# 当成"删除该变量"），所以密钥必须带密码，否则 CLI 会卡在交互式提示上。
+#
+# ## 其他容易漏的点
+#
+# - `createUpdaterArtifacts: true` 才会产出 `*-setup.exe.sig`；
+# - action 参数名是 **`uploadUpdaterJson`**，不是 `includeUpdaterJson`；
 # - `uploadUpdaterSignatures` 默认 true，负责把 `.sig` 一起传上去；
-# - 少了 `latest.json`（或其中任何一个平台的 url/signature），
-#   updater 插件会在比对版本号**之前**就解析失败。
+# - 少了 `latest.json`（或其中任一平台的 url/signature），updater 插件会在
+#   比对版本号**之前**就解析失败。
 on:
   push:
     tags:
@@ -20,43 +44,69 @@ jobs:
       contents: write
     runs-on: windows-latest
     steps:
+      # ---------------- 前置检查：没有签名密钥就优雅跳过 ----------------
+      - name: 检查签名密钥是否已配置
+        id: guard
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=跳过自动构建::仓库未配置 TAURI_SIGNING_PRIVATE_KEY，本次不构建。"
+            echo "本项目默认手动发布 Release；如需交给 CI，请先配置签名密钥（见本文件顶部说明）。"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.guard.outputs.ok == 'true'
 
       - name: 安装 pnpm
+        if: steps.guard.outputs.ok == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 12
 
       - name: 安装 Node
+        if: steps.guard.outputs.ok == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
       - name: 安装 Rust
+        if: steps.guard.outputs.ok == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: 缓存 Rust 构建产物
+        if: steps.guard.outputs.ok == 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - name: 安装前端依赖
+        if: steps.guard.outputs.ok == 'true'
         run: pnpm install --frozen-lockfile
 
+      - name: 发版前跑测试
+        if: steps.guard.outputs.ok == 'true'
+        run: |
+          pnpm test
+          cd src-tauri && cargo test --lib
+
       - name: 构建并发布
+        if: steps.guard.outputs.ok == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 私钥内容存放在仓库 Secrets 中；签名无法关闭，
-          # 缺了它构建会直接失败（而不是产出"不能更新的更新包"）。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Lumen ${{ github.ref_name }}'
-          releaseBody: '安装包与自动更新所需的 latest.json、签名文件见下方 Assets。'
-          releaseDraft: true
+          releaseBody: '自动构建产物。安装包、签名与 latest.json 见下方 Assets。'
+          releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
