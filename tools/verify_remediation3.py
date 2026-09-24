@@ -1,5 +1,51 @@
 """Lumen 第三轮整改的实机验收（《Lumen 第三轮整改任务书》§12）。
 
+## 默认只跑隔离 profile，碰到生产目录直接拒绝（§24/§25/§26）
+
+**这个脚本默认只在隔离 profile 上跑；检测到生产数据目录就打印错误并 `exit 1`。**
+
+它会在真实数据库上造数、删数（2000 条分页数据 + 回收站删除范围实验），
+所以脚本做的第一件事就是通过后端命令 `app_data_paths` 读出**当前实例**的数据目录，
+规范化之后（`os.path.normcase(os.path.abspath(...))`，大小写与尾部分隔符差异不算不同）
+与默认生产目录 `%APPDATA%\\com.pla0185.lumen` 比较；命中就停下，
+**不写任何数据、不造任何数据**。
+
+`ZZR3-` 前缀、`finally` 里按 id 清理、`window.confirm` 全程接管（默认拒绝）
+都只是**第二层**防护——它们保证的是"失败时能收拾干净"，
+挡不住"在用户的库上真的删了东西"这件事本身。
+
+为什么这么严：这套脚本的前身已经制造过一次**真实事故**——
+替换 `window.confirm` 之后过早还原，按钮的 async 流程弹出了**原生**确认框，
+无头环境自动接受，用户回收站里原有的 **18 条任务被永久删除**，无法恢复。
+那次事故的教训不是"清理要更小心"，而是"destructive 验收根本不该碰生产目录"。
+
+## 怎么跑（隔离 profile，推荐）
+
+```powershell
+# 1) 指向一个一次性的测试数据目录（应用侧在**启动时**读取这个环境变量）
+$test = Join-Path $env:TEMP "lumen-acceptance"
+New-Item -ItemType Directory -Force $test | Out-Null
+$env:LUMEN_TEST_DATA_DIR = $test
+# 2) 打开 WebView2 的调试端口（同样必须在启动 Lumen 之前设置）
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
+# 3) 在**同一个窗口**里启动 Lumen（环境变量是启动时读的），然后再跑：
+python tools/verify_remediation3.py --expect-data-dir $test
+```
+
+不设 `LUMEN_TEST_DATA_DIR` 时应用会用默认的 `%APPDATA%\\com.pla0185.lumen`，
+那时本脚本会直接拒绝运行。
+
+命令行参数：
+
+- `--expect-data-dir <path>`（可选）：显式声明本次期望的数据目录，
+  与实例实际用的是同一个目录才继续，否则拒绝运行（双保险：防止"以为在隔离目录、
+  实际连到了生产实例"）。
+- `--allow-production`（可选，**危险**）：只有显式传这个参数才允许在生产目录上跑，
+  开头打印大写警告、结束时再提醒一次。默认绝对不允许。
+
+退出码：全部断言通过为 0；profile 校验不通过、或有断言失败为 1
+（末尾打印 `X/Y 项通过`）。
+
 ## 这个脚本验收什么
 
 四组**只有真机才能看到**的断言（单元测试覆盖不到的跨层链路）：
@@ -19,40 +65,40 @@
   「已配置」徽标的有无必须与后端 `ai_provider_key_status` 返回的**那一格**一致
   （不能出现"切到没配 Key 的服务商却显示已配置"）。
 
-## 怎么跑
-
-```powershell
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"
-# 先设好这个环境变量，再启动 Lumen（环境变量是启动时读取的），然后：
-python tools/verify_remediation3.py
-```
-
-退出码：全部断言通过为 0，否则为 1（末尾打印 `X/Y 项通过`）。
-
 ## 安全约定（有血的教训，改之前先读 `tools/verify_purge_scope.py` 开头）
 
-1. 脚本在**用户真实数据库**上跑：造出来的任务标题一律带唯一前缀 `ZZR3-`，
-   结束时在 `finally` 里**逐个按 id** 永久删除；
+> 第 1 条（隔离 profile）是**第一层**防护，由本脚本在造任何数据之前强制；
+> 第 2~7 条是**第二层**：即使真的跑起来了，也要保证"删的范围 = 确认的范围"、失败能收拾干净。
+
+1. **隔离 profile 强制**（§24/§25/§26，见上方"默认只跑隔离 profile"）：
+   启动后第一件事就是读 `app_data_paths` 并与默认生产目录规范化比较，
+   命中就打印错误 + `exit 1`，**不写任何数据**；`--allow-production` 是唯一出口且必须显式传。
+2. 造出来的任务标题一律带唯一前缀 `ZZR3-`，结束时在 `finally` 里**逐个按 id** 永久删除；
    **绝不调用 `task_purge_all_deleted` / 「清空回收站」**——那会删掉用户自己回收站里的任务。
-2. `window.confirm` **全程接管**：脚本一开始就把 `window.confirm` 换成自己的实现并默认返回
+   （前缀 + finally 只能保证"自己造的自己收拾"，不能保证"没在别人的库上造"——
+   所以它们是第二层，第一层是第 1 条的 profile 校验。）
+3. `window.confirm` **全程接管**：脚本一开始就把 `window.confirm` 换成自己的实现并默认返回
    `false`；只有明确要执行删除的那一步才切到 `accept`，执行完立刻切回 `block`；
    直到脚本结束才还原。
    （上一版脚本"替换后又同步恢复"，按钮的 async 流程随后弹出的是**原生** confirm，
    无头环境自动接受 → 误删了用户 18 条数据。）
-3. 需要点击的按钮不在视口内时先 `scrollIntoView({block:'center'})` 再点，
+4. 需要点击的按钮不在视口内时先 `scrollIntoView({block:'center'})` 再点，
    否则 CDP 的坐标点击（视口坐标）会落空。
-4. `sys.stdout.reconfigure(encoding="utf-8", ...)`：Windows 控制台默认 GBK，
+5. `sys.stdout.reconfigure(encoding="utf-8", ...)`：Windows 控制台默认 GBK，
    直接 print ✅ 会抛 UnicodeEncodeError 并打断验收。
-5. 本脚本**不写任何凭据**：§12.4 只读后端状态 + 切换界面下拉（`AiPanel.switchProvider`
+6. 本脚本**不写任何凭据**：§12.4 只读后端状态 + 切换界面下拉（`AiPanel.switchProvider`
    只改组件本地 state，不落库、不碰凭据管理器）。
    若四个 provider 的密钥状态相同（例如都为 false），脚本**如实说明"无法区分"**，
    不会伪造数据去改凭据管理器。
-6. §12.3 会在用户的 `attachments/` 里临时建联接与对照文件，`finally` 里逐个清掉
+7. §12.3 会在**数据目录**的 `attachments/` 里临时建联接与对照文件，`finally` 里逐个清掉
    （联接用 `os.rmdir` 只删链接自身，绝不用 `shutil.rmtree`）。
+   隔离 profile 下动的是测试目录；一旦 `--allow-production` 跑在生产目录上，
+   动的就是用户真实的 `attachments/`——这也是第 1 条存在的理由。
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -131,6 +177,202 @@ def run_section(name: str, fn, *args) -> None:
             False,
             f"{type(e).__name__}: {e}",
         )
+
+
+# ---------------------------------------------------------------------------
+# 隔离 profile 强制（§24/§25/§26）：造任何数据之前的**第一件事**
+# ---------------------------------------------------------------------------
+
+# Tauri 的 bundle id，同时也是默认数据目录名（src-tauri/tauri.conf.json 的 identifier）
+DEFAULT_DATA_DIR_NAME = "com.pla0185.lumen"
+# 应用侧用来覆盖数据目录的环境变量——必须在**启动 Lumen 之前**设置才有效
+TEST_DATA_DIR_ENV = "LUMEN_TEST_DATA_DIR"
+
+
+def default_production_data_dir() -> Path:
+    """默认生产数据目录：Windows 下是 `%APPDATA%\\com.pla0185.lumen`（Tauri 的 app_data_dir()）。"""
+    roaming = os.environ.get("APPDATA")
+    base = Path(roaming) if roaming else Path.home() / "AppData" / "Roaming"
+    return base / DEFAULT_DATA_DIR_NAME
+
+
+def normalize_dir(path: object) -> str:
+    """把目录路径规范化成可直接比较的字符串。
+
+    - `normcase`：Windows 下抹平大小写与分隔符差异（`C:/Temp/A` 与 `c:\\temp\\a` 是同一个目录）；
+    - `abspath` → `normpath`：相对路径按 cwd 展开，并去掉尾部分隔符与 `.` / `..`。
+    """
+    if path is None:
+        return ""
+    text = str(path).strip().strip('"')
+    if not text:
+        return ""
+    return os.path.normcase(os.path.abspath(text))
+
+
+def is_production_data_dir(path: object, default_dir: object) -> bool:
+    """`path` 是否就是默认生产目录（规范化后比较；大小写、尾部分隔符差异不算不同）。
+
+    纯函数，不碰文件系统、不依赖运行环境——可以单独用 `python -c` 喂样例验证。
+    路径为空时返回 False（"拿不到"由调用方按**拒绝**处理，不能靠这里放行）。
+    """
+    actual = normalize_dir(path)
+    if not actual:
+        return False
+    return actual == normalize_dir(default_dir)
+
+
+PRODUCTION_REFUSAL = """
+============================================================
+❌ 拒绝运行：当前 Lumen 实例的数据目录是【生产目录】
+
+   实例实际数据目录：{actual}
+   默认生产目录：    {default}
+
+本脚本会**在真实数据库上造数、删数**（{seed} 条分页数据 + 回收站删除范围实验），
+而它已经制造过一次真实事故：上一版脚本"替换 window.confirm 后又同步还原"，
+按钮的 async 流程随后弹出的是**原生**确认框，无头环境自动接受，
+用户回收站里原有的 **18 条任务被永久删除**，无法恢复。
+那次事故说明：destructive 验收就不该碰生产目录。
+所以这里在**造任何数据之前**停下——没有写任何数据，也没有造任何数据。
+
+正确的启动方式（环境变量必须在**启动 Lumen 之前**设置，应用是启动时读它的）：
+
+   $test = Join-Path $env:TEMP "lumen-acceptance"
+   New-Item -ItemType Directory -Force $test | Out-Null
+   $env:{env_name} = $test
+   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+   # 在**同一个窗口**里启动 Lumen，然后：
+   python tools/verify_remediation3.py --expect-data-dir $test
+
+确实要在生产目录上跑（危险，后果自负）时才显式加参数：
+   python tools/verify_remediation3.py --allow-production
+============================================================
+"""
+
+PRODUCTION_WARNING = """
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+!! 警告：--allow-production 已启用 —— 本次验收跑在【生产数据目录】上！
+!!   {actual}
+!! 脚本会在这个库里创建约 {seed} 条 `{prefix}` 开头的任务并真的永久删除一部分；
+!! 中途失败或清理失败都会留下残留数据，需要人工按前缀 `{prefix}` 清理。
+!! 正常情况下不该这样跑：请改用 {env_name} 指向隔离目录。
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+"""
+
+PRODUCTION_WARNING_TAIL = (
+    "!! 再次提醒：本次是在【生产数据目录】上跑的（--allow-production）：{actual}\n"
+    "!! 若上方有 ❌ 或中断，请检查是否有残留的 `ZZR3-` 数据。"
+)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """命令行参数：默认只跑隔离 profile，`--allow-production` 是唯一出口。"""
+    parser = argparse.ArgumentParser(
+        prog="verify_remediation3.py",
+        description=(
+            "Lumen 第三轮整改的实机验收（§12）。"
+            "默认只跑隔离 profile：数据目录一旦是 %APPDATA%\\com.pla0185.lumen 就直接拒绝运行。"
+        ),
+        epilog=(
+            "隔离 profile 的启动方式：先设 $env:LUMEN_TEST_DATA_DIR=<一次性目录> 与 "
+            '$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"，'
+            "再启动 Lumen，最后运行本脚本（可加 --expect-data-dir 做双保险）。"
+        ),
+    )
+    parser.add_argument(
+        "--expect-data-dir",
+        metavar="PATH",
+        default=None,
+        help="显式声明本次期望的数据目录；与实例实际用的目录不一致就拒绝运行（双保险）。",
+    )
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="允许在生产数据目录上运行。危险：会真的创建并删除数据；默认绝对不允许。",
+    )
+    return parser.parse_args(argv)
+
+
+def verify_isolated_profile(main_win: ui.Target, args: argparse.Namespace) -> tuple[bool, str]:
+    """启动即校验 profile，返回 `(是否继续, 实例实际的数据目录)`。
+
+    这条检查是脚本做的**第一件事**，在造任何数据之前执行；返回 False 时调用方必须
+    直接结束，不得再做任何写操作。
+    """
+    print("===== 隔离 profile 校验（§24/§25/§26：第一件事）=====", flush=True)
+    env_hint = os.environ.get(TEST_DATA_DIR_ENV)
+    print(
+        f"   脚本环境里的 {TEST_DATA_DIR_ENV} = {env_hint!r}"
+        f"（应用侧在**启动时**读它，这里只作提示，判定一律以实例实际目录为准）",
+        flush=True,
+    )
+    print(f"   默认生产目录（%APPDATA%）：{default_production_data_dir()}", flush=True)
+
+    # 读**当前实例**的数据目录：这是唯一的判定依据
+    try:
+        paths = main_win.eval(invoke_js("app_data_paths", {})) or {}
+    except Exception as e:  # noqa: BLE001
+        print(
+            f"❌ 拒绝运行：读不到 app_data_paths（{type(e).__name__}: {e}）。"
+            "无法证明当前实例跑在隔离 profile 上，按最坏情况处理。",
+            flush=True,
+        )
+        return False, ""
+
+    actual = str(paths.get("dataDir") or "")
+    if not actual:
+        print(
+            "❌ 拒绝运行：app_data_paths 没有返回 dataDir，"
+            "无法证明当前实例跑在隔离 profile 上。",
+            flush=True,
+        )
+        return False, ""
+
+    default_dir = default_production_data_dir()
+    print(f"   实例实际数据目录：{actual}", flush=True)
+
+    # ---- 第一关：是不是生产目录 ----
+    if is_production_data_dir(actual, default_dir):
+        if not args.allow_production:
+            print(
+                PRODUCTION_REFUSAL.format(
+                    actual=actual,
+                    default=default_dir,
+                    seed=SEED,
+                    env_name=TEST_DATA_DIR_ENV,
+                ),
+                flush=True,
+            )
+            return False, actual
+        print(
+            PRODUCTION_WARNING.format(
+                actual=actual,
+                seed=SEED,
+                prefix=ANY_PREFIX,
+                env_name=TEST_DATA_DIR_ENV,
+            ),
+            flush=True,
+        )
+    else:
+        print(f"✅ 已确认隔离 profile：{actual}（不是生产目录 {default_dir}）", flush=True)
+
+    # ---- 第二关：与 --expect-data-dir 声明的目录是否一致 ----
+    if args.expect_data_dir:
+        if normalize_dir(actual) != normalize_dir(args.expect_data_dir):
+            print(
+                "❌ 拒绝运行：实例实际的数据目录与 --expect-data-dir 不一致。\n"
+                f"   实例实际：{actual}\n"
+                f"   期望目录：{args.expect_data_dir}\n"
+                "   （多半是连到了另一个实例，或启动 Lumen 时忘了设 "
+                f"{TEST_DATA_DIR_ENV}；请确认连的是预期那个实例再跑。）",
+                flush=True,
+            )
+            return False, actual
+        print(f"✅ 已确认数据目录与 --expect-data-dir 一致：{actual}", flush=True)
+
+    print("", flush=True)
+    return True, actual
 
 
 # ---------------------------------------------------------------------------
@@ -763,10 +1005,13 @@ def section_attachment_links(main_win: ui.Target) -> None:
     print("\n===== C. 附件删除不跟随链接（§12.3）=====", flush=True)
     paths = main_win.eval(invoke_js("app_data_paths", {})) or {}
     data_dir = Path(str(paths.get("dataDir") or ""))
+    # 这里**不**再要求目录名等于 bundle id：隔离 profile 的目录名是用户随便起的
+    # （`LUMEN_TEST_DATA_DIR` 指哪就是哪），按名字判会假失败。
+    # "是不是生产目录"由启动时的 verify_isolated_profile() 负责，不在这一段。
     check(
         "拿到数据目录（app_data_paths）",
-        bool(str(data_dir)) and data_dir.name == "com.pla0185.lumen" and data_dir.is_dir(),
-        f"dataDir = {data_dir}",
+        bool(str(data_dir)) and data_dir.is_dir(),
+        f"dataDir = {data_dir}（生产目录={is_production_data_dir(data_dir, default_production_data_dir())}）",
     )
     attach_dir = data_dir / "attachments"
 
@@ -1038,9 +1283,22 @@ def section_ai_key_status(main_win: ui.Target) -> None:
 # ===========================================================================
 
 def main() -> int:
+    args = parse_args()
     print(f"连接主窗口（调试端口 {PORT}）…", flush=True)
     main_win = ui.connect(PORT, want="main")
     print("已连接。\n", flush=True)
+
+    # ---- 第一件事：确认不是生产 profile。不通过就立刻退出，绝不造任何数据 ----
+    ok, data_dir = verify_isolated_profile(main_win, args)
+    if not ok:
+        if args.allow_production:
+            # 走了 --allow-production 却仍被拒（例如 --expect-data-dir 不一致）
+            print(PRODUCTION_WARNING_TAIL.format(actual=data_dir or "（未知）"), flush=True)
+        print(
+            "\n已退出（退出码 1）：未执行任何写操作、未创建任何任务、未改动任何数据。",
+            flush=True,
+        )
+        return 1
 
     base_all = count_tasks(main_win, ALL_Q)
     base_trash = count_tasks(main_win, TRASH_Q)
@@ -1049,7 +1307,8 @@ def main() -> int:
     created: list[str] = []  # 所有脚本造的任务 id（每批创建后立刻登记）
     armed = False
     try:
-        # 第一件事就是接管 confirm：此后**任何**确认框都不会被自动接受
+        # 第二层防护的起点：接管 confirm，此后**任何**确认框都不会被自动接受
+        # （第一层是上面的隔离 profile 校验，已经过了才会走到这里）
         arm_confirm(main_win)
         armed = True
 
@@ -1108,6 +1367,12 @@ def main() -> int:
         print("\n----- 无法确认（不计入通过率，供人工判断）-----", flush=True)
         for text in uncertain:
             print(f"• {text}", flush=True)
+
+    print(f"\n本次运行的 profile：{data_dir or '（未知）'}", flush=True)
+    if args.allow_production:
+        # --allow-production 要"结束时再提醒一次"，不是只在开头吼一句
+        print(PRODUCTION_WARNING_TAIL.format(actual=data_dir or "（未知）"), flush=True)
+
     return 0 if passed == len(results) else 1
 
 

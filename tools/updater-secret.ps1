@@ -18,8 +18,12 @@
   - 校验失败时**中止迁移且不删除明文**（宁可留明文，也不能留下"看起来迁移成功、
     其实解不开"的密文），打印原因并以非零退出码结束；
   - 删除明文失败时，同样视为**迁移未完成**，打印明确告警并以非零退出码结束；
-  - `-Status` 只要发现明文文件仍然存在，就把它标记为**不安全**并以非零退出码结束。
-    因此 `-Status` 退出码 0 的含义是：私钥与密文就绪，且没有任何明文密码文件残留。
+  - `-Status` 逐项检查四件事，**任何一项不达标都 exit 1**（第三轮收口任务书 §22）：
+    ① 私钥存在；② 密码密文存在；③ 密文能用当前账户解开；④ 没有 legacy 明文文件残留。
+    因此 `-Status` 退出码 0 的含义是：四项全部健康——私钥与密文就绪、密文可解密、
+    且没有任何明文密码文件残留。此前"只有私钥与密文**同时**缺失才非零、解密失败只打印
+    一行提示"的写法会让"其实已经坏了"的状态（私钥缺失但密文存在、换过账户导致密文
+    解不开）返回 0，现按四条件独立计分，任一不满足即 exit 1。
 
   仍然要如实说明的边界：**同一台机器、同一个登录账户下的任何进程**都能解密这份
   密文。它防的是"文件被拷走 / 被别的账户读到 / 误提交进仓库"，
@@ -31,6 +35,7 @@
 .EXAMPLE
   pwsh -File tools/updater-secret.ps1 -Status
       查看私钥与密码的配置状态（不会打印密码）。
+      退出码：私钥存在 + 密文存在 + 能解密 + 无 legacy 明文，四项全健康才 0，否则 1。
 
 .EXAMPLE
   pwsh -File tools/updater-secret.ps1 -Set
@@ -101,7 +106,8 @@ function Show-Status {
   $keyOk = Test-Path -LiteralPath $KeyPath
   $secretOk = Test-Path -LiteralPath $SecretPath
   $legacyOk = Test-Path -LiteralPath $LegacyPlainPath
-  # 只要有任何一项没达标就以非零退出码结束，便于脚本/CI 直接判定
+  # 四项健康检查各自独立计分，任何一项不达标都不能退出 0（任务书 §22）
+  $decryptFailed = $false
   $exitCode = 0
 
   Write-Host "私钥：$KeyPath"
@@ -111,9 +117,17 @@ function Show-Status {
 
   if ($secretOk) {
     try {
-      $null = Get-PlainPassword
-      Write-Host '  可解密：是（当前 Windows 账户可以解开）'
+      $plain = Get-PlainPassword
+      if ($null -eq $plain) {
+        # 文件在、内容却是空的或不可识别的密文：效果等同于解密失败，不能算健康
+        $decryptFailed = $true
+        Write-Host '  可解密：**否** —— 密文内容为空或不可识别。'
+        Write-Host '  常见原因：文件被截断或写坏；请运行 -Set 重新录入密码。'
+      } else {
+        Write-Host '  可解密：是（当前 Windows 账户可以解开）'
+      }
     } catch {
+      $decryptFailed = $true
       Write-Host "  可解密：**否** —— $($_.Exception.Message)"
       Write-Host '  常见原因：这份密文是在别的用户或别的机器上生成的。'
     }
@@ -124,10 +138,17 @@ function Show-Status {
     Write-Host "不安全：仍存在明文密码文件 $LegacyPlainPath" -ForegroundColor Yellow
     Write-Host '      只要它还在，"密码已加密保存"就没有实际意义——拿到该文件的人同时拿到了口令。'
     Write-Host '      请运行  pwsh -File tools/updater-secret.ps1 -Set  完成迁移（校验通过后会立即删除它）。'
-    $exitCode = 1
   }
 
-  if (-not $keyOk -and -not $secretOk) { $exitCode = 1 }
+  if (-not $keyOk) { $exitCode = 1 }
+  if (-not $secretOk) { $exitCode = 1 }
+  if ($decryptFailed) { $exitCode = 1 }
+  if ($legacyOk) { $exitCode = 1 }
+
+  if ($exitCode -ne 0) {
+    Write-Host ''
+    Write-Host '状态不健康：上面凡标记为缺失 / 不可解密 / 不安全的项，都会让 -Status 以退出码 1 结束。' -ForegroundColor Yellow
+  }
 
   exit $exitCode
 }
