@@ -298,7 +298,6 @@ pub fn run() {
             commands::task_purge,
             commands::task_prepare_purge_deleted,
             commands::task_commit_purge_deleted,
-            commands::task_purge_all_deleted,
             commands::task_bulk,
             commands::task_duplicate,
             commands::task_reorder,

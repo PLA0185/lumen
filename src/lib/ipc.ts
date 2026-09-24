@@ -46,7 +46,6 @@ export const CMD = {
   taskPurge: 'task_purge',
   taskPreparePurgeDeleted: 'task_prepare_purge_deleted',
   taskCommitPurgeDeleted: 'task_commit_purge_deleted',
-  taskPurgeAllDeleted: 'task_purge_all_deleted',
   taskBulk: 'task_bulk',
   taskDuplicate: 'task_duplicate',
   taskReorder: 'task_reorder',
@@ -210,21 +209,6 @@ export const commitPurgeDeleted = (
   taskIds: string[],
 ): Promise<PurgeResult> =>
   call<PurgeResult>(CMD.taskCommitPurgeDeleted, { query: query ?? null, taskIds })
-
-/**
- * 按条件永久删除回收站里的任务（**已弃用**：只校验数量、不校验身份集合）。
- *
- * 前端一律走 `preparePurgeDeleted` → `commitPurgeDeleted` 两阶段；
- * 这个封装只留给需要对照的旧调用方。
- */
-export const purgeAllDeleted = (
-  query?: TaskQuery,
-  expectedCount?: number,
-): Promise<PurgeResult> =>
-  call<PurgeResult>(CMD.taskPurgeAllDeleted, {
-    query: query ?? null,
-    expectedCount: expectedCount ?? null,
-  })
 
 /** 批量操作 */
 export const bulkTasks = (input: BulkActionInput): Promise<number> =>
