@@ -91,4 +91,18 @@ jobs:
         # 实测把豁免去掉、并加上 --all-features 后仓库是全绿的，
         # 所以这里采用任务书推荐的方案 A：CI 真正执行完整门禁，
         # 本地与 CI 跑同一条命令。
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        #
+        # 失败时把尾部输出写进 job summary：Actions 的**原始日志下载需要认证**，
+        # 而 step summary 在页面上（含未登录）就能看到。CI 专属的 lint 差异
+        # 只能靠它定位。
+        shell: pwsh
+        run: |
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | Tee-Object -FilePath clippy.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            "## Clippy 失败（exit $code）" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            '```text' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            (Get-Content clippy.log -Tail 80) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            '```' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+            exit $code
+          }
