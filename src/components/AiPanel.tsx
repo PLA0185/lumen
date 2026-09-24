@@ -28,6 +28,13 @@ export function AiPanel() {
   const [cfg, setCfg] = useState<ProviderConfig | null>(null)
   /** 各提供商的默认值（**唯一来源是后端**，见整改任务书 §2） */
   const [providers, setProviders] = useState<ai.ProviderDefaults[]>([])
+  /**
+   * 各 provider **各自**的密钥状态。
+   *
+   * 初值是一张全 false 的表：状态还没拿到时一律按"未配置"显示。
+   * **不能**拿当前配置里的 `hasApiKey` 顶替——那正是修复前的缺陷。
+   */
+  const [keyStatus, setKeyStatus] = useState<ai.ProviderKeyStatus>(ai.NO_API_KEY_STATUS)
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -44,17 +51,37 @@ export function AiPanel() {
 
   const reload = useCallback(async () => {
     try {
-      // 默认值表与已保存配置一起取：切换服务商必须用后端给的默认值，
-      // 前端不再有任何硬编码的默认模型 / Base URL 表。
-      const [list, saved] = await Promise.all([ai.aiProviderDefaults(), ai.aiGetConfig()])
+      // 默认值表、已保存配置、**密钥状态表**一起取：
+      // 切换服务商必须用后端给的默认值，前端不再有任何硬编码的默认模型 / Base URL 表；
+      // 密钥状态也必须是每个 provider 各自的那一格，不能共用当前配置里那一个布尔值。
+      const [list, saved, keys] = await Promise.all([
+        ai.aiProviderDefaults(),
+        ai.aiGetConfig(),
+        ai.aiProviderKeyStatus(),
+      ])
       setProviders(list)
+      setKeyStatus(keys)
       if (saved) {
         setCfg(saved)
       } else {
         const d = ai.findDefaults(list, 'deep_seek') ?? list[0]
-        setCfg(d ? ai.configFromDefaults(d) : null)
+        setCfg(d ? ai.configFromDefaults(d, keys[d.provider]) : null)
       }
       setError(null)
+    } catch (e) {
+      setError(errText(e))
+    }
+  }, [])
+
+  /**
+   * 重新拉取密钥状态表。
+   *
+   * **保存配置、清除密钥之后必须调用**：否则「已配置」标签，以及
+   * 「测试连接 / 获取模型列表」的可用性都停留在旧状态。
+   */
+  const refreshKeyStatus = useCallback(async () => {
+    try {
+      setKeyStatus(await ai.aiProviderKeyStatus())
     } catch (e) {
       setError(errText(e))
     }
@@ -73,9 +100,12 @@ export function AiPanel() {
    *
    * 默认值来自后端：OpenAI 的默认模型是**空字符串**（未经验证不填），
    * 所以切过去之后输入框是空的，界面上会提示先拉模型列表。
+   *
+   * 密钥状态取自**目标 provider** 那一格，而不是当前配置里的 `hasApiKey`——
+   * 后者是"上一个 provider"的状态，套过来会让两家密钥互相串台。
    */
   const switchProvider = (p: AiProvider) => {
-    const next = ai.configForProvider(providers, p, cfg?.hasApiKey ?? false)
+    const next = ai.configForProvider(providers, p, keyStatus)
     if (!next) {
       setError(`当前版本没有「${p}」的默认配置，请更新 Lumen 后重试`)
       return
@@ -100,6 +130,9 @@ export function AiPanel() {
       const saved = await ai.aiSetConfig(cfg, apiKey.trim() ? apiKey.trim() : null)
       setCfg(saved)
       setApiKey('')
+      // 密钥状态按 provider 独立存放，保存后必须重新拉取，
+      // 否则切到别的 provider 时显示的仍是保存前的旧状态。
+      await refreshKeyStatus()
       // 保存不再要求模型非空（整改任务书 §3.3）：先存 Key，再拉模型列表选模型。
       // 所以这里的提示要明确告诉用户"下一步做什么"。
       setNotice(
@@ -122,6 +155,7 @@ export function AiPanel() {
     if (!window.confirm('清除已保存的 API Key？\n\n清除后 AI 功能将不可用，需要重新填写。')) return
     try {
       await ai.aiClearKey(cfg.provider)
+      // reload 会连同**密钥状态表**一起重新拉取，清除后界面立刻反映最新状态
       await reload()
       pushToast('success', '已清除密钥')
     } catch (e) {

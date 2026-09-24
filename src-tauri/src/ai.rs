@@ -59,6 +59,16 @@ pub enum Provider {
     /// 深度求索
     DeepSeek,
     /// OpenAI
+    ///
+    /// 序列化名**写死**为 `open_ai`。理由：`#[serde(rename_all = "snake_case")]`
+    /// 对 `OpenAI` 这种连续大写会算成 `open_a_i`，而前端的 `AiProvider`
+    /// 联合类型写的是 `'deep_seek' | 'open_ai' | 'claude' | 'custom'`。
+    /// 两者对不上时**不会报错**：前端按键取值（如 `keyStatus[p]`）只会静默
+    /// 拿到 `undefined`，表现为"某个 provider 明明存了密钥却总显示未配置"。
+    ///
+    /// `alias` 保留旧名，让已经写进数据库 `settings.ai_config` 的
+    /// `"open_a_i"` 仍能读出来——不要求用户重配（数据安全底线）。
+    #[serde(rename = "open_ai", alias = "open_a_i")]
     OpenAI,
     /// Anthropic Claude
     Claude,
@@ -403,6 +413,66 @@ pub fn delete_api_key(provider: Provider) -> AppResult<()> {
         }
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(AppError::internal(format!("删除密钥失败：{e}"))),
+    }
+}
+
+/// 各 provider **各自**的密钥状态。
+///
+/// 为什么必须单独有这张表：`ProviderConfig::has_api_key` 只描述"某一个
+/// provider"，而界面上的提供商下拉是**跨 provider** 的。修复前的
+/// `AiPanel.switchProvider` 把当前（旧）provider 的 `hasApiKey` 直接套给
+/// 目标 provider，于是 DeepSeek 存过密钥时切到 OpenAI 也会显示「已配置」——
+/// 用户以为可以直接调用，真正发请求时才被"尚未配置 API Key"打回来。
+///
+/// 序列化后的键名是 snake_case 的 provider 名（`deep_seek` / `open_ai` /
+/// `claude` / `custom`），与前端的 `AiProvider` 联合类型一致，前端才能直接
+/// `keyStatus[p]` 取值。**这里刻意不用 `camelCase`**：本文件其余结构体走
+/// `rename_all = "camelCase"`，但这些键是 provider 标识符，一旦变成
+/// `deepSeek` 就对不上前端的 provider 取值，取到 undefined。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ProviderKeyStatus {
+    /// DeepSeek 是否已保存密钥
+    pub deep_seek: bool,
+    /// OpenAI 是否已保存密钥
+    pub open_ai: bool,
+    /// Anthropic Claude 是否已保存密钥
+    pub claude: bool,
+    /// 自定义兼容服务是否已保存密钥
+    pub custom: bool,
+}
+
+impl ProviderKeyStatus {
+    /// 逐个 provider 查询凭据管理器。
+    ///
+    /// **必须逐个查**：一个全局布尔值回答不了"哪个 provider 有密钥"，
+    /// 而界面需要的恰恰是这个区分。
+    pub fn load() -> Self {
+        Self {
+            deep_seek: provider_has_key(Provider::DeepSeek),
+            open_ai: provider_has_key(Provider::OpenAI),
+            claude: provider_has_key(Provider::Claude),
+            custom: provider_has_key(Provider::Custom),
+        }
+    }
+}
+
+/// 单个 provider 是否有密钥。
+///
+/// 读取失败**不连累整个命令**：某个 provider 的凭据条目损坏时，设置页仍应
+/// 能打开，只是那一项显示"未配置"。失败记一条 warn，
+/// 且只记 provider 与错误原因——**不记密钥内容**（§10）。
+fn provider_has_key(provider: Provider) -> bool {
+    match load_api_key(provider) {
+        Ok(k) => k.is_some(),
+        Err(e) => {
+            log::warn!(
+                "读取 {} 的密钥状态失败，按未配置处理：{}",
+                provider.label(),
+                e.message
+            );
+            false
+        }
     }
 }
 
@@ -1200,6 +1270,15 @@ use crate::commands::AppState;
 #[tauri::command]
 pub fn ai_provider_defaults() -> AppResult<Vec<ProviderDefaults>> {
     Ok(ProviderDefaults::all())
+}
+
+/// 读取**每个 provider 各自**的密钥状态（§6）。
+///
+/// 供界面按 provider 正确显示「已配置 / 未配置」：切换提供商时要用
+/// **目标 provider** 的状态，而不是当前配置里那一个布尔值。
+#[tauri::command]
+pub fn ai_provider_key_status() -> AppResult<ProviderKeyStatus> {
+    Ok(ProviderKeyStatus::load())
 }
 
 /// 读取当前 AI 配置（**不含密钥**）
@@ -2359,6 +2438,61 @@ mod tests {
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), names.len(), "不同服务商的凭据名不能重复");
+    }
+
+    /// 密钥状态必须**逐个 provider 独立**（回归护栏）。
+    ///
+    /// 修复前的缺陷：界面把当前 provider 的 `hasApiKey` 套给目标 provider，
+    /// 于是 DeepSeek 存过密钥时切到 OpenAI 也显示「已配置」。这条测试锁住
+    /// "返回的是一张每个 provider 一个键的表，而不是一个全局布尔值"。
+    ///
+    /// 刻意**不依赖本机凭据管理器里到底有没有密钥**：测试环境通常一个都没有，
+    /// 所以不写 `assert!(status.deep_seek == false)` 这类断言——那种断言在
+    /// 开发机存过密钥时会无辜变红。这里只断言"四个键都存在且类型正确"。
+    #[test]
+    fn provider_key_status_covers_each_provider_independently() {
+        // 直接调**命令函数本身**（它不需要 State），而不是内部的 `load()`，
+        // 这样命令的返回形状也被覆盖到。
+        let status = ai_provider_key_status().expect("密钥状态命令应成功返回");
+        let v = serde_json::to_value(status).expect("密钥状态应能序列化");
+        let obj = v.as_object().expect("密钥状态必须是一个对象");
+
+        assert_eq!(
+            obj.len(),
+            Provider::ALL.len(),
+            "必须每个 provider 一个键（不能返回全局布尔值）：{v}"
+        );
+
+        // 序列化名必须与前端 `AiProvider` 的取值逐字一致：`OpenAI` 的天真
+        // snake_case 是 `open_a_i`，而前端写的是 `open_ai`——这种不一致不会报错，
+        // 只会让 `keyStatus[p]` 静默取到 undefined（存过密钥也显示未配置）。
+        let names: Vec<String> = Provider::ALL
+            .iter()
+            .map(|p| {
+                serde_json::to_value(p)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            vec!["deep_seek", "open_ai", "claude", "custom"],
+            "provider 的序列化名必须与前端 AiProvider 一致"
+        );
+
+        for p in Provider::ALL {
+            // 键名直接取 `Provider` 的序列化结果（snake_case），
+            // 这样断言的就是前端 `keyStatus[p]` 真正用的那个键名；
+            // 谁把这里改成 camelCase，这条测试就会红。
+            let key = serde_json::to_value(p).unwrap();
+            let key = key.as_str().expect("provider 应序列化为字符串");
+            let val = obj
+                .get(key)
+                .unwrap_or_else(|| panic!("缺少 {key} 的密钥状态：{v}"));
+            assert!(val.is_boolean(), "{key} 的状态必须是布尔值，实际：{val}");
+        }
     }
 
     // ------------------------- 数据政策文案 -------------------------

@@ -48,6 +48,36 @@ export interface ProviderDefaults {
   keyEntry: string
 }
 
+/**
+ * 各 provider **各自**的密钥状态。
+ *
+ * 键名就是 `AiProvider` 的取值，所以可以直接 `keyStatus[p]` 取用。
+ *
+ * 为什么要有这张表：`ProviderConfig.hasApiKey` 只描述"某一个 provider"，
+ * 而界面上的提供商下拉是跨 provider 的。修复前 `switchProvider` 把当前
+ * （旧）provider 的 `hasApiKey` 套给了目标 provider，于是 DeepSeek 存过
+ * 密钥时，切到 OpenAI 也会显示「已配置」——发请求时才报"尚未配置 API Key"。
+ */
+export interface ProviderKeyStatus {
+  deep_seek: boolean
+  open_ai: boolean
+  claude: boolean
+  custom: boolean
+}
+
+/**
+ * 空密钥状态表：任何 provider 都视为**未配置**。
+ *
+ * 用于"后端状态还没拿到"的短暂窗口。宁可暂时不显示「已配置」，
+ * 也不能凭空猜一个 `true` 出来。
+ */
+export const NO_API_KEY_STATUS: ProviderKeyStatus = {
+  deep_seek: false,
+  open_ai: false,
+  claude: false,
+  custom: false,
+}
+
 /** token 用量 */
 export interface TokenUsage {  inputTokens: number | null
   outputTokens: number | null
@@ -134,6 +164,7 @@ export interface ModelListResult {
 
 export const AI_CMD = {
   providerDefaults: 'ai_provider_defaults',
+  providerKeyStatus: 'ai_provider_key_status',
   getConfig: 'ai_get_config',
   setConfig: 'ai_set_config',
   test: 'ai_test_connection',
@@ -175,6 +206,14 @@ export const aiGetConfig = (): Promise<ProviderConfig | null> => call(AI_CMD.get
  */
 export const aiProviderDefaults = (): Promise<ProviderDefaults[]> =>
   call(AI_CMD.providerDefaults)
+
+/**
+ * 读取**每个 provider 各自**的密钥状态。
+ *
+ * 保存配置、清除密钥之后必须重新调用，否则界面上的「已配置」会过期。
+ */
+export const aiProviderKeyStatus = (): Promise<ProviderKeyStatus> =>
+  call(AI_CMD.providerKeyStatus)
 
 /** 保存配置。`apiKey` 为 null 表示不改动已保存的密钥，空字符串表示清除。 */
 export const aiSetConfig = (
@@ -287,14 +326,19 @@ export function configFromDefaults(d: ProviderDefaults, hasApiKey = false): Prov
  * 单独抽成函数是为了让"切换后不会残留上一个服务商的地址与模型名"
  * 这件事可以被单元测试直接断言（整改任务书 §14.1）。
  * 表里找不到目标提供商时返回 null，由界面提示而不是猜一个默认值。
+ *
+ * `keyStatus` 是**密钥状态表**，不是一个布尔值：`hasApiKey` 必须取自
+ * **目标 provider** 那一格。此前签名是 `hasApiKey = false`，调用方顺手把
+ * "当前 provider"的状态传了进来，于是两个 provider 的密钥状态串台了。
+ * 状态表里没有这一格时按**未配置**处理——同样不猜。
  */
 export function configForProvider(
   list: ProviderDefaults[],
   p: AiProvider,
-  hasApiKey = false,
+  keyStatus: ProviderKeyStatus,
 ): ProviderConfig | null {
   const d = findDefaults(list, p)
-  return d ? configFromDefaults(d, hasApiKey) : null
+  return d ? configFromDefaults(d, keyStatus[p] === true) : null
 }
 
 /** 动作的显示文案 */

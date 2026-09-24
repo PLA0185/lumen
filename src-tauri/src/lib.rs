@@ -367,6 +367,7 @@ pub fn run() {
             window_mgr::app_quit,
             // ---- AI 提供商适配（§6）----
             ai::ai_provider_defaults,
+            ai::ai_provider_key_status,
             ai::ai_get_config,
             ai::ai_set_config,
             ai::ai_test_connection,
