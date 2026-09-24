@@ -222,6 +222,10 @@ def main() -> int:
               and any(not row.get("deletedAt") for row in rows(target, delete_title)))
         set_search(target, delete_title)
         real_click_visible(target, 'button[aria-label="将「%s」移入回收站"]' % delete_title)
+        if not target.wait_for("!!document.querySelector('#scope-title')", timeout=5):
+            real_click_visible(target, 'button[aria-label="将「%s」移入回收站"]' % delete_title)
+        check("再次删除时范围选择器打开", target.wait_for(
+            "!!document.querySelector('input[name=scope][value=this_and_future]')"))
         target.eval("document.querySelector('input[name=scope][value=this_and_future]').click()")
         real_click_visible(target, '[aria-labelledby="scope-title"] .modal__actions button:last-child')
         check("删除此次及以后通过 UI 保存", target.wait_for("!document.querySelector('#scope-title')"))

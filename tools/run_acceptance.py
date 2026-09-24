@@ -64,7 +64,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--exe", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
-    parser.add_argument("--suite", choices=("remediation3", "architecture", "scale", "recurrence"), default="remediation3")
+    parser.add_argument("--suite", choices=("remediation3", "architecture", "scale", "recurrence", "recurrence_restart"), default="remediation3")
     args = parser.parse_args()
     exe = args.exe.resolve(strict=True)
     if not exe.is_file():
@@ -98,6 +98,8 @@ def main() -> int:
                 "--expect-data-dir",
                 str(profile),
             ]
+            if args.suite == "recurrence_restart":
+                command.extend(["--phase", "seed"])
             result = subprocess.run(command, env=env, capture_output=True, text=True,
                                     encoding="utf-8", errors="replace", check=False)
             log.write("\n===== acceptance stdout =====\n" + result.stdout)
@@ -114,6 +116,38 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 app.kill()
                 app.wait(timeout=10)
+    if result_code == 0 and args.suite == "recurrence_restart":
+        # A second process opens the same disposable profile. This is an actual
+        # app restart; both stages re-check the app's resolved data directory.
+        port = free_port()
+        env["LUMEN_CDP_PORT"] = str(port)
+        env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = f"--remote-debugging-port={port}"
+        print(f"Restarting isolated profile on CDP port {port}", flush=True)
+        with args.log.open("a", encoding="utf-8") as log:
+            log.write(f"\nrestart_port={port}\n")
+            log.flush()
+            app = subprocess.Popen([str(exe)], env=env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                wait_for_cdp(port, app, time.monotonic() + 60)
+                command = [sys.executable, str(Path(__file__).with_name(
+                    "verify_recurrence_restart.py")), "--expect-data-dir", str(profile),
+                    "--phase", "after"]
+                result = subprocess.run(command, env=env, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", check=False)
+                log.write("\n===== restart acceptance stdout =====\n" + result.stdout)
+                log.write("\n===== restart acceptance stderr =====\n" + result.stderr)
+                log.flush()
+                print(result.stdout, end="", flush=True)
+                if result.stderr:
+                    print(result.stderr, file=sys.stderr, end="", flush=True)
+                result_code = result.returncode
+            finally:
+                app.terminate()
+                try:
+                    app.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    app.kill()
+                    app.wait(timeout=10)
     if result_code == 0:
         try:
             remove_successful_profile(profile)
