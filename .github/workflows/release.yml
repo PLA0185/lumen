@@ -8,9 +8,8 @@ name: Release
 # `latest.json`）。这个工作流是给"以后想交给 CI"准备的，因此它必须做到两件事：
 #
 # 1. **没配签名密钥时不报红**。第一次打 tag 时，因为仓库里没有
-#    `TAURI_SIGNING_PRIVATE_KEY`，构建会直接失败——用户看到的是四条红色
-#    失败通知，却分不清"没配置"还是"代码坏了"。现在先检测再决定是否继续，
-#    跳过时只在日志里留一条 notice。签名无法关闭（官方原文
+#    `TAURI_SIGNING_PRIVATE_KEY`，构建会直接失败。现在先执行完整质量门禁，
+#    再检查密钥决定是否构建；跳过构建时只在日志里留一条 notice。签名无法关闭（官方原文
 #    "This cannot be disabled."），所以没有密钥就没有"能用的更新包"，
 #    跳过比产出一个装不上的包更诚实。
 # 2. **与手动发布的 Release 共存**：用 `tagName` 定位已存在的 Release 并更新
@@ -54,50 +53,29 @@ jobs:
       - name: 校验 tag 与三处应用版本
         run: node tools/check-version.mjs --tag=${{ github.ref_name }}
 
-      # ---------------- 前置检查：没有签名密钥就优雅跳过 ----------------
-      - name: 检查签名密钥是否已配置
-        id: guard
-        shell: bash
-        env:
-          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=跳过自动构建::仓库未配置 TAURI_SIGNING_PRIVATE_KEY，本次不构建。"
-            echo "本项目默认手动发布 Release；如需交给 CI，请先配置签名密钥（见本文件顶部说明）。"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: 安装 pnpm
-        if: steps.guard.outputs.ok == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 12
 
       - name: 安装 Node
-        if: steps.guard.outputs.ok == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
       - name: 安装 Rust
-        if: steps.guard.outputs.ok == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: 缓存 Rust 构建产物
-        if: steps.guard.outputs.ok == 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
 
       - name: 安装前端依赖
-        if: steps.guard.outputs.ok == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: 发版前完整门禁
-        if: steps.guard.outputs.ok == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -110,6 +88,20 @@ jobs:
           cargo check --all-targets
           cargo test --lib
           cargo clippy --all-targets --all-features -- -D warnings
+
+      # 签名仅决定能否发布，不能跳过上面的代码质量门禁。
+      - name: 检查签名密钥是否已配置
+        id: guard
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=跳过自动构建::仓库未配置 TAURI_SIGNING_PRIVATE_KEY，本次不构建。"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: 构建并发布
         if: steps.guard.outputs.ok == 'true'
