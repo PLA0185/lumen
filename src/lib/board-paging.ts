@@ -6,7 +6,8 @@
  * 看板自己分页（每页 `PAGE_SIZE` + 「加载更多」），而 OFFSET 分页在数据集
  * 变化时天然不稳定：已经加载了 1..200，另一个窗口删掉第 50 条，
  * 再用 `offset: 200` 取下一页就会**漏掉**原来的第 201 条。
- * 所以别的窗口一改数据，看板必须作废在飞请求并从第一页重取——
+ * 所以数据一改（别的窗口广播，或本窗口自己的 `includeSelf` 事件），
+ * 看板必须作废在飞请求并从第一页重取——
  * 这与 `App.tsx` 里主列表走 `handleExternalChange` 是同一套做法。
  *
  * 但看板的这套逻辑原本写在组件里，而本仓库没有 jsdom / testing-library
@@ -16,21 +17,23 @@
  *
  * ## 两条时间线（分工不重叠）
  *
- * - `generation`（查询代数）：**唯一的代际作废依据**。只有"别的窗口改了数据"
- *   与"组件卸载"会让它 +1。`reload` / `loadMore` 在开始时**记下**当时的代数，
+ * - `generation`（查询代数）：**唯一的代际作废依据**。三种情况各递增一次——
+ *   `reload`（含拖拽改状态后的普通重载）、`handleExternalChange` 里"清空 + 重载"
+ *   的那次 `reload`、以及组件卸载 `dispose`。每次加载在开始时**记下**当时的代数，
  *   每次 `await` 回来（尤其是最后一次）都拿它比对，对不上就整份丢弃——
  *   任务书要求的是"记下并比对"，不是"每次加载都换代"。
+ *   注意 `reload` 与 `handleExternalChange` 的递增**不叠加**：后者不自己 +1，
+ *   只负责清空，换代交给它调用的 `reload` 完成唯一一次——
+ *   若两边都加，`reload` 自己也会被自己作的废判成过期，结果永远写不回去。
  * - `loadToken`（加载序号）：**只管 `loadingMore` 的归属**，即"这一次加载还是不是
  *   最新的一次加载"。没有它，一个过期的 `loadMore` 回来时会把新一代正在飞的
  *   「正在加载…」擦掉，按钮重新可点，就能对同一段 offset 重复发请求。
  *
  * 两道检查都不重叠、各有一个测试盯着（见 `board-paging.test.ts`）。
  *
- * ## 已知边界（如实记录）
- *
- * `reload` 不会作废在飞的 `loadMore`：拖拽改状态后的重载若与一次在飞的
- * 「加载更多」重叠，那一页仍会被去重后追加进来，可能带上一条过时的任务。
- * 下一次重载即修正。彻底解决要换 keyset 分页（与主列表同一条待办）。
+ * `reload` 递增代数也让**普通重载**（拖拽改状态后的 `reload`）能作废在飞的
+ * `loadMore`：否则旧第二页回来时会被去重后追加进重载结果，界面上多出一条
+ * 过时任务（第三轮收口任务书 §14 / §15）。
  */
 
 import type { Task, TaskQuery } from './types'
@@ -117,11 +120,11 @@ export interface BoardPaging {
   getState: () => BoardPageState
   /** 订阅快照变化，返回取消订阅的函数 */
   subscribe: (listener: () => void) => () => void
-  /** 重新加载第一页，并重新 count */
+  /** 重新加载第一页，并重新 count（同时作废在飞的 loadMore） */
   reload: () => Promise<void>
   /** 追加下一页（先刷新真实总数再决定要不要加载） */
   loadMore: () => Promise<void>
-  /** 别的窗口改了任务数据：作废在飞请求，从第一页重取 */
+  /** 任务数据变了（别的窗口广播，或同窗口的 includeSelf 事件）：作废在飞请求，从第一页重取 */
   handleExternalChange: () => Promise<void>
   /** 本地乐观更新（拖拽改状态），不改变代数 */
   applyLocalUpdate: (updater: (tasks: Task[]) => Task[]) => void
@@ -133,7 +136,7 @@ export interface BoardPaging {
 
 /** 建一个看板分页状态机。每个看板实例一个，卸载时调用 `dispose`。 */
 export function createBoardPaging(deps: BoardPagingDeps): BoardPaging {
-  /** 查询代数：外部变化 / 卸载时 +1，让所有在飞请求作废 */
+  /** 查询代数：reload（含外部变化触发的那次）与卸载时 +1，让所有在飞请求作废 */
   let generation = 0
   /** 加载序号：每次 loadMore 开始时 +1，用来识别"我是不是最新那次翻页" */
   let loadToken = 0
@@ -167,8 +170,11 @@ export function createBoardPaging(deps: BoardPagingDeps): BoardPaging {
   }
 
   async function reload(): Promise<void> {
-    // **记下**这次请求属于哪一代查询（任务书 §12.1）：
-    // 只有外部变化与卸载会让代数 +1，所以代数变了就说明这份结果已经过期。
+    // **换代，再记下这一代**（任务书 §14 / §15）：
+    // 递增一次就让所有在飞的请求（尤其是 `loadMore`）永久作废——
+    // 拖拽改状态后的普通重载同样要作废在飞的翻页，否则旧的那一页回来时
+    // 会被去重后 append 进重载结果，界面上就多出一条过时任务。
+    generation += 1
     const gen = generation
 
     set({ loading: true, loadingMore: false, error: null })
@@ -180,8 +186,8 @@ export function createBoardPaging(deps: BoardPagingDeps): BoardPaging {
         deps.countTasks(query),
       ])
 
-      // **最后一次 await 之后再检查一次代数**：期间别的窗口改过数据（或组件已卸载），
-      // 这份结果就属于上一代，必须整份丢弃，否则旧数据会覆盖新结果。
+      // **最后一次 await 之后再检查一次代数**：期间数据被别处改过、又一次重载发生
+      // （或组件已卸载），这份结果就属于上一代，必须整份丢弃，否则旧数据会覆盖新结果。
       if (generation !== gen) return
 
       set({
@@ -267,17 +273,19 @@ export function createBoardPaging(deps: BoardPagingDeps): BoardPaging {
   }
 
   /**
-   * 别的窗口改动了任务数据时调用（第三轮任务书 §5.4 的临时方案，看板侧补齐）。
+   * 任务数据变了时调用（第三轮任务书 §5.4 / 收口 §11、§16 的看板侧）。
+   *
+   * 别的窗口主动广播时会走到这里；**本窗口自己**发的广播则由 `BoardView`
+   * 用 `bus.onTasksChanged(..., { includeSelf: true })` 送进来——看板有自己
+   * 独立的分页状态，主窗口在看板上用 QuickAdd 建的任务不会经过主列表的刷新。
    *
    * 彻底解决要换 keyset 分页；本轮按任务书允许的方式处理：
    *
-   * 1. `generation + 1` —— 让所有在飞的请求（尤其是 `loadMore`）作废，
-   *    它们的结果回来时会被丢弃，不会追加到新数据上；
-   * 2. 清空已加载的页（offset 随之归零）并重置计数；
-   * 3. `reload()` —— 从第一页重新取，并重新 count。
+   * 1. 清空已加载的页（offset 随之归零）并重置计数；
+   * 2. `reload()` —— 它递增一代（作废所有在飞请求，尤其是 `loadMore`）
+   *    并从第一页重新取、重新 count。换代**只发生这一次**，这里不额外 +1。
    */
   async function handleExternalChange(): Promise<void> {
-    generation += 1
     set({ tasks: [], total: 0, hasMore: false, loadingMore: false })
     await reload()
   }

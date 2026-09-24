@@ -11,10 +11,20 @@
  * - 别的窗口删了任务，看板还用旧 offset 翻页 → **漏项**；
  * - 在飞的旧请求回来后写回界面 → 旧数据覆盖新结果、或重复追加；
  * - 取到空页之后仍然认为 `hasMore` → 按钮永远在、点了没反应。
+ *
+ * 第三轮收口（任务书 §11 / §14 / §15 / §16）又补了两类：
+ *
+ * - **普通 `reload` 也要作废在飞的 `loadMore`**（拖拽改状态后重载，
+ *   旧第二页回来时不得 append）；
+ * - **同窗口事件**：主窗口在看板上用 QuickAdd 新建任务时，事件 `from` 与监听
+ *   窗口标签都是 `main`，`bus.onTasksChanged` 默认会把它滤掉 → 看板不刷新。
+ *   这条链（`bus` 的过滤分支 → `handleExternalChange` → 回到第一页）在这里
+ *   真实跑一遍，`bus.ts` 依赖的 Tauri 全局与事件模块由用例替身提供。
  */
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBoardPaging, nextBoardState } from './board-paging'
+import type { TasksChangedPayload } from './bus'
 import type { Task, TaskQuery } from './types'
 
 /** 用例里的页大小取小值，断言才读得懂（组件里传的是 `PAGE_SIZE`） */
@@ -290,5 +300,180 @@ describe('看板分页与跨窗口变化', () => {
     const s = paging.getState()
     expect(s.tasks).toHaveLength(TEST_PAGE_SIZE) // 没有被追加
     expect(s.tasks.map((t) => t.id)).toEqual(['t-1', 't-2', 't-3', 't-4', 't-5'])
+  })
+})
+
+describe('普通 reload 与在飞的翻页', () => {
+  it('普通 reload 会作废在飞的 loadMore：旧第二页不 append', async () => {
+    const { paging, backend, listTasks } = makeHarness(makeTasks(1, 12))
+    await paging.reload()
+    expect(paging.getState().tasks).toHaveLength(TEST_PAGE_SIZE)
+
+    // 用户点了「加载更多」，这一页挂在半空中
+    const slowPage = deferred<Task[]>()
+    listTasks.mockImplementationOnce(() => slowPage.promise)
+    const pending = paging.loadMore()
+    await vi.waitFor(() => expect(listTasks).toHaveBeenCalledTimes(2))
+    expect(paging.getState().loadingMore).toBe(true)
+
+    // 期间发生了一次**普通**重载：BoardView 里拖拽改状态成功后走的就是这条路径
+    // （不是 handleExternalChange）。它同样必须作废在飞的翻页——
+    // 否则旧第二页回来时会被去重后追加进新结果，界面上就多出一条过时任务。
+    backend.rows = makeTasks(100, 104)
+    await paging.reload()
+    expect(paging.getState().tasks.map((t) => t.id)).toEqual([
+      't-100',
+      't-101',
+      't-102',
+      't-103',
+      't-104',
+    ])
+    const callsAfterReload = listTasks.mock.calls.length
+
+    // 旧第二页现在才回来：整份丢弃
+    slowPage.resolve(makeTasks(6, 10))
+    await pending
+
+    const s = paging.getState()
+    expect(s.tasks.map((t) => t.id)).toEqual(['t-100', 't-101', 't-102', 't-103', 't-104'])
+    expect(s.total).toBe(5)
+    expect(s.loadingMore).toBe(false) // 不会卡在「正在加载…」
+    expect(listTasks.mock.calls.length).toBe(callsAfterReload) // 也不会补发一次请求
+  })
+})
+
+/**
+ * bus + 看板的联动（任务书 §11 / §16）。
+ *
+ * `bus.ts` 在 vitest 的 node 环境里本来跑不起来（没有 `window`，
+ * `@tauri-apps/api/event` 也只在 WebView 里可用），所以这里用 `vi.stubGlobal`
+ * 补一个最小的 Tauri 窗口环境、用 `vi.doMock` 把事件模块换成内存实现：
+ * 跑的是 `bus.ts` **真实的**过滤分支，而不是把它的逻辑在测试里重抄一遍。
+ *
+ * 替身的 `emit` 会把事件也送给自己窗口的监听者——真实的 Tauri `emit` 就是这个
+ * 行为（见 `bus.ts` 顶部注释），也正是"需要自我过滤 / 需要 includeSelf"的由来。
+ */
+describe('同窗口事件与 includeSelf（bus + 看板）', () => {
+  let handlers: ((e: { payload: TasksChangedPayload }) => void)[] = []
+  let emitted: TasksChangedPayload[] = []
+
+  /** 从某个窗口发一条事件（送给当前窗口的全部监听者） */
+  function emitFrom(from: string): void {
+    const payload: TasksChangedPayload = { from }
+    for (const h of [...handlers]) h({ payload })
+  }
+
+  /** 等 bus 注册好监听：它内部是异步 import，注册发生在微任务之后 */
+  async function waitForListener(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(handlers).toHaveLength(1)
+    })
+  }
+
+  beforeEach(() => {
+    handlers = []
+    emitted = []
+    // bus.ts 用 `__TAURI_INTERNALS__` 判断"在不在 Tauri 里"，并从里面取窗口标签
+    // 判断"这条事件是不是自己发的"。当前窗口固定为主窗口 main。
+    vi.stubGlobal('window', {
+      __TAURI_INTERNALS__: { metadata: { currentWebview: { label: 'main' } } },
+    })
+    vi.doMock('@tauri-apps/api/event', () => ({
+      emit: async (_event: string, payload: TasksChangedPayload) => {
+        emitted.push(payload)
+        emitFrom(payload.from) // 真实 emit 也会送回发送者自己的窗口
+      },
+      listen: async (
+        _event: string,
+        handler: (e: { payload: TasksChangedPayload }) => void,
+      ) => {
+        handlers.push(handler)
+        return () => {
+          handlers = handlers.filter((h) => h !== handler)
+        }
+      },
+    }))
+  })
+
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/api/event')
+    vi.unstubAllGlobals()
+  })
+
+  it('默认忽略本窗口自己发出的事件，别的窗口的事件仍然回调', async () => {
+    const bus = await import('./bus')
+    const cb = vi.fn()
+    const off = bus.onTasksChanged(cb)
+    await waitForListener()
+
+    // 载荷里的 from 就是过滤依据：先确认它确实带的是本窗口标签
+    await bus.notifyTasksChanged()
+    expect(emitted).toEqual([{ from: 'main' }])
+    expect(cb).not.toHaveBeenCalled() // ← 自己发的事件被忽略（主列表依赖这条）
+
+    emitFrom('floating')
+    expect(cb).toHaveBeenCalledTimes(1)
+
+    off()
+    emitFrom('floating')
+    expect(cb).toHaveBeenCalledTimes(1) // 退订之后不再回调
+  })
+
+  it('includeSelf=true 时，本窗口自己发出的事件也会回调', async () => {
+    const bus = await import('./bus')
+    const cb = vi.fn()
+    bus.onTasksChanged(cb, { includeSelf: true })
+    await waitForListener()
+
+    await bus.notifyTasksChanged() // 主窗口自己发的
+    expect(cb).toHaveBeenCalledTimes(1)
+
+    emitFrom('quick-add') // 别的窗口照旧回调
+    expect(cb).toHaveBeenCalledTimes(2)
+  })
+
+  it('同窗口事件（includeSelf）会让看板刷新：作废在飞翻页并回到第一页', async () => {
+    const bus = await import('./bus')
+    const { paging, backend } = makeHarness(makeTasks(1, 12))
+    await paging.reload()
+    await paging.loadMore()
+    expect(paging.getState().tasks).toHaveLength(10)
+    expect(paging.getState().total).toBe(12)
+
+    // 这就是 BoardView 里接监听的那一行
+    const off = bus.onTasksChanged(() => void paging.handleExternalChange(), {
+      includeSelf: true,
+    })
+    await waitForListener()
+
+    // 主窗口自己在看板上用 QuickAdd 新建了一条：数据变了，事件由 main 发出
+    backend.rows = [...backend.rows, ...makeTasks(13, 13)]
+    await bus.notifyTasksChanged()
+
+    await vi.waitFor(() => expect(paging.getState().total).toBe(13))
+    const s = paging.getState()
+    expect(s.tasks.map((t) => t.id)).toEqual(['t-1', 't-2', 't-3', 't-4', 't-5']) // 回到第一页
+    expect(s.loadingMore).toBe(false)
+    off()
+  })
+
+  it('默认监听下同窗口事件不会刷新看板（主列表要的正是这个行为）', async () => {
+    const bus = await import('./bus')
+    const { paging, backend, listTasks } = makeHarness(makeTasks(1, 12))
+    await paging.reload()
+    await paging.loadMore()
+    expect(paging.getState().tasks).toHaveLength(10)
+
+    bus.onTasksChanged(() => void paging.handleExternalChange()) // 不传 includeSelf
+    await waitForListener()
+    const calls = listTasks.mock.calls.length
+
+    backend.rows = [...backend.rows, ...makeTasks(13, 13)]
+    await bus.notifyTasksChanged()
+    await new Promise((resolve) => setTimeout(resolve, 0)) // 放行可能存在的异步回调
+
+    expect(listTasks.mock.calls.length).toBe(calls) // 没有重新查询
+    expect(paging.getState().tasks).toHaveLength(10) // 也没有被清空
+    expect(paging.getState().total).toBe(12)
   })
 })

@@ -14,12 +14,18 @@
  * 直接对应数据库中的五种状态中的四种（归档不在看板中显示，
  * 它属于"从视野中移除"而不是一个工作阶段）。
  *
- * ## 跨窗口同步（第三轮整改任务书 §12 / §13）
+ * ## 跨窗口同步（第三轮整改任务书 §12 / §13，收口 §11 / §16）
  *
  * 看板自己分页（每页 `PAGE_SIZE` + 「加载更多」），而 OFFSET 分页在数据集变化时
  * 天然不稳定：已经加载了 1..200，另一个窗口删掉第 50 条，再用 OFFSET 200 取下一页
- * 就会**漏掉**原来的第 201 条。所以别的窗口一改数据，看板必须作废在飞请求、
+ * 就会**漏掉**原来的第 201 条。所以数据一改，看板必须作废在飞请求、
  * 从第一页重取——这与 `App.tsx` 里主列表接 `bus.onTasksChanged` 是同一套做法。
+ *
+ * 区别只有一处：**看板要连自己窗口发的事件也收**（`includeSelf: true`）。
+ * 主列表的 `handleExternalChange` 在写操作后自己就会刷新，所以 `bus` 默认忽略
+ * 本窗口的事件是对的；但看板有**自己独立的分页状态**——主窗口在看板上用
+ * QuickAdd 新建任务时，事件 `from` 与监听窗口标签都是 `main`，
+ * 默认过滤会把这条事件吞掉，看板就停在旧数据上（看不到刚建的任务）。
  *
  * "分页 + 代际作废"的逻辑全部放在 `../lib/board-paging` 的无 DOM 状态机里：
  * 本仓库没有 jsdom / testing-library，逻辑留在组件里就等于测不到（§13）。
@@ -92,9 +98,13 @@ export function BoardView({ onEdit }: BoardViewProps) {
   useEffect(() => {
     void paging.reload()
 
-    // 跨窗口同步：别的窗口删/加了任务，就作废在飞的请求、从第一页重取。
-    // 与 App.tsx 里主列表的用法一致，只是看板走自己的分页状态机。
-    const off = bus.onTasksChanged(() => void paging.handleExternalChange())
+    // 任务数据变了就作废在飞的请求、从第一页重取。
+    // `includeSelf: true` 是看板与主列表的唯一区别：主窗口自己发的变更
+    // （例如在看板上用 QuickAdd 新建任务）也必须让看板刷新——
+    // 看板的分页状态独立于主列表，收不到这条事件就会一直显示旧数据。
+    const off = bus.onTasksChanged(() => void paging.handleExternalChange(), {
+      includeSelf: true,
+    })
 
     return () => {
       off()
@@ -131,6 +141,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
 
     try {
       await ipc.updateTask(id, { status })
+      // 重载前会换代：在飞的「加载更多」随之作废，旧页不会追加进重载结果
       await paging.reload()
     } catch (e) {
       paging.applyLocalUpdate(() => prev) // 回滚

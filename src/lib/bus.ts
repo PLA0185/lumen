@@ -14,6 +14,10 @@
  * 刷新，否则会来回刷）。由前端在写操作成功后发一条就够，
  * 不需要在每个 Rust 命令里都加一行 AppHandle 事件。
  *
+ * 忽略自己这条规则有例外：**自己窗口内就有独立状态**的消费者必须收到
+ * 同窗口的变更，否则会停在旧数据上（看板就是这种情况，见 `onTasksChanged`）。
+ * 所以这条规则做成参数而不是写死，默认值保持"忽略自己"。
+ *
  * ## 事件不可用时
  *
  * 在浏览器里预览（没有 `__TAURI_INTERNALS__`）时静默降级：
@@ -64,11 +68,23 @@ export async function notifyTasksChanged(): Promise<void> {
 }
 
 /**
- * 监听"任务数据变了"，回调只会在**别的窗口**发起时触发。
+ * 监听"任务数据变了"。
+ *
+ * 默认只回调**别的窗口**发起的变更（`includeSelf` 缺省为 `false`）：
+ * 发起方在写操作成功后自己就会刷新，再收一次等于重复请求，
+ * 在"写 → 刷新 → 又写"的路径上还可能绕成事件环。
+ *
+ * `includeSelf: true` 是给**自己窗口内还有一份独立状态**的消费者用的：
+ * 看板有自己独立的分页状态（`BoardView` 用的 `board-paging` 状态机），
+ * 主窗口在看板上用 QuickAdd 新建任务时，事件 `from` 与监听窗口标签都是 `main`，
+ * 默认过滤会把这条事件吞掉 → 看板一直停在旧数据上（漏掉刚建的任务）。
+ * 传 `includeSelf: true` 就收得到同窗口的变更，结果由那条独立状态自己去重取。
+ * 主列表（`store.handleExternalChange`）继续用默认值，行为完全不变。
  *
  * 返回取消监听的函数。
  */
-export function onTasksChanged(cb: () => void): () => void {
+export function onTasksChanged(cb: () => void, opts?: { includeSelf?: boolean }): () => void {
+  const includeSelf = opts?.includeSelf ?? false
   if (!inTauri()) return () => {}
   let unlisten: (() => void) | undefined
   let disposed = false
@@ -76,7 +92,8 @@ export function onTasksChanged(cb: () => void): () => void {
     try {
       const { listen } = await import('@tauri-apps/api/event')
       const off = await listen<TasksChangedPayload>(EVENT, (e) => {
-        if (e.payload?.from === windowLabel()) return
+        // 载荷缺失 from 时无法判断来源，按"不是自己"处理：宁可多刷一次，不漏刷
+        if (!includeSelf && e.payload?.from === windowLabel()) return
         cb()
       })
       if (disposed) off()
