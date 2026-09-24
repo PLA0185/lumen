@@ -32,11 +32,13 @@ class FakeIpcError extends Error {
 
 const listTasks = vi.fn()
 const countTasks = vi.fn()
+const purgeAllDeleted = vi.fn()
 
 vi.mock('./ipc', () => ({
   IpcError: FakeIpcError,
   listTasks: (...args: unknown[]) => listTasks(...args),
   countTasks: (...args: unknown[]) => countTasks(...args),
+  purgeAllDeleted: (...args: unknown[]) => purgeAllDeleted(...args),
 }))
 
 const { useApp, PAGE_SIZE, SEARCH_DEBOUNCE_MS } = await import('./store')
@@ -147,7 +149,7 @@ describe('列表分页', () => {
     expect(listTasks).toHaveBeenCalledTimes(1) // 只有 reload 那一次
   })
 
-  it('空页会让分页停下来，不会无限请求同一页', async () => {
+  it('空页会让分页停下来（不会自己无限请求同一页）', async () => {
     listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
     countTasks.mockResolvedValue({ total: 5000 })
     await useApp.getState().reload()
@@ -157,9 +159,53 @@ describe('列表分页', () => {
     await useApp.getState().loadMore()
 
     expect(useApp.getState().hasMore).toBe(false)
-    listTasks.mockResolvedValueOnce([])
+  })
+
+  it('总数在两次请求之间变大时，加载更多仍然可用（不会变成死按钮）', async () => {
+    listTasks.mockResolvedValueOnce(makeTasks(1, 100))
+    countTasks.mockResolvedValueOnce({ total: 100 })
+    await useApp.getState().reload()
+    expect(useApp.getState().hasMore).toBe(false)
+
+    // 别处新增了 50 条：下一次 count 返回 150
+    countTasks.mockResolvedValueOnce({ total: 150 })
+    listTasks.mockResolvedValueOnce(makeTasks(101, 150))
     await useApp.getState().loadMore()
-    expect(listTasks).toHaveBeenCalledTimes(2) // 停下来了
+
+    const s = useApp.getState()
+    expect(s.tasks).toHaveLength(150)
+    expect(s.totalCount).toBe(150)
+    expect(s.hasMore).toBe(false)
+  })
+
+  it('总数变小（别处删了任务）时直接停下，不再发列表请求', async () => {
+    listTasks.mockResolvedValueOnce(makeTasks(1, 100))
+    countTasks.mockResolvedValueOnce({ total: 500 })
+    await useApp.getState().reload()
+    expect(useApp.getState().hasMore).toBe(true)
+
+    countTasks.mockResolvedValueOnce({ total: 100 })
+    await useApp.getState().loadMore()
+
+    expect(useApp.getState().hasMore).toBe(false)
+    expect(listTasks).toHaveBeenCalledTimes(1) // 只有 reload 那一次
+  })
+
+  it('清空回收站会把当前筛选条件一起传下去（确认范围 = 执行范围）', async () => {
+    purgeAllDeleted.mockResolvedValue({ purged: 5 })
+    listTasks.mockResolvedValue([])
+    countTasks.mockResolvedValue({ total: 0 })
+
+    useApp.setState({ view: 'trash', search: '报告' })
+    await useApp.getState().purgeAll()
+
+    expect(purgeAllDeleted).toHaveBeenCalledTimes(1)
+    // 条件必须与界面上算 totalCount 用的那套一致，否则会出现
+    // "弹窗说删 5 项、实际删掉整个回收站"
+    expect(purgeAllDeleted.mock.calls[0]?.[0]).toMatchObject({
+      deletedOnly: true,
+      search: '报告',
+    })
   })
 
   it('筛选条件变化时 offset 归零、列表被整体替换', async () => {
@@ -225,5 +271,93 @@ describe('搜索条件变化', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+/**
+ * 旧请求不能污染新视图（第三轮任务书 §4 / §10.3）。
+ *
+ * 用可手动 resolve 的 promise 复现"请求 A 先发、请求 B 后发，B 先回来、
+ * A 后回来"这个时序——这正是没有 queryGeneration 时会把旧数据写回界面的场景。
+ */
+describe('过期请求不得覆盖新条件的结果', () => {
+  /** 造一个可以手动决定何时完成的 promise */
+  function deferred<T>() {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((r) => {
+      resolve = r
+    })
+    return { promise, resolve }
+  }
+
+  it('旧 reload 比新 reload 更晚返回时，不能覆盖新结果', async () => {
+    const slow = deferred<Task[]>()
+    const slowCount = deferred<{ total: number }>()
+
+    // 第一次 reload：故意挂住
+    listTasks.mockReturnValueOnce(slow.promise)
+    countTasks.mockReturnValueOnce(slowCount.promise)
+    const first = useApp.getState().reload()
+
+    // 用户改条件 → 第二次 reload 立刻返回
+    useApp.setState({ search: 'B' })
+    useApp.setState({ queryGeneration: useApp.getState().queryGeneration + 1 })
+    listTasks.mockResolvedValueOnce(makeTasks(500, 520))
+    countTasks.mockResolvedValueOnce({ total: 21 })
+    await useApp.getState().reload()
+    expect(useApp.getState().tasks.map((t) => t.id)).toEqual(makeTasks(500, 520).map((t) => t.id))
+
+    // 现在让第一次（属于旧世代）返回
+    slow.resolve(makeTasks(1, PAGE_SIZE))
+    slowCount.resolve({ total: 1200 })
+    await first
+
+    const s = useApp.getState()
+    expect(s.tasks).toHaveLength(21) // 仍然是新条件的结果
+    expect(s.totalCount).toBe(21)
+  })
+
+  it('旧的 loadMore 结果不能追加进新条件的结果里', async () => {
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    await useApp.getState().reload()
+
+    // 让 loadMore 真的把"取下一页"的请求发出去，并挂在那里
+    const slowPage = deferred<Task[]>()
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    listTasks.mockReturnValueOnce(slowPage.promise)
+    const pending = useApp.getState().loadMore()
+    await vi.waitFor(() => expect(listTasks).toHaveBeenCalledTimes(2))
+
+    // 用户切了搜索条件，新结果已经就位
+    useApp.setState({ search: 'B', queryGeneration: useApp.getState().queryGeneration + 1 })
+    listTasks.mockResolvedValueOnce(makeTasks(500, 505))
+    countTasks.mockResolvedValueOnce({ total: 6 })
+    await useApp.getState().reload()
+    expect(useApp.getState().tasks).toHaveLength(6)
+
+    // 旧的那一页现在才回来：必须被丢弃，不能追加
+    slowPage.resolve(makeTasks(PAGE_SIZE + 1, PAGE_SIZE * 2))
+    await pending
+
+    const s = useApp.getState()
+    expect(s.tasks).toHaveLength(6)
+    expect(s.tasks.every((t) => Number(t.id.replace('t-', '')) >= 500)).toBe(true)
+  })
+
+  it('别的窗口改了数据时会作废在飞请求并从第一页重取', async () => {
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    await useApp.getState().reload()
+    const genBefore = useApp.getState().queryGeneration
+
+    listTasks.mockResolvedValueOnce(makeTasks(1, 5))
+    countTasks.mockResolvedValueOnce({ total: 5 })
+    await useApp.getState().handleExternalChange()
+
+    const s = useApp.getState()
+    expect(s.queryGeneration).toBe(genBefore + 1) // 在飞的请求已作废
+    expect(s.tasks).toHaveLength(5) // 回到第一页的新结果
+    expect(s.nextOffset).toBe(5)
   })
 })

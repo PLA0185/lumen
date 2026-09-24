@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useApp, PAGE_SIZE } from './lib/store'
+import { useApp, PAGE_SIZE, buildQuery } from './lib/store'
 import { IpcError } from './lib/ipc'
 import * as ipc from './lib/ipc'
 import { Sidebar, VIEW_META } from './components/Sidebar'
@@ -20,9 +20,9 @@ import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
-import { PrintReport } from './components/PrintReport'
 import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
+import { buildPrintDocument } from './lib/report-export'
 import * as bus from './lib/bus'
 import * as win from './lib/window-ipc'
 import type { Task, ViewId } from './lib/types'
@@ -84,7 +84,6 @@ export default function App() {
     totalCount,
     hasMore,
     loadingMore,
-    reportRowsAll,
     dismissToast,
     pushToast,
     pushReminder,
@@ -95,13 +94,11 @@ export default function App() {
   const [editing, setEditing] = useState<Task | null>(null)
   /** 新建重复任务对话框 */
   const [showRecurring, setShowRecurring] = useState(false)
-  /** PDF 导出期间的打印报告数据（非 null 时界面切到打印视图） */
-  const [printData, setPrintData] = useState<{
-    rows: ipc.TaskReportRow[]
-    scopeTitle: string
-    filterNote?: string
-  } | null>(null)
   const [exporting, setExporting] = useState(false)
+  /** 导出进度：只保存计数，**不保存行数据**（第三轮任务书 §7） */
+  const [exportProgress, setExportProgress] = useState<{ loaded: number; total: number } | null>(
+    null,
+  )
 
   // --------------------- 悬浮窗开关（顶栏一键） ---------------------
   /**
@@ -158,17 +155,15 @@ export default function App() {
     void init()
   }, [init])
 
-  /** 打印视图开关：交给 CSS 决定"只显示报告" */
+  // 打印视图开关现在由 `doExportPdf` 在导出流程里直接控制
+  // （`document.body.dataset.print`）——报告 DOM 由 buildPrintDocument 动态挂载，
+  // 不再有"printData 非空就切打印视图"这一步。
+  // 这里只保留一个兜底：组件卸载时确保不留下打印状态。
   useEffect(() => {
-    if (printData) {
-      document.body.dataset.print = 'on'
-    } else {
-      delete document.body.dataset.print
-    }
     return () => {
       delete document.body.dataset.print
     }
-  }, [printData])
+  }, [])
 
   // --------------------- 后端事件（托盘菜单等） ---------------------
   useEffect(() => {
@@ -220,10 +215,13 @@ export default function App() {
   // --------------------- 跨窗口同步（悬浮窗改了要立刻反映到这里） ---------------------
   useEffect(() => {
     return bus.onTasksChanged(() => {
-      void reload()
+      // 用 handleExternalChange 而不是裸 reload：它会先把 queryGeneration +1，
+      // 让正在飞的 loadMore 结果作废，再从第一页重取。
+      // 否则 OFFSET 分页在"别处刚删了一条"之后会漏掉一条（第三轮任务书 §5.4）。
+      void useApp.getState().handleExternalChange()
       void useApp.getState().refreshOverview()
     })
-  }, [reload])
+  }, [])
 
   // --------------------- 提醒触发 → 可点开任务 ---------------------
   /**
@@ -356,6 +354,8 @@ export default function App() {
    */
   const doExportPdf = useCallback(async () => {
     setExporting(true)
+    setExportProgress(null)
+    let handle: Awaited<ReturnType<typeof buildPrintDocument>> | null = null
     try {
       const { save } = await import('@tauri-apps/plugin-dialog')
       const stamp = new Date().toISOString().slice(0, 10)
@@ -366,39 +366,45 @@ export default function App() {
       })
       if (typeof target !== 'string') return
 
-      // 分页取全量（后端按 500 条一页读到取完）
-      const page = await reportRowsAll()
-      // 任务多时这一步会有可感知的耗时，先给用户一个"正在准备"的反馈
-      if (page.rows.length === 0) {
+      // 分页流式构建打印文档：数据不进 React state，一行渲染完就丢
+      // （第三轮任务书 §7：不再把最多 10 万个完整 Task 塞进 WebView 内存）
+      handle = await buildPrintDocument({
+        query: buildQuery(useApp.getState()),
+        scopeTitle: meta.title,
+        filterNote: search.trim() ? `搜索「${search.trim()}」` : undefined,
+        onProgress: (p) => setExportProgress(p),
+      })
+
+      if (handle.rows === 0) {
         pushToast('info', '当前范围内没有任务，未生成 PDF')
         return
       }
-      setPrintData({
-        rows: page.rows,
-        scopeTitle: meta.title,
-        filterNote: search.trim() ? `搜索「${search.trim()}」` : undefined,
-      })
 
+      // 打印期间只让报告可见（主界面由 body[data-print] 隐藏）
+      document.body.dataset.print = 'on'
       await new Promise<void>((r) =>
         requestAnimationFrame(() => requestAnimationFrame(() => r())),
       )
       await new Promise<void>((r) => window.setTimeout(r, 180))
 
       await ipc.exportPdf(target)
-      // 显示**真实**导出条数（§7.5）；被安全上限截断时必须如实说明
+      // 显示**真实**导出条数（§7.5）；被上限截断或取消时必须如实说明
       pushToast(
-        page.truncated ? 'info' : 'success',
-        page.truncated
-          ? `已导出 ${page.total} 条到 ${target}；任务数量超过单次导出上限，剩余部分未包含`
-          : `已导出 ${page.total} 条任务到 ${target}`,
+        handle.truncated ? 'info' : 'success',
+        handle.truncated
+          ? `已导出 ${handle.rows} 条到 ${target}；${handle.truncatedNote ?? '剩余部分未包含'}`
+          : `已导出 ${handle.rows} 条任务到 ${target}`,
       )
     } catch (e) {
       pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     } finally {
-      setPrintData(null)
+      // 无论成败都要恢复界面：留着 data-print 会让主界面一直不可见
+      delete document.body.dataset.print
+      handle?.dispose()
+      setExportProgress(null)
       setExporting(false)
     }
-  }, [meta.title, pushToast, reportRowsAll, search])
+  }, [meta.title, pushToast, search])
 
   return (
     <>
@@ -497,7 +503,15 @@ export default function App() {
               onClick={() => void doExportPdf()}
               title="把当前列表导出为 PDF（含项目、标签、时间等字段）"
             >
-              {exporting ? '导出中…' : <><Icon name="download" size={15} /> PDF</>}
+              {exporting ? (
+                exportProgress && exportProgress.total > 0
+                  ? `准备中 ${exportProgress.loaded}/${exportProgress.total}`
+                  : '导出中…'
+              ) : (
+                <>
+                  <Icon name="download" size={15} /> PDF
+                </>
+              )}
             </button>
 
             <button
@@ -538,21 +552,39 @@ export default function App() {
                 type="button"
                 className="btn btn--danger btn--sm"
                 onClick={() => {
-                  // 确认数量必须与后端实际执行范围一致（整改任务书 §5）：
-                  // 这里用 totalCount（后端 count），**不是** tasks.length
-                  // ——后者只是"已经加载到界面的条数"，分页后可能远小于实际。
-                  const n = totalCount
-                  const loadedNote =
-                    n > tasks.length
-                      ? `\n\n（当前界面只加载了前 ${tasks.length} 条，删除范围为回收站中的全部 ${n} 条。）`
-                      : ''
-                  if (
-                    window.confirm(
-                      `将永久删除回收站中的 ${n} 项任务。\n此操作不可撤销。${loadedNote}`,
-                    )
-                  ) {
-                    void purgeAll()
-                  }
+                  // 确认数量必须与后端实际执行范围一致（整改任务书 §5）。
+                  //
+                  // `totalCount` 是**当前筛选条件**下的后端计数，而 `purgeAll()`
+                  // 会把同一套条件传给后端，所以两者是同一个集合。
+                  // 这里再查一次"回收站共有多少"（忽略筛选），
+                  // 是为了在有筛选时**明确告诉用户还有多少会保留**——
+                  // 否则用户会以为"永久删除 5 项"就是把回收站清空了。
+                  void (async () => {
+                    const n = totalCount
+                    let trashAll = n
+                    try {
+                      trashAll = (await ipc.countTasks({ deletedOnly: true })).total
+                    } catch {
+                      // 拿不到总数就不显示对照说明，不阻断删除流程
+                    }
+                    const filteredNote =
+                      trashAll > n
+                        ? `\n\n当前有筛选条件：只删除筛选结果里的 ${n} 项；回收站共 ${trashAll} 项，其余会保留。`
+                        : ''
+                    const loadedNote =
+                      n > tasks.length
+                        ? `\n\n（当前界面只加载了前 ${tasks.length} 条，将删除符合条件的全部 ${n} 条。）`
+                        : ''
+                    if (
+                      window.confirm(
+                        `将永久删除 ${n} 项任务。\n此操作不可撤销。${filteredNote}${loadedNote}`,
+                      )
+                    ) {
+                      // 把"确认时看到的数量"一起传下去：后端会在同一事务里重新计数，
+                      // 对不上就整体取消，避免期间别处改动造成多删（任务书 §1.4）。
+                      void purgeAll(n)
+                    }
+                  })()
                 }}
               >
                 永久删除 {totalCount} 项
@@ -661,18 +693,13 @@ export default function App() {
     </div>
 
     {/*
-      打印报告**必须是 `.app` 的兄弟节点**，不能放在里面：
-      导出 PDF 时用 `body[data-print='on'] .app { display: none }` 隐藏主界面，
+      打印报告由 `buildPrintDocument()` 在导出期间**动态挂到 body 上**，
+      并且必须是 `.app` 的兄弟节点、不能在它内部：
+      导出时用 `body[data-print='on'] .app { display: none }` 隐藏主界面，
       报告若在 `.app` 内会跟着被隐藏——WebView2 打印的是"当前页面"，
       结果就是导出一张空白 PDF（实测踩过：导出的文件只有 1 KB，没有任何内容）。
+      导出结束后 `dispose()` 会把它从 DOM 里摘掉。
     */}
-    {printData && (
-      <PrintReport
-        rows={printData.rows}
-        scopeTitle={printData.scopeTitle}
-        filterNote={printData.filterNote}
-      />
-    )}
     </>
   )
 }
@@ -897,6 +924,7 @@ function TaskArea({
         hasMore={hasMore}
         loading={loadingMore}
         onLoadMore={onLoadMore}
+        onReload={onRetry}
       />
     </>
   )
@@ -917,12 +945,14 @@ function LoadMore({
   hasMore,
   loading,
   onLoadMore,
+  onReload,
 }: {
   loaded: number
   total: number
   hasMore: boolean
   loading: boolean
   onLoadMore: () => void
+  onReload: () => void
 }) {
   const sentinel = useRef<HTMLDivElement | null>(null)
 
@@ -941,13 +971,33 @@ function LoadMore({
     return () => io.disconnect()
   }, [hasMore, loading, onLoadMore])
 
-  // 一条都没有、或已经全部加载完且本来就没分页时，不占地方
+  // 一条都没有时这块不占地方
   if (loaded === 0) return null
+
   const remaining = Math.max(total - loaded, 0)
-  if (!hasMore && remaining === 0) {
-    return total > PAGE_SIZE ? (
-      <p className="loadmore__done">已加载全部 {total} 条</p>
-    ) : null
+
+  if (!hasMore) {
+    if (remaining === 0) {
+      return total > PAGE_SIZE ? (
+        <p className="loadmore__done">已加载全部 {total} 条</p>
+      ) : null
+    }
+    // 走到这里说明"总数说还有 N 条，但加载已经停了"——只会发生在
+    // 两次请求之间数据被别处改动的时候。
+    //
+    // 这里**不能**渲染「加载更多」：store 此时不会再发请求，
+    // 按钮就成了点了没反应的死按钮（这是第二轮的遗留缺陷）。
+    // 给一个真的能用的刷新入口，并如实说明数字对不上。
+    return (
+      <div className="loadmore">
+        <button type="button" className="btn btn--ghost" onClick={onReload}>
+          刷新列表
+        </button>
+        <span className="loadmore__note">
+          已显示 {loaded} / {total} 条 · 数据在此期间有变化，可刷新查看
+        </span>
+      </div>
+    )
   }
 
   return (

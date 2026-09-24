@@ -49,15 +49,26 @@ export function BoardView({ onEdit }: BoardViewProps) {
   /** 当前条件下的总条数（后端 count）——看板同样不得静默只显示一部分 */
   const [total, setTotal] = useState(0)
   const [loadingMore, setLoadingMore] = useState(false)
+  /**
+   * 是否还有下一页。
+   *
+   * 为什么不能只看 `tasks.length < total`（第三轮任务书 §6）：
+   * `total` 是快照，并发删除之后它会过期，于是"总数说还有、下一页却是空的"，
+   * 按钮就会永远留着一个点了没反应的入口。这里改用与主列表一致的
+   * "取到空页就停 + 空页后刷新一次真实计数"。
+   */
+  const [hasMore, setHasMore] = useState(false)
+
+  /** 看板的查询条件（不显示归档与回收站内容） */
+  const boardQuery = (): TaskQuery => ({
+    statuses: ['todo', 'doing', 'waiting', 'done'],
+    sortBy: 'manual',
+  })
 
   const reload = useCallback(async () => {
     setLoading(true)
     try {
-      // 看板不显示归档任务；回收站中的也不显示
-      const q: TaskQuery = {
-        statuses: ['todo', 'doing', 'waiting', 'done'],
-        sortBy: 'manual',
-      }
+      const q = boardQuery()
       // 与列表同一个策略：按页取，总数单独查（§4.2 不得静默截断）
       const [list, count] = await Promise.all([
         ipc.listTasks({ ...q, limit: PAGE_SIZE, offset: 0 }),
@@ -65,6 +76,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
       ])
       setTasks(list)
       setTotal(count.total)
+      setHasMore(list.length < count.total)
       setError(null)
     } catch (e) {
       setError(errText(e))
@@ -74,18 +86,34 @@ export function BoardView({ onEdit }: BoardViewProps) {
   }, [])
 
   const loadMore = async () => {
-    if (loadingMore || tasks.length >= total) return
+    if (loadingMore || !hasMore) return
     setLoadingMore(true)
     try {
+      // 先刷新一次真实总数：`total` 可能是过期的快照
+      let currentTotal = total
+      try {
+        currentTotal = (await ipc.countTasks(boardQuery())).total
+      } catch {
+        // 计数失败就用旧值继续，不挡住翻页
+      }
+      if (tasks.length >= currentTotal) {
+        setTotal(currentTotal)
+        setHasMore(false)
+        return
+      }
+
       const rows = await ipc.listTasks({
-        statuses: ['todo', 'doing', 'waiting', 'done'],
-        sortBy: 'manual',
+        ...boardQuery(),
         limit: PAGE_SIZE,
         offset: tasks.length,
       })
       const seen = new Set(tasks.map((t) => t.id))
       const fresh = rows.filter((t) => !seen.has(t.id))
-      setTasks((cur) => [...cur, ...fresh])
+      const merged = [...tasks, ...fresh]
+      setTasks(merged)
+      setTotal(currentTotal)
+      // 空页（并发删除等）立刻停下，避免按钮永远存在却加载不出东西
+      setHasMore(fresh.length > 0 && merged.length < currentTotal)
     } catch (e) {
       setError(errText(e))
     } finally {
@@ -156,7 +184,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
         看板同样不得静默只显示一部分（§4.2）。看板会把每张卡片都渲染出来，
         所以这里按页加载，并把"还有多少没显示"写在界面上。
       */}
-      {!loading && total > tasks.length && (
+      {!loading && hasMore && (
         <div className="board__more">
           <span>
             已显示 {tasks.length} / {total} 条。条数很多时建议用列表视图查看全部。
@@ -168,6 +196,26 @@ export function BoardView({ onEdit }: BoardViewProps) {
             onClick={() => void loadMore()}
           >
             {loadingMore ? '正在加载…' : `加载更多（还有 ${total - tasks.length} 条）`}
+          </button>
+        </div>
+      )}
+
+      {/*
+        hasMore 为假、但总数又比已加载多：只可能是两次请求之间数据被别处改了。
+        这时**不能**渲染「加载更多」——它点了不会有任何反应（第三轮任务书 §6.1）。
+        给一个真能用的刷新入口，并如实说明数字对不上。
+      */}
+      {!loading && !hasMore && total > tasks.length && (
+        <div className="board__more">
+          <span>
+            已显示 {tasks.length} / {total} 条 · 数据在此期间有变化，可刷新查看
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => void reload()}
+          >
+            刷新看板
           </button>
         </div>
       )}

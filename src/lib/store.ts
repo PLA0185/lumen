@@ -65,6 +65,15 @@ interface AppStore {
   loadingMore: boolean
   /** 下一页的 offset，等于已加载条数 */
   nextOffset: number
+  /**
+   * 查询代数（第三轮任务书 §4）。
+   *
+   * 任何筛选条件（视图、搜索、状态、排序、逾期）变化都会 +1。
+   * 每个异步请求在开始时记下当时的代数，回来时先比对：对不上就说明
+   * 用户已经换了条件，**这份结果必须丢弃**——否则会出现
+   * "搜 A 的第二页，最后被追加进了搜 B 的结果里"。
+   */
+  queryGeneration: number
   overview: TodayOverview | null
   appInfo: AppInfo | null
   dataPaths: DataPaths | null
@@ -89,6 +98,8 @@ interface AppStore {
   /** 加载下一页并追加（不改动 offset，供滚动到底部或「加载更多」调用） */
   loadMore: () => Promise<void>
   refreshOverview: () => Promise<void>
+  /** 别的窗口改了数据：作废在飞请求并从第一页重新加载 */
+  handleExternalChange: () => Promise<void>
   setView: (v: ViewId) => void
   setSearch: (s: string) => void
   setStatusFilter: (s: TaskStatus[]) => void
@@ -104,10 +115,23 @@ interface AppStore {
   remove: (id: string) => Promise<void>
   restore: (id: string) => Promise<void>
   purge: (id: string) => Promise<void>
-  purgeAll: () => Promise<void>
-  /** 取打印 / PDF 报告数据（与当前列表同一套筛选条件） */
+  /**
+   * 按当前筛选条件永久删除回收站里的任务。
+   *
+   * `expectedCount` 是**确认弹窗里显示给用户的数量**；后端对不上会拒绝执行，
+   * 避免确认之后数据变化导致多删（任务书 §1.4）。
+   */
+  purgeAll: (expectedCount?: number) => Promise<void>
+  /**
+   * 取一页报告数据（任务 + 已解析的归属名称）。
+   *
+   * 注意：**PDF 导出已经不经过这两个方法**（见 `src/lib/report-export.ts`）——
+   * 它改为分页流式构建打印 DOM，数据不进 React state
+   * （第三轮任务书 §7：不许把最多 10 万个完整 Task 全量塞进 WebView）。
+   * 这两个方法保留给"确实需要一次性拿到全量数据"的调用方。
+   */
   reportRows: () => Promise<ipc.TaskReportRow[]>
-  /** 取**完整**报告数据（分页读全，§7 要求不得静默截断） */
+  /** 取全量报告数据（后端一次取 REPORT_MAX_ROWS+1 条，超出部分会如实标记截断） */
   reportRowsAll: () => Promise<ipc.ReportPage>
 
   pushToast: (kind: Toast['kind'], text: string) => void
@@ -253,6 +277,7 @@ export const useApp = create<AppStore>((set, get) => ({
   hasMore: false,
   loadingMore: false,
   nextOffset: 0,
+  queryGeneration: 0,
   overview: null,
   appInfo: null,
   dataPaths: null,
@@ -280,6 +305,8 @@ export const useApp = create<AppStore>((set, get) => ({
 
   reload: async () => {
     const s = get()
+    // 记下这次请求属于哪一代查询（第三轮任务书 §4.3）
+    const generation = s.queryGeneration
     set({ loadState: 'loading', loadError: null })
     try {
       const query = buildQuery(s)
@@ -289,6 +316,10 @@ export const useApp = create<AppStore>((set, get) => ({
         ipc.listTasks({ ...query, limit: PAGE_SIZE, offset: 0 }),
         ipc.countTasks(query),
       ])
+
+      // 期间用户可能已经改了条件：这份结果属于上一代查询，必须丢弃。
+      // 不加这一层就会出现"旧请求比新请求更晚返回，把新结果覆盖掉"。
+      if (get().queryGeneration !== generation) return
 
       set({
         tasks,
@@ -308,31 +339,62 @@ export const useApp = create<AppStore>((set, get) => ({
 
   loadMore: async () => {
     const s = get()
-    // 已经在加载、或已经没有更多时什么都不做：
-    // 滚动触发会连续调用，这里不加锁会打出重复请求（§4.5 禁止新旧结果混在一起）
-    if (s.loadingMore || !s.hasMore) return
+    // 已经在加载时不重复发（滚动会连续触发）
+    if (s.loadingMore) return
+    // 记下这次请求属于哪一代查询（第三轮任务书 §4.3）
+    const generation = s.queryGeneration
+
+    // 先按当前条件**刷新一次总数**再决定能不能继续加载。
+    //
+    // 为什么必须这样：`totalCount` 是上一次查询的快照。并发写入（别的窗口新建、
+    // 提醒任务生成、回收站清空…）会让它过期，而过期会造出两种讨厌的状态：
+    // ① 其实还有更多，却因为旧的 hasMore=false 而不再加载；
+    // ② 界面渲染出「加载更多」，点下去 `loadMore` 却直接返回——按钮点了没反应。
+    // 计数很便宜（一条 count 查询），拿它当"要不要继续"的唯一依据最稳。
+    let total = s.totalCount
+    try {
+      total = (await ipc.countTasks(buildQuery(s))).total
+    } catch {
+      // 计数失败就用旧值继续，不让一次计数错误挡住翻页
+    }
+    // 计数期间条件可能已经变了：这份判断也作废，交给新的一代去处理
+    if (get().queryGeneration !== generation) return
+    if (s.tasks.length >= total) {
+      set({ totalCount: total, hasMore: false, loadingMore: false })
+      return
+    }
+
     set({ loadingMore: true })
     try {
       const rows = await ipc.listTasks({
         ...buildQuery(s),
         limit: PAGE_SIZE,
-        offset: s.nextOffset,
+        // 用**已加载条数**当偏移，而不是上次记下的 nextOffset：
+        // 两者本应相等，但列表被别处改过时，实际长度才是真相。
+        offset: s.tasks.length,
       })
+      // 过期结果直接丢弃：绝不能把"A 条件的第二页"追加进"B 条件的结果"里
+      if (get().queryGeneration !== generation) {
+        set({ loadingMore: false })
+        return
+      }
       const seen = new Set(s.tasks.map((t) => t.id))
       const fresh = rows.filter((t) => !seen.has(t.id))
       const tasks = [...s.tasks, ...fresh]
       set({
         tasks,
         progressMap: { ...s.progressMap, ...(await fetchProgress(fresh)) },
+        totalCount: total,
         nextOffset: tasks.length,
-        // 以**总数**为准判断是否还有更多；但如果这一页一条新的都没拿到
-        // （并发删除等），必须停下来，否则会无限请求同一页。
-        hasMore: fresh.length > 0 && tasks.length < s.totalCount,
+        // 这一页一条新的都没拿到（并发删除等）就停下，避免无限请求同一页
+        hasMore: fresh.length > 0 && tasks.length < total,
         loadingMore: false,
       })
     } catch (e) {
       set({ loadingMore: false })
-      get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+      if (get().queryGeneration === generation) {
+        get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+      }
     }
   },
 
@@ -346,13 +408,33 @@ export const useApp = create<AppStore>((set, get) => ({
     }
   },
 
+  /**
+   * 别的窗口改动了任务数据时调用（第三轮任务书 §5.4 的临时方案）。
+   *
+   * OFFSET 分页在数据集变化时天然不稳定：已经加载了 1..200，
+   * 另一个窗口删掉第 50 条，再用 OFFSET 200 取下一页就会**漏掉**原来的第 201 条。
+   * 彻底解决要换 keyset 分页；本轮先按任务书允许的方式处理：
+   *
+   * 1. `queryGeneration + 1` —— 让所有在飞的请求（尤其是 loadMore）作废，
+   *    它们的结果回来时会被丢弃，不会追加到新数据上；
+   * 2. `reload()` —— 从第一页重新取，等于清空已加载的后续页。
+   */
+  handleExternalChange: async () => {
+    set({ queryGeneration: get().queryGeneration + 1 })
+    await get().reload()
+  },
+
+  // 下面五个 action 都会改变查询条件。它们的共同点是：
+  // **先把 queryGeneration +1，再重新查询**（第三轮任务书 §4.3）。
+  // 加这一句之后，所有"上一代查询"的异步结果回来时都会自动作废。
+
   setView: (v) => {
-    set({ view: v })
+    set({ view: v, queryGeneration: get().queryGeneration + 1 })
     void get().reload()
   },
 
   setSearch: (s) => {
-    set({ search: s })
+    set({ search: s, queryGeneration: get().queryGeneration + 1 })
     // 输入即刷新（防抖），而不是只在回车时刷新。
     //
     // 为什么必须这样：分页之后 `tasks` 与 `totalCount` 是**同一套条件**下的结果，
@@ -363,17 +445,21 @@ export const useApp = create<AppStore>((set, get) => ({
   },
 
   setStatusFilter: (s) => {
-    set({ statusFilter: s })
+    set({ statusFilter: s, queryGeneration: get().queryGeneration + 1 })
     void get().reload()
   },
 
   setSort: (by, desc) => {
-    set({ sortBy: by, sortDesc: desc ?? false })
+    set({
+      sortBy: by,
+      sortDesc: desc ?? false,
+      queryGeneration: get().queryGeneration + 1,
+    })
     void get().reload()
   },
 
   setOverdueOnly: (v) => {
-    set({ overdueOnly: v })
+    set({ overdueOnly: v, queryGeneration: get().queryGeneration + 1 })
     void get().reload()
   },
 
@@ -448,33 +534,46 @@ export const useApp = create<AppStore>((set, get) => ({
     }
   },
 
-  purgeAll: async () => {
+  purgeAll: async (expectedCount) => {
     try {
-      const r = await ipc.purgeAllDeleted()
+      // 用**与列表同一套条件**删除，并把删除状态锁死为"只看回收站"：
+      // 界面上的确认数量就是这套条件算出来的 totalCount，
+      // 条件不一致就会出现"确认 5 项、实删 1200 项"（任务书 §5 / §1）。
+      // expectedCount 再把这层保护收紧到"确认那一刻的集合"。
+      const r = await ipc.purgeAllDeleted(
+        { ...buildQuery(get()), deletedOnly: true },
+        expectedCount,
+      )
       await get().reload()
       void bus.notifyTasksChanged()
       get().pushToast('success', `已永久删除 ${r.purged} 项`)
     } catch (e) {
-      get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+      const msg = e instanceof IpcError ? e.userMessage() : String(e)
+      get().pushToast('error', msg)
+      // 内容已变化的冲突也要刷新，否则界面还停在旧数字上
+      void get().reload()
     }
   },
 
   /** 打印 / PDF 报告数据：走列表同一套筛选，报告里能看到归属名称 */
   reportRows: async () => {
     const q = buildQuery(get())
-    // 报告是给用户留档的，不该像列表那样只取前 500 条
+    // 单页接口有 PAGE_MAX 上限，这里要 1000 条（历史用法）；需要全量请用 reportRowsAll
     return ipc.taskReport({ ...q, limit: 1000 })
   },
 
   /**
-   * 完整报告数据（§7）。
+   * 完整报告数据。
    *
-   * 不再自己设 limit：后端按 500 条一页读到取完，超过 1000 条也不会被截断。
+   * 后端现在**一次取 `REPORT_MAX_ROWS + 1` 条**（不再是"500 条一页读到取完"：
+   * 深分页在 10 万条时是 O(n²)，实测 56 秒，改成一次取全量后 1.6 秒）。
    * 返回的 `truncated` 交给界面提示，而不是悄悄少给用户数据。
+   *
+   * PDF 导出**不再调用它**——那条路径改成了分页流式构建 DOM。
    */
   reportRowsAll: async () => {
     const q = buildQuery(get())
-    // 分页由后端负责，这里把单页 limit/offset 清掉，避免影响后端的分页循环
+    // 单页 limit/offset 由后端自己决定，这里清掉，避免影响它的取数策略
     const { limit: _limit, offset: _offset, ...rest } = q
     return ipc.taskReportAll(rest)
   },

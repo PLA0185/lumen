@@ -184,9 +184,22 @@ export const restoreTask = (id: string): Promise<Task> => call<Task>(CMD.taskRes
 export const purgeTask = (id: string): Promise<PurgeResult> =>
   call<PurgeResult>(CMD.taskPurge, { id })
 
-/** 清空回收站 */
-export const purgeAllDeleted = (): Promise<PurgeResult> =>
-  call<PurgeResult>(CMD.taskPurgeAllDeleted)
+/**
+ * 按条件永久删除回收站里的任务。
+ *
+ * - `query` 就是列表当前用的那套条件：只删符合条件的那部分（看到什么就删什么）；
+ * - `expectedCount` 是**确认弹窗里显示给用户的数量**。后端会在同一事务里
+ *   重新计数，对不上就整体取消并报冲突——避免"用户看到 100 项、
+ *   期间别的窗口又移入 1 项、结果删了 101 项"（任务书 §1.4）。
+ */
+export const purgeAllDeleted = (
+  query?: TaskQuery,
+  expectedCount?: number,
+): Promise<PurgeResult> =>
+  call<PurgeResult>(CMD.taskPurgeAllDeleted, {
+    query: query ?? null,
+    expectedCount: expectedCount ?? null,
+  })
 
 /** 批量操作 */
 export const bulkTasks = (input: BulkActionInput): Promise<number> =>
