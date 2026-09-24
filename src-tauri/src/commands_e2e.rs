@@ -767,6 +767,148 @@ async fn report_pagination_is_stable_with_equal_sort_orders() {
 }
 
 // =============================================================================
+// 输入校验（整改任务书 §9：后端是最终校验层）
+// =============================================================================
+
+/// 创建路径：链接协议、长度、控制字符，以及耗时范围
+#[tokio::test]
+async fn create_rejects_dangerous_links_and_out_of_range_minutes() {
+    let (state, dir) = setup("validate-create").await;
+    let db = &state.db;
+
+    // 危险协议必须被拒（前端净化只是 UX，后端才是最终防线）
+    for bad in [
+        "javascript:alert(1)",
+        "file:///C:/Windows/System32/cmd.exe",
+        "data:text/html;base64,PHNjcmlwdD4=",
+        "不是链接",
+    ] {
+        let r = create_task_impl(
+            db,
+            CreateTaskInput {
+                title: "危险链接".into(),
+                link_url: Some(bad.into()),
+                ..task("")
+            },
+        )
+        .await;
+        assert!(r.is_err(), "{bad} 应被拒绝");
+    }
+
+    // 正常链接可以过，且首尾空白被去掉
+    let ok = create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "正常链接".into(),
+            link_url: Some("  https://example.com/a?b=1  ".into()),
+            ..task("")
+        },
+    )
+    .await
+    .expect("https 链接应允许");
+    assert_eq!(ok.link_url.as_deref(), Some("https://example.com/a?b=1"));
+
+    // 超长链接
+    let long = format!("https://example.com/{}", "a".repeat(3000));
+    assert!(create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "超长链接".into(),
+            link_url: Some(long),
+            ..task("")
+        },
+    )
+    .await
+    .is_err());
+
+    // 耗时越界
+    for bad in [-1i64, 600_001, i64::MAX] {
+        assert!(
+            create_task_impl(
+                db,
+                CreateTaskInput {
+                    title: "耗时越界".into(),
+                    estimated_minutes: Some(bad),
+                    ..task("")
+                },
+            )
+            .await
+            .is_err(),
+            "预计耗时 {bad} 应被拒绝"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 更新路径：以前**完全没有**校验链接与耗时，这里锁住修复结果
+#[tokio::test]
+async fn update_rejects_invalid_link_and_minutes() {
+    let (state, dir) = setup("validate-update").await;
+    let db = &state.db;
+
+    let t = create_task_impl(db, task("校验目标")).await.unwrap();
+
+    let bad_link = update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            link_url: Some("javascript:alert(1)".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(bad_link.is_err(), "更新时也必须拒绝危险协议");
+
+    let bad_est = update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            estimated_minutes: Some(-5),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(bad_est.is_err(), "更新时也必须拒绝负数耗时");
+
+    let bad_actual = update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            actual_minutes: Some(999_999_999),
+            ..Default::default()
+        },
+    )
+    .await;
+    assert!(bad_actual.is_err(), "更新时也必须拒绝越界的实际耗时");
+
+    // 失败之后数据必须保持原样（不能被写坏）
+    let after = crate::commands::get_task_row(db, &t.id).await.unwrap();
+    assert!(after.link_url.is_none());
+    assert!(after.estimated_minutes.is_none());
+    assert_eq!(after.actual_minutes, 0);
+
+    // 合法值可以正常写入
+    let ok = update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            link_url: Some("https://example.com".into()),
+            estimated_minutes: Some(45),
+            actual_minutes: Some(30),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("合法值应通过");
+    assert_eq!(ok.link_url.as_deref(), Some("https://example.com"));
+    assert_eq!(ok.estimated_minutes, Some(45));
+    assert_eq!(ok.actual_minutes, 30);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// =============================================================================
 // 复制任务
 // =============================================================================
 

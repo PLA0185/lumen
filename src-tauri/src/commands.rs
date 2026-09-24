@@ -85,6 +85,50 @@ impl AppState {
 // 内部工具
 // =============================================================================
 
+/// 链接长度上限（§9：后端必须是最终校验层，前端限制只算 UX）
+const LINK_MAX: usize = 2_000;
+
+/// 耗时字段的上下限（分钟）：10000 小时，足够覆盖任何真实用例，又能挡住误输入
+const MINUTES_MAX: i64 = 600_000;
+
+/// 校验链接。
+///
+/// 整改任务书 §9 的可选字段清单里点名了 URLs。此前 `link_url` 是
+/// **直接落库**的：既能塞进超长字符串，也能写进 `javascript:` 这类协议。
+/// 前端渲染时虽然做了净化，但"前端限制不能成为唯一安全措施"。
+pub(crate) fn validate_link_url(raw: &str) -> AppResult<String> {
+    let v = raw.trim();
+    if v.is_empty() {
+        return Ok(String::new());
+    }
+    if v.chars().count() > LINK_MAX {
+        return Err(AppError::validation(format!(
+            "链接过长（{} 字符），上限 {LINK_MAX}",
+            v.chars().count()
+        )));
+    }
+    // 控制字符会破坏日志与界面渲染
+    if v.chars().any(|c| c.is_control()) {
+        return Err(AppError::validation("链接中不能包含控制字符"));
+    }
+    let lower = v.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(AppError::validation("链接必须以 http:// 或 https:// 开头")
+            .with_hint("为避免执行危险协议（如 javascript:、file:），这里只接受 http(s) 链接"));
+    }
+    Ok(v.to_string())
+}
+
+/// 校验"分钟"类字段（预计耗时 / 实际耗时）。
+pub(crate) fn validate_minutes(field: &str, v: i64) -> AppResult<i64> {
+    if !(0..=MINUTES_MAX).contains(&v) {
+        return Err(AppError::validation(format!(
+            "{field}超出范围：{v} 分钟（允许 0–{MINUTES_MAX}）"
+        )));
+    }
+    Ok(v)
+}
+
 /// 校验标题
 fn validate_title(raw: &str) -> AppResult<String> {
     let t = raw.trim();
@@ -268,6 +312,12 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
         }
     }
 
+    // 链接同样要校验（§9）：此前是直接落库的
+    let link_url = match input.link_url.as_deref() {
+        Some(v) => Some(validate_link_url(v)?).filter(|s| !s.is_empty()),
+        None => None,
+    };
+
     let id = uuid::Uuid::now_v7().to_string();
     let now = to_db_time(utc_now());
     let sort_order = next_sort_order(db).await?;
@@ -299,7 +349,7 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
     .bind(&title)
     .bind(&description)
     .bind(&note_md)
-    .bind(input.link_url.as_deref().filter(|s| !s.trim().is_empty()))
+    .bind(link_url.as_deref())
     .bind(status)
     .bind(priority)
     .bind(input.project_id.as_deref().filter(|s| !s.is_empty()))
@@ -469,14 +519,19 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
         sep.push("link_url = ")
             .push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.link_url.as_deref().filter(|s| !s.trim().is_empty()) {
-        sep.push("link_url = ").push_bind_unseparated(v.to_string());
+        // §9：链接与耗时字段此前在"更新"路径上**完全没有校验**，
+        // 只有创建路径查了 estimated_minutes。补上，让两条路径一致。
+        sep.push("link_url = ")
+            .push_bind_unseparated(validate_link_url(v)?);
     }
 
     if let Some(v) = input.estimated_minutes {
-        sep.push("estimated_minutes = ").push_bind_unseparated(v);
+        sep.push("estimated_minutes = ")
+            .push_bind_unseparated(validate_minutes("预计耗时", v)?);
     }
     if let Some(v) = input.actual_minutes {
-        sep.push("actual_minutes = ").push_bind_unseparated(v);
+        sep.push("actual_minutes = ")
+            .push_bind_unseparated(validate_minutes("实际耗时", v)?);
     }
     if let Some(v) = input.is_pinned {
         sep.push("is_pinned = ").push_bind_unseparated(v as i64);
