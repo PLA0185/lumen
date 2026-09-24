@@ -78,14 +78,22 @@
 ```powershell
 pnpm install --frozen-lockfile
 pnpm typecheck
-pnpm test          # 前端 92 项
-pnpm build
+pnpm test          # 前端 101 项
+pnpm build         # 必须先跑，见下方说明
 pnpm lint
 cd src-tauri
 cargo fmt --check
-cargo test --lib   # 337 项（会随迭代增长）
+cargo test --lib   # 323 项（会随迭代增长）
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+> **`pnpm build` 不是可省的一步**：上面最后一条带 `--all-features`，
+> 它会启用 tauri 的 `custom-protocol`；在这个 feature 下
+> `tauri::generate_context!()` 要把前端产物 `../dist` **嵌进二进制**，
+> 目录不存在就直接 proc macro panic：
+> `The frontendDist configuration is set to "../dist" but this path doesn't exist`。
+> 表现是"本地莫名其妙过了、CI 却红"（本机往往早就构建过前端）。
+> CI 的 rust job 因此也先跑 `pnpm build`。
 
 CI（`.github/workflows/ci.yml`）会在 push 到 main 时真实执行同一套检查，
 **以 CI 的结果为准**：本地过了但 CI 红了，等于没完成。
@@ -110,3 +118,6 @@ CI（`.github/workflows/ci.yml`）会在 push 到 main 时真实执行同一套�
 | Tauri 托盘/窗口回调是同步上下文 | 在里面 `block_on` 查库会因 tokio 嵌套 panic；菜单只读内存缓存 |
 | `installMode` 用 `quiet` | `passive`（`/P`）在应用自触发升级时出现过"文件没被替换"，`/S` 正常 |
 | 实机验收用 CDP | Windows UI Automation 看不到 WebView2 内部元素；用 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` + `tools/ui_drive.py`，断言按钮可点要派发**真实鼠标事件** |
+| `cargo clippy --all-features` 需要 `dist/` | `--all-features` 启用 tauri 的 `custom-protocol`，`generate_context!()` 会把 `frontendDist`（`../dist`）嵌进二进制；目录不存在就 proc macro panic。**先 `pnpm build`** —— 这正是"本地绿、CI 红"的那次根因 |
+| 列表分页用 OFFSET，深分页是 O(n²) | 报告导出曾因此在 10 万条时耗时 56 秒（改一次取全量后 1.6 秒）。列表仍是 OFFSET，条数很大时才需要换 keyset 分页 |
+| 前端 `setSearch` 会自动刷新 | 搜索输入带 250ms 防抖并重新查询（条件变化必须把 offset 归零）；再往手动加"回车才刷新"会重复请求 |

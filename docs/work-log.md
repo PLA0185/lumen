@@ -204,8 +204,35 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 脚本在 `finally` 里逐个按 id 永久删除自己造的数据（**刻意不用"清空回收站"**，
 那会连用户自己回收站里的任务一起删掉），并在结束时断言这批数据归零。
 
-**GitHub Actions**：本轮的 `CI` 在最终提交上真实跑过，`frontend` 与 `rust` 两个 job 均为
-success（提交号见仓库 `PLA0185/lumen` 的 Actions 记录）。
+**GitHub Actions：一次"本地全绿、CI 红"的排查**
+
+第一次推送（`1b51ee2`）后 CI 的 `rust` job 在 **clippy 步骤失败**，而本机跑
+**完全相同的命令**是绿的。排查过程与结论：
+
+| 步骤 | 结果 |
+| --- | --- |
+| 本机确认版本 | `rustc 1.98.1`、`clippy 0.1.98`，与 CI 的 stable 一致 |
+| 关闭增量编译 + touch 源文件重跑 | 仍然全绿（16 s，确实重新检查了） |
+| 清理本 crate 产物后重跑 | 仍然全绿 |
+| 把仓库根的 `dist/` 改名后再跑 | **复现失败**：`proc macro panicked: The frontendDist configuration is set to "../dist" but this path doesn't exist` |
+
+**根因**：`cargo clippy --all-features` 会启用 tauri 的 `custom-protocol`，
+该 feature 下 `tauri::generate_context!()` 必须把前端产物嵌进二进制；
+而 CI 的 rust job 原先只编译 Rust、**不产出前端**。
+`cargo check --all-targets`（不带 `--all-features`）不触发这条路径，
+所以只有 clippy 这一步红——这就是"看起来莫名其妙的 CI 专属失败"。
+
+**修复**：rust job 增加 `pnpm install --frozen-lockfile` + `pnpm build`；
+`AGENTS.md` 的门禁把 `pnpm build` 标成"不可省的一步"，
+并在「项目特有的坑」表里新增这一条。
+
+**顺带改进了可诊断性**：Actions 的**原始日志下载需要认证**，
+未登录时网页也不渲染日志内容，于是让 clippy 步骤在失败时把尾部输出写进
+**job summary**（页面上可见）。这次能快速排除"版本差异"这类猜测，
+靠的就是这条铺垫。
+
+修好后的提交 CI `frontend` 与 `rust` 两个 job 均为 success
+（提交号见仓库 `PLA0185/lumen` 的 Actions 记录）。
 
 ### 相关文档
 

@@ -61,6 +61,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ---- 先构建前端产物，原因见 clippy 步骤的注释 ----
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖（供前端构建使用）
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建前端产物
+        # 必须步骤，不是可选项：`--all-features` 会启用 tauri 的
+        # `custom-protocol`，而 `tauri::generate_context!()` 在该 feature 下
+        # **要把 `frontendDist`（`../dist`）嵌进二进制**，目录不存在就直接
+        # proc macro panic：`The frontendDist configuration is set to "../dist"
+        # but this path doesn't exist`。
+        # 这一条正是"本地全绿、CI 红"的根因：本机跑过 pnpm build 所以有 dist，
+        # 而 CI 的 rust job 原先只编译 Rust、不产出前端。
+        run: pnpm build
+
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,16 +110,15 @@ jobs:
 
       - name: Clippy（把警告当错误，**不加任何豁免**）
         working-directory: src-tauri
-        # 整改任务书 §8：此前 CI 这里带了 `-A clippy::too_many_arguments`
-        # 与 `-A clippy::type_complexity` 两条豁免，而文档里写的是
-        # "所有 clippy warning 全部禁止"——两者不是同一套规则，属于**文档失真**。
-        # 实测把豁免去掉、并加上 --all-features 后仓库是全绿的，
-        # 所以这里采用任务书推荐的方案 A：CI 真正执行完整门禁，
-        # 本地与 CI 跑同一条命令。
+        # 与本地**完全同一条命令**（任务书 §8.3 方案 A / §15）。
+        #
+        # 两个必须一起满足的前提，缺一个就会"本地绿、CI 红"：
+        # 1. 前端产物 `../dist` 必须先构建好（见上面的 pnpm build）；
+        # 2. 本地也一样 —— 直接 `cargo clippy --all-features` 而没跑过 `pnpm build`
+        #    会看到 `frontendDist ... doesn't exist` 的 proc macro panic。
         #
         # 失败时把尾部输出写进 job summary：Actions 的**原始日志下载需要认证**，
-        # 而 step summary 在页面上（含未登录）就能看到。CI 专属的 lint 差异
-        # 只能靠它定位。
+        # 而 step summary 在页面上（含未登录）就能看到，便于定位这类 CI 专属差异。
         shell: pwsh
         run: |
           cargo clippy --all-targets --all-features -- -D warnings 2>&1 | Tee-Object -FilePath clippy.log

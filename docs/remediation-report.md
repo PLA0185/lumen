@@ -672,6 +672,32 @@ SQLite 默认 999 个变量的上限）。
 说明那两条豁免早已不必要。于是 CI 改成与文档完全一致、且与本地相同的命令，
 不再有任何豁免。`AGENTS.md`、`docs/work-log.md`、本报告的描述已统一。
 
+### 改完之后 CI 还是红了一次——根因不在 lint
+
+第一次推送后 CI 的 `rust` job 在 clippy 步骤失败，而本机同一条命令是绿的。
+按"以 CI 为准"的约定把它当成本轮未完成来查，最终定位到：
+
+```
+error: proc macro panicked
+   --> src\lib.rs:402:14
+    = help: message: The `frontendDist` configuration is set to `"../dist"`
+                    but this path doesn't exist
+```
+
+`--all-features` 会启用 tauri 的 **`custom-protocol`**，该 feature 下
+`tauri::generate_context!()` 必须把前端产物嵌进二进制；而 CI 的 rust job
+原先只编译 Rust、**不产出前端**。`cargo check --all-targets` 不带 `--all-features`，
+不触发这条路径，于是只有 clippy 这一步红。
+
+**处置**：
+
+1. rust job 增加 `pnpm install --frozen-lockfile` + `pnpm build`；
+2. `AGENTS.md` 的门禁把 `pnpm build` 标为"不可省的一步"，
+   并在「项目特有的坑」表里新增该条；
+3. clippy 步骤失败时把尾部输出写进 **job summary**——
+   Actions 的原始日志下载需要认证，未登录时网页不渲染日志，
+   没有这一步就只能靠猜。
+
 ## 8. §9 updater 密码存储（P2）
 
 ### 修改
