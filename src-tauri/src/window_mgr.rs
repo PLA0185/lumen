@@ -810,6 +810,115 @@ mod tests {
         assert!(!c.has_recovery_path(), "两者都关就没有恢复路径了");
     }
 
+    // =====================================================================
+    // 整改任务书 §16：窗口 / 托盘的"找不回程序"防线
+    // =====================================================================
+    //
+    // 最坏组合是：悬浮窗穿透 + 隐藏主窗口任务栏图标 + 关掉托盘 + 关掉快捷键。
+    // 这时用户没有任何入口，只能删配置文件。下面的用例逐条锁住防线：
+    // 1. 默认配置必须安全；
+    // 2. 参数归一化把越界值收敛（手工改库也救得回来）；
+    // 3. `has_recovery_path` 是"是否允许开启穿透"的判定依据。
+
+    /// 默认配置必须是"能看见、能找回"的
+    #[test]
+    fn defaults_never_lock_the_user_out() {
+        let c = WindowConfig::default();
+        assert!(c.tray_enabled, "默认启用托盘");
+        assert!(c.shortcut_enabled, "默认启用全局快捷键");
+        assert!(c.main_show_in_taskbar, "默认主窗口在任务栏可见");
+        assert!(!c.floating_click_through, "默认不开启穿透");
+        assert!(c.has_recovery_path());
+    }
+
+    /// 四种显隐组合里，"托盘关 + 快捷键关"必须被判定为无恢复路径，
+    /// 不论任务栏与穿透怎么设置——因为这两项用户都可能看不到。
+    #[test]
+    fn no_recovery_path_when_both_entries_disabled() {
+        for taskbar in [true, false] {
+            for through in [true, false] {
+                let mut c = WindowConfig {
+                    tray_enabled: false,
+                    shortcut_enabled: false,
+                    main_show_in_taskbar: taskbar,
+                    floating_click_through: through,
+                    ..WindowConfig::default()
+                };
+                assert!(
+                    !c.has_recovery_path(),
+                    "托盘与快捷键都关时必须判定为无恢复路径（任务栏={taskbar} 穿透={through}）"
+                );
+                // 归一化不应把它"修好"——这是用户的显式选择，
+                // 只是不允许在这种状态下再开启穿透（由 window_set_config 拦截）
+                c.normalize();
+                assert!(!c.has_recovery_path());
+            }
+        }
+    }
+
+    /// 尺寸与不透明度的越界值都要被收敛，避免手工改库把窗口弄没
+    #[test]
+    fn size_and_opacity_are_always_within_bounds() {
+        let mut c = WindowConfig::default();
+
+        for bad in [0.0, -100.0, f64::NAN, f64::INFINITY] {
+            c.floating_width = bad;
+            c.floating_height = bad;
+            c.normalize();
+            assert!(
+                c.floating_width >= 260.0 && c.floating_width <= 1400.0,
+                "宽度应被收敛，实际 {}",
+                c.floating_width
+            );
+            assert!(
+                c.floating_height >= 200.0 && c.floating_height <= 1800.0,
+                "高度应被收敛，实际 {}",
+                c.floating_height
+            );
+        }
+
+        for bad in [0.0, -1.0, 5.0, f64::NAN] {
+            c.floating_opacity = bad;
+            c.normalize();
+            assert!(
+                (0.25..=1.0).contains(&c.floating_opacity),
+                "不透明度应被收敛，实际 {}",
+                c.floating_opacity
+            );
+        }
+    }
+
+    /// 新增配置项时，老配置不能整体回落到默认值（容器级 serde(default)）
+    #[test]
+    fn old_config_json_without_new_fields_keeps_user_settings() {
+        // 模拟 0.2.0 时代的配置：没有 floatingWidth/Height
+        let old = r#"{
+            "mainAlwaysOnTop": true,
+            "mainShowInTaskbar": false,
+            "closeAction": "quit",
+            "floatingEnabled": true,
+            "floatingAlwaysOnTop": false,
+            "floatingClickThrough": false,
+            "floatingOpacity": 0.7,
+            "floatingShowInTaskbar": true,
+            "floatingX": 12.0,
+            "floatingY": 34.0,
+            "trayEnabled": true,
+            "shortcutEnabled": true,
+            "shortcutToggle": "CmdOrCtrl+Alt+A",
+            "shortcutQuickAdd": "CmdOrCtrl+Alt+N",
+            "shortcutToday": "CmdOrCtrl+Alt+D"
+        }"#;
+        let c: WindowConfig = serde_json::from_str(old).expect("老配置必须能解析");
+        assert!(c.main_always_on_top, "老配置里的置顶不能被重置");
+        assert_eq!(c.close_action, "quit", "关闭行为要保留");
+        assert!((c.floating_opacity - 0.7).abs() < 1e-9);
+        assert_eq!(c.floating_x, Some(12.0));
+        // 新字段取默认值，而不是让整份配置失效
+        assert!(c.floating_width > 0.0);
+        assert!(c.floating_height > 0.0);
+    }
+
     /// 默认快捷键不能互相冲突，否则注册时会有一个失败
     #[test]
     fn default_shortcuts_are_distinct() {
