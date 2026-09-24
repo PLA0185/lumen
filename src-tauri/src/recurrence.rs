@@ -101,7 +101,9 @@ pub struct RecurrenceRule {
     /// 指定星期（1=周一 … 7=周日）；仅 WEEKLY 使用，空表示用起始日的星期
     pub by_weekday: Vec<u8>,
     /// 每月第几天的列表（1–31）；仅 MONTHLY 使用，空表示用起始日的日
-    pub by_monthday: Vec<u8>,
+    /// 每月几号。**允许负数**：`-1` 表示当月最后一天（RFC 5545 语义），
+    /// `-2` 表示倒数第二天，以此类推。短月与闰年由展开时按当月实际天数解析。
+    pub by_monthday: Vec<i8>,
     /// 每月第 N 个星期 X（1–5 表示第几个，-1 表示最后一个）；与 by_monthday 互斥
     pub by_setpos: Option<SetPos>,
     /// 仅 YEARLY：月份（1–12），空表示用起始日的月份
@@ -232,7 +234,7 @@ impl RecurrenceRule {
         let mut freq: Option<Freq> = None;
         let mut interval: i64 = 1;
         let mut by_weekday: Vec<u8> = Vec::new();
-        let mut by_monthday: Vec<u8> = Vec::new();
+        let mut by_monthday: Vec<i8> = Vec::new();
         let mut by_month: Vec<u8> = Vec::new();
         let mut by_setpos: Option<SetPos> = None;
         let mut weekdays_only = false;
@@ -272,12 +274,16 @@ impl RecurrenceRule {
                 }
                 "BYMONTHDAY" => {
                     for d in value.split(',') {
-                        let n: u8 = d.trim().parse().map_err(|_| {
+                        let n: i8 = d.trim().parse().map_err(|_| {
                             AppError::validation(format!("BYMONTHDAY 不是整数：{d}"))
                         })?;
-                        if !(1..=31).contains(&n) {
+                        // RFC 5545：正数从月初数（1–31），负数从月末倒数
+                        // （-1 = 最后一天）。此前只接受正数，导致"每月最后一天"
+                        // 这条最常见的需求**根本无法表达**（整改任务书 §14）。
+                        let ok = (1..=31).contains(&n) || (-31..=-1).contains(&n);
+                        if !ok {
                             return Err(AppError::validation(format!("日期超出范围：{n}"))
-                                .with_hint("每月日期必须在 1–31 之间"));
+                                .with_hint("每月日期可用 1–31（从月初数）或 -1（最后一天）"));
                         }
                         by_monthday.push(n);
                     }
@@ -430,8 +436,19 @@ impl RecurrenceRule {
                 .collect();
             s.push_str(&format!("的{}", names.join("、")));
         } else if !self.by_monthday.is_empty() {
-            let days: Vec<String> = self.by_monthday.iter().map(|d| d.to_string()).collect();
-            s.push_str(&format!("的{}日", days.join("、")));
+            // 负数要读成"最后一天"而不是"-1 日"，否则用户看到的描述没法理解。
+            // 顺带把单位放在正确位置：正数读作"每月 15 日"，
+            // 负数读作"每月最后一天"，不该拼成"每月最后一天"。
+            let days: Vec<String> = self
+                .by_monthday
+                .iter()
+                .map(|d| match *d {
+                    -1 => "最后一天".to_string(),
+                    n if n < 0 => format!("倒数第 {} 天", -(n as i32)),
+                    n => format!("{n}日"),
+                })
+                .collect();
+            s.push_str(&format!("的{}", days.join("、")));
         } else if !self.by_month.is_empty() {
             let months: Vec<String> = self.by_month.iter().map(|m| m.to_string()).collect();
             s.push_str(&format!("的{}月", months.join("、")));
@@ -448,7 +465,8 @@ impl RecurrenceRule {
 
     /// 这条规则涉及的边界策略说明（界面必须展示，§5 明确要求）
     pub fn edge_policy_note(&self) -> Option<String> {
-        let touches_month_end = self.by_monthday.iter().any(|d| *d > 28)
+        // 负数（-1 = 最后一天）同样属于"触及月末"的策略，必须给用户说明
+        let touches_month_end = self.by_monthday.iter().any(|d| *d < 0 || *d > 28)
             || self
                 .by_setpos
                 .as_ref()
@@ -623,10 +641,19 @@ impl RecurrenceRule {
 
         // 每月指定日
         if !self.by_monthday.is_empty() {
-            if !self.by_monthday.contains(&(d.day() as u8)) {
-                return false;
-            }
-            return true;
+            // 负数从月末倒数：-1 = 当月最后一天（RFC 5545）。
+            // 按**当月实际天数**解析，因此 2 月的 -1 自动落在 28/29 日，
+            // 4 月落在 30 日，不需要为每个月份写特例。
+            let day = d.day() as i8;
+            let month_len = days_in_month(d.year(), d.month()) as i8;
+            let matched = self.by_monthday.iter().any(|want| {
+                if *want > 0 {
+                    *want == day
+                } else {
+                    month_len + *want + 1 == day
+                }
+            });
+            return matched;
         }
 
         // 星期过滤：工作日的简写优先
@@ -1534,5 +1561,210 @@ mod tests {
             .collect();
         assert_eq!(offsets[0], 13, "10-30 是 EDT（-4），09:00 → 13:00 UTC");
         assert_eq!(offsets[4], 14, "11-03 已转 EST（-5），09:00 → 14:00 UTC");
+    }
+}
+
+/// 重复任务专项回归（整改任务书 §14）。
+///
+/// 这个模块**刻意按任务书清单逐条对应**写，而不是零散补测试：
+/// 日 / 周 / 月 / 年四种频率、月末与闰日这种最容易出错的边界、
+/// 夏令时时区的墙上时刻语义。改规则引擎时先跑这一组。
+#[cfg(test)]
+mod regression_task_book_14 {
+    use super::*;
+
+    /// 展开成 `MM-DD` 列表，便于断言
+    fn expand_dates(rrule: &str, tz: &str, dtstart: &str, n: usize) -> Vec<String> {
+        RecurrenceRule::from_rrule_string(rrule, tz, dtstart, true)
+            .expect("规则应能解析")
+            .expand(n)
+            .expect("应能展开")
+            .iter()
+            .map(|o| o.local.date().format("%m-%d").to_string())
+            .collect()
+    }
+
+    // ------------------------------ 日重复 ------------------------------
+
+    #[test]
+    fn daily_plain() {
+        assert_eq!(
+            expand_dates("FREQ=DAILY", "Asia/Shanghai", "2026-09-21T08:00:00", 3),
+            vec!["09-21", "09-22", "09-23"]
+        );
+    }
+
+    #[test]
+    fn daily_every_two_days() {
+        assert_eq!(
+            expand_dates(
+                "FREQ=DAILY;INTERVAL=2",
+                "Asia/Shanghai",
+                "2026-09-21T08:00:00",
+                4
+            ),
+            vec!["09-21", "09-23", "09-25", "09-27"]
+        );
+    }
+
+    // ------------------------------ 周重复 ------------------------------
+
+    #[test]
+    fn weekly_monday_only() {
+        // 2026-09-21 是周一
+        assert_eq!(
+            expand_dates(
+                "FREQ=WEEKLY;BYDAY=MO",
+                "Asia/Shanghai",
+                "2026-09-21T09:00:00",
+                3
+            ),
+            vec!["09-21", "09-28", "10-05"]
+        );
+    }
+
+    #[test]
+    fn weekly_mon_wed_fri() {
+        assert_eq!(
+            expand_dates(
+                "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+                "Asia/Shanghai",
+                "2026-09-21T09:00:00",
+                4
+            ),
+            vec!["09-21", "09-23", "09-25", "09-28"]
+        );
+    }
+
+    #[test]
+    fn weekly_every_two_weeks() {
+        assert_eq!(
+            expand_dates(
+                "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO",
+                "Asia/Shanghai",
+                "2026-09-21T09:00:00",
+                3
+            ),
+            vec!["09-21", "10-05", "10-19"]
+        );
+    }
+
+    // ------------------------------ 月重复 ------------------------------
+
+    #[test]
+    fn monthly_first_day() {
+        assert_eq!(
+            expand_dates(
+                "FREQ=MONTHLY;BYMONTHDAY=1",
+                "Asia/Shanghai",
+                "2026-01-01T09:00:00",
+                3
+            ),
+            vec!["01-01", "02-01", "03-01"]
+        );
+    }
+
+    /// 每月 31 日：只有 31 天的月份才发生，短月**跳过**而不是挪到 30/28 日。
+    /// 这是"不可用日期"策略里最容易引起争议的一条，因此用测试固定行为。
+    #[test]
+    fn monthly_31st_skips_short_months() {
+        let dates = expand_dates(
+            "FREQ=MONTHLY;BYMONTHDAY=31",
+            "Asia/Shanghai",
+            "2026-01-31T09:00:00",
+            5,
+        );
+        assert_eq!(
+            dates,
+            vec!["01-31", "03-31", "05-31", "07-31", "08-31"],
+            "2/4/6 月没有 31 日，应跳过而不是顺延"
+        );
+    }
+
+    /// 每月最后一天：不论大小月都应落在当月最后一天
+    #[test]
+    fn monthly_last_day_follows_month_length() {
+        let dates = expand_dates(
+            "FREQ=MONTHLY;BYMONTHDAY=-1",
+            "Asia/Shanghai",
+            "2026-01-31T09:00:00",
+            5,
+        );
+        assert_eq!(
+            dates,
+            vec!["01-31", "02-28", "03-31", "04-30", "05-31"],
+            "平年 2 月是 28 日"
+        );
+    }
+
+    // ------------------------------ 年重复 ------------------------------
+
+    #[test]
+    fn yearly_fixed_date() {
+        assert_eq!(
+            expand_dates(
+                "FREQ=YEARLY;BYMONTH=9;BYMONTHDAY=21",
+                "Asia/Shanghai",
+                "2026-09-21T09:00:00",
+                3
+            ),
+            vec!["09-21", "09-21", "09-21"]
+        );
+    }
+
+    /// 闰日：2 月 29 日只在闰年发生（2028 是闰年，2027 不是）
+    #[test]
+    fn yearly_feb_29_only_in_leap_years() {
+        let rule = RecurrenceRule::from_rrule_string(
+            "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
+            "Asia/Shanghai",
+            "2027-03-01T09:00:00",
+            true,
+        )
+        .unwrap();
+        let occ = rule.expand(3).unwrap();
+        let years: Vec<i32> = occ
+            .iter()
+            .map(|o| {
+                use chrono::Datelike;
+                o.local.year()
+            })
+            .collect();
+        assert_eq!(years, vec![2028, 2032, 2036], "只应在闰年出现");
+        for o in &occ {
+            assert_eq!(o.local.date().format("%m-%d").to_string(), "02-29");
+        }
+    }
+
+    // ---------------------------- DST / 时区 ----------------------------
+
+    /// 本地 09:00 的重复任务在夏令时切换前后都必须保持"当地时间 09:00"，
+    /// 而不是固定 UTC（那会导致切换后本地时间漂移到 08:00 或 10:00）。
+    #[test]
+    fn dst_keeps_local_wall_clock() {
+        let rule = RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY",
+            "America/New_York",
+            // 2026-03-08 是美国东部进入夏令时的日子（02:00 → 03:00）
+            "2026-03-07T09:00:00",
+            true,
+        )
+        .unwrap();
+        let occ = rule.expand(4).unwrap();
+        for o in &occ {
+            assert_eq!(
+                o.local.time().to_string(),
+                "09:00:00",
+                "跨夏令时切换后，本地墙上时刻必须仍是 09:00"
+            );
+        }
+        let utc = occurrences_to_utc(&occ, "America/New_York");
+        // 切换前 EST(-5) → 14:00 UTC；切换后 EDT(-4) → 13:00 UTC
+        let hours: Vec<u32> = utc
+            .iter()
+            .map(|(_, u)| u.format("%H").to_string().parse().unwrap())
+            .collect();
+        assert_eq!(hours.first(), Some(&14), "03-07 仍是 EST");
+        assert_eq!(hours.last(), Some(&13), "03-10 已是 EDT");
     }
 }

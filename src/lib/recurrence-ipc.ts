@@ -340,7 +340,8 @@ export function touchesMonthEdge(opts: {
   setPos?: SetPos | null
 }): boolean {
   if (opts.freq === 'monthly') return true
-  if (opts.byMonthday?.some((d) => d > 28)) return true
+  // 负数（-1 = 最后一天）同样触及月末策略，与后端 edge_policy_note 保持一致
+  if (opts.byMonthday?.some((d) => d < 0 || d > 28)) return true
   if (opts.setPos && (opts.setPos.nth === 5 || opts.setPos.nth === -1)) return true
   return false
 }

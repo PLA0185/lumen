@@ -337,6 +337,21 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
                     {d}
                   </button>
                 ))}
+                {/*
+                  "每月最后一天"用 RFC 5545 的负数写法（BYMONTHDAY=-1）。
+                  后端本来就该支持它，但此前解析器只接受正数，导致这条最常见的
+                  需求既选不出来也存不下——所以这里补一个明确的入口。
+                */}
+                <button
+                  type="button"
+                  className={`daybtn daybtn--wide${byMonthday.includes(-1) ? ' daybtn--on' : ''}`}
+                  aria-pressed={byMonthday.includes(-1)}
+                  aria-label="每月最后一天"
+                  title="无论大小月都落在当月最后一天（2 月是 28/29 日）"
+                  onClick={() => toggleMonthday(-1)}
+                >
+                  最后一天
+                </button>
               </div>
               {byMonthday.length === 0 && (
                 <p className="setgroup__hint" style={{ marginTop: 4 }}>

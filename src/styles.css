@@ -2691,6 +2691,13 @@ input[type='number'].input--compact {
   max-width: 420px;
 }
 
+/* "最后一天"不是数字，文字更长，横跨三格才不会挤成一条 */
+.daybtn--wide {
+  grid-column: span 3;
+  font-size: 0.72em;
+  white-space: nowrap;
+}
+
 .daybtn {
   display: grid;
   place-items: center;
