@@ -98,7 +98,9 @@ jobs:
 
       - name: 发版前完整门禁
         if: steps.guard.outputs.ok == 'true'
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm typecheck
           pnpm test
           pnpm build

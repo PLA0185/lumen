@@ -48,7 +48,8 @@ BASE=`d6e76feec660d8532e4ddfafe7e99a22daa4fa97`。本节先记录代码与本机
 - **Acceptance**：补充可自启、自停应用且每次创建独立临时 profile 的启动器；
   seed 失败可按前缀找回 ID，清理串行重试并断言残留为零。
 - **Release**：CI 与 Release 检查三处版本一致；Release 校验 tag 与版本，复用完整质量门禁；
-  移除把 main 当作 tag 的手动触发路径。仍保持 0.3.0，未发布 0.4.0。
+  门禁脚本用 bash 的 `set -euo pipefail` 确保任一步失败就停；移除把 main 当作 tag 的
+  手动触发路径。仍保持 0.3.0，未发布 0.4.0。
 
 ### 没做到 / 尚未验证
 
