@@ -77,9 +77,18 @@ pub struct Series {
     pub recurrence_end_kind: String,
     pub recurrence_until: Option<String>,
     pub recurrence_count: Option<i64>,
+    pub terminated_from_occurrence_key: Option<String>,
     pub rule_version: i64,
     pub created_at: String,
     pub updated_at: String,
+}
+
+fn end_columns(rule: &RecurrenceRule) -> (&'static str, Option<&str>, Option<i64>) {
+    match &rule.end {
+        EndCondition::Never => ("never", None, None),
+        EndCondition::Until { date } => ("until", Some(date.as_str()), None),
+        EndCondition::Count { count } => ("count", None, Some(*count)),
+    }
 }
 
 /// 规则分段
@@ -91,6 +100,7 @@ pub struct Segment {
     pub rule_version: i64,
     pub effective_from_occurrence: String,
     pub new_rrule: Option<String>,
+    pub new_tzid: Option<String>,
     pub override_title: Option<String>,
     pub override_description: Option<String>,
     pub override_priority: Option<i64>,
@@ -180,18 +190,36 @@ fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTim
         base.has_start_time == 1,
     )?;
     out.push((1, None, base_rule.clone(), FieldOverride::default()));
-    let mut current_rule = base_rule;
-    let mut current_override = FieldOverride::default();
-
-    for seg in segments {
-        let anchor = segment_anchor_local(seg, &base.tzid)?;
-        let rule = match &seg.new_rrule {
-            Some(r) => {
-                RecurrenceRule::from_rrule_string(r, &base.tzid, &anchor, base.has_start_time == 1)?
-            }
-            None => current_rule.clone(),
+    // A later edit supersedes older edits at and after its anchor. Sorting by
+    // anchor alone would let a previously scheduled future edit revive after
+    // a newer "whole series" change made from an earlier occurrence.
+    let mut ordered = segments.to_vec();
+    ordered.sort_by_key(|seg| seg.rule_version);
+    for seg in &ordered {
+        out.retain(|(_, anchor, _, _)| {
+            anchor
+                .as_deref()
+                .is_none_or(|old| old < seg.effective_from_occurrence.as_str())
+        });
+        let previous = out.last().expect("base recurrence rule is always present");
+        let current_rule = previous.2.clone();
+        let mut current_override = previous.3.clone();
+        let active_tzid = seg.new_tzid.as_deref().unwrap_or(&current_rule.tzid);
+        let rule = if seg.new_rrule.is_some() || seg.new_tzid.is_some() {
+            let anchor = segment_anchor_local(seg, active_tzid, &current_rule.dtstart_local)?;
+            let rrule = match &seg.new_rrule {
+                Some(r) => r.clone(),
+                None => current_rule.to_rrule_string()?,
+            };
+            RecurrenceRule::from_rrule_string(
+                &rrule,
+                active_tzid,
+                &anchor,
+                base.has_start_time == 1,
+            )?
+        } else {
+            current_rule.clone()
         };
-        current_rule = rule.clone();
         if let Some(title) = &seg.override_title {
             current_override.title = Some(title.clone());
         }
@@ -222,7 +250,7 @@ fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTim
 }
 
 /// 分段生效起点的本地日期串
-fn segment_anchor_local(seg: &Segment, tzid: &str) -> AppResult<String> {
+fn segment_anchor_local(seg: &Segment, tzid: &str, previous_start: &str) -> AppResult<String> {
     let dt =
         chrono::DateTime::parse_from_rfc3339(&seg.effective_from_occurrence).map_err(|_| {
             AppError::validation(format!(
@@ -233,8 +261,17 @@ fn segment_anchor_local(seg: &Segment, tzid: &str) -> AppResult<String> {
     let tz: chrono_tz::Tz = tzid
         .parse()
         .map_err(|_| AppError::validation("重复系列时区无效"))?;
-    Ok(dt
-        .with_timezone(&tz)
+    // A timezone change keeps the wall-clock time of the prior schedule.
+    // The UTC anchor still determines which segment owns an occurrence.
+    let local = dt.with_timezone(&tz);
+    let time = if seg.new_tzid.is_some() {
+        parse_local_datetime(previous_start)?.time()
+    } else {
+        local.time()
+    };
+    Ok(local
+        .date_naive()
+        .and_time(time)
         .format("%Y-%m-%dT%H:%M:%S")
         .to_string())
 }
@@ -315,20 +352,15 @@ async fn materialize_range(
     if end_utc <= start_utc {
         return Err(AppError::validation("物化终点必须晚于起点"));
     }
-    let tz: chrono_tz::Tz = series
-        .tzid
-        .parse()
-        .map_err(|_| AppError::validation("重复系列时区无效"))?;
-
     let mut created = 0usize;
-    let to_utc = |local: &str| -> AppResult<String> {
+    let to_utc = |local: &str, tzid: &str| -> AppResult<String> {
         let dt = parse_local_datetime(local)?;
         let pair = occurrences_to_utc(
             &[Occurrence {
                 local: dt,
                 index: 0,
             }],
-            &series.tzid,
+            tzid,
         );
         Ok(to_db_time(pair[0].1))
     };
@@ -338,12 +370,33 @@ async fn materialize_range(
     let mut candidates: Vec<(String, i64, Occurrence, FieldOverride)> = Vec::new();
     for (i, (version, anchor, rule, ov)) in timeline.iter().enumerate() {
         let next_anchor = timeline.get(i + 1).and_then(|segment| segment.1.as_deref());
+        let tz: chrono_tz::Tz = rule
+            .tzid
+            .parse()
+            .map_err(|_| AppError::validation("重复系列时区无效"))?;
         let local_start = start_utc.with_timezone(&tz).naive_local() - chrono::Duration::days(1);
         let local_end = end_utc.with_timezone(&tz).naive_local() + chrono::Duration::days(1);
         for o in rule.expand_between(local_start, local_end, limit + 1)? {
-            let key = to_utc(&o.local.to_string())?;
+            // The persisted end columns constrain the active rule too. Old
+            // segments retain their historical RRULE end condition.
+            if i + 1 == timeline.len()
+                && ((series.recurrence_end_kind == "until"
+                    && series
+                        .recurrence_until
+                        .as_deref()
+                        .is_some_and(|end| o.local.date().to_string().as_str() > end))
+                    || (series.recurrence_end_kind == "count"
+                        && series.recurrence_count.is_some_and(|end| o.index > end)))
+            {
+                continue;
+            }
+            let key = to_utc(&o.local.to_string(), &rule.tzid)?;
             if key.as_str() < range_start_utc
                 || key.as_str() >= range_end_utc
+                || series
+                    .terminated_from_occurrence_key
+                    .as_deref()
+                    .is_some_and(|cutoff| key.as_str() >= cutoff)
                 || anchor.as_deref().is_some_and(|a| key.as_str() < a)
                 || next_anchor.is_some_and(|a| key.as_str() >= a)
             {
@@ -512,6 +565,7 @@ struct SeriesSegmentRow {
     rule_version: i64,
     effective_from_occurrence: String,
     new_rrule: Option<String>,
+    new_tzid: Option<String>,
     override_title: Option<String>,
     override_description: Option<String>,
     override_priority: Option<i64>,
@@ -528,6 +582,7 @@ impl From<SeriesSegmentRow> for Segment {
             rule_version: r.rule_version,
             effective_from_occurrence: r.effective_from_occurrence,
             new_rrule: r.new_rrule,
+            new_tzid: r.new_tzid,
             override_title: r.override_title,
             override_description: r.override_description,
             override_priority: r.override_priority,
@@ -582,11 +637,7 @@ pub async fn create_recurring_impl(
     let series_id = uuid::Uuid::now_v7().to_string();
 
     // 结束条件拆成三列存储，便于查询与校验互斥
-    let (end_kind, end_until, end_count) = match &rule.end {
-        EndCondition::Never => ("never", None, None),
-        EndCondition::Until { date } => ("until", Some(date.clone()), None),
-        EndCondition::Count { count } => ("count", None, Some(*count)),
-    };
+    let (end_kind, end_until, end_count) = end_columns(&rule);
 
     let mut tx = db.pool().begin().await?;
 
@@ -603,7 +654,7 @@ pub async fn create_recurring_impl(
     .bind(&input.dtstart_local)
     .bind(has_start_time as i64)
     .bind(end_kind)
-    .bind(&end_until)
+    .bind(end_until)
     .bind(end_count)
     .bind(&now)
     .execute(&mut *tx)
@@ -834,12 +885,15 @@ pub async fn recurring_get(
     .fetch_all(state.db.pool())
     .await?;
 
-    let rule = RecurrenceRule::from_rrule_string(
-        &series.rrule,
-        &series.tzid,
-        &series.dtstart_local,
-        series.has_start_time == 1,
-    )?;
+    let segments: Vec<Segment> = rows.into_iter().map(Segment::from).collect();
+    let timeline = build_rule_timeline(&series, &segments)?;
+    let now = to_db_time(utc_now());
+    let rule = timeline
+        .iter()
+        .rev()
+        .find(|(_, anchor, _, _)| anchor.as_deref().is_none_or(|key| key <= now.as_str()))
+        .map(|(_, _, rule, _)| rule)
+        .ok_or_else(|| AppError::conflict("重复系列没有可用规则"))?;
 
     let skips: Vec<(String,)> = sqlx::query_as(
         "SELECT occurrence_key FROM task_series_skips WHERE series_id = ?1 ORDER BY occurrence_key",
@@ -847,13 +901,22 @@ pub async fn recurring_get(
     .bind(&series_id)
     .fetch_all(state.db.pool())
     .await?;
+    let next_future: Option<String> = sqlx::query_scalar(
+        "SELECT MIN(occurrence_key) FROM tasks
+         WHERE series_id = ?1 AND occurrence_key >= ?2 AND deleted_at IS NULL",
+    )
+    .bind(&series_id)
+    .bind(&now)
+    .fetch_one(state.db.pool())
+    .await?;
 
     Ok(serde_json::json!({
         "series": series,
         "rule": rule,
         "description": rule.describe(),
         "edgeNote": rule.edge_policy_note(),
-        "segments": rows.into_iter().map(Segment::from).collect::<Vec<_>>(),
+        "nextFutureOccurrenceKey": next_future,
+        "segments": segments,
         "skippedOccurrences": skips.into_iter().map(|(k,)| k).collect::<Vec<_>>(),
     }))
 }
@@ -889,31 +952,88 @@ pub async fn recurring_occurrences(
         .collect())
 }
 
-/// 清理某系列在给定时间点之后、且未被用户改动的实例。
-///
-/// 用于"此次及以后"修改规则：规则变了，旧的未来实例必须重算，
-/// 但 `occurrence_kind = 'exception'`（用户单独改过）与已完成的实例必须保留——
-/// §5 明确要求"已完成实例、修改记录和历史不能因改规则而消失"。
+/// The sole rebuild-safety decision for a materialized occurrence. The
+/// `is_user_modified` bit records past instance actions; the related-row
+/// checks protect data written through every child-table IPC, including
+/// direct calls that never touch the parent task row.
+async fn is_occurrence_rebuild_safe(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    task_id: &str,
+) -> AppResult<bool> {
+    let safe: i64 = sqlx::query_scalar(
+        "SELECT CASE WHEN
+             t.series_id IS NOT NULL AND t.occurrence_kind = 'generated'
+             AND t.is_exception = 0 AND t.is_user_modified = 0
+             AND t.deleted_at IS NULL AND t.status = 'todo'
+             AND t.completed_at IS NULL AND t.actual_minutes = 0
+             AND t.is_pinned = 0 AND t.is_favorite = 0
+             AND t.planned_at IS t.occurrence_key AND t.due_at IS NULL
+             AND t.has_due_time = 0 AND t.period_type = 'none'
+             AND t.has_planned_time = s.has_start_time
+             AND NOT EXISTS (SELECT 1 FROM subtasks x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM attachments x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM reminders x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM focus_sessions x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM task_dependencies x
+                             WHERE x.task_id = t.id OR x.depends_on_id = t.id)
+             AND NOT EXISTS (
+               SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id
+               AND NOT EXISTS (SELECT 1 FROM task_series_tags st
+                               WHERE st.series_id = t.series_id AND st.tag_id = tt.tag_id))
+             AND NOT EXISTS (
+               SELECT 1 FROM task_series_tags st WHERE st.series_id = t.series_id
+               AND NOT EXISTS (SELECT 1 FROM task_tags tt
+                               WHERE tt.task_id = t.id AND tt.tag_id = st.tag_id))
+           THEN 1 ELSE 0 END
+         FROM tasks t JOIN task_series s ON s.id = t.series_id WHERE t.id = ?1",
+    )
+    .bind(task_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(safe == 1)
+}
+
+/// Rebuild only untouched cache rows. Unsafe rows become stable exceptions so
+/// a later rebuild cannot delete them after an attachment/reminder is removed.
 async fn purge_future_generated(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     series_id: &str,
     from_key: &str,
-) -> AppResult<usize> {
-    let n = sqlx::query(
-        "DELETE FROM tasks
-         WHERE series_id = ?1
-           AND occurrence_key >= ?2
-           AND occurrence_kind = 'generated'
-           AND status <> 'done'
-           AND completed_at IS NULL",
+) -> AppResult<(usize, usize)> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM tasks WHERE series_id = ?1 AND occurrence_key >= ?2
+         AND occurrence_kind = 'generated' ORDER BY occurrence_key, id",
     )
     .bind(series_id)
     .bind(from_key)
-    .execute(&mut **tx)
-    .await?
-    .rows_affected() as usize;
+    .fetch_all(&mut **tx)
+    .await?;
 
-    Ok(n)
+    let mut purged = 0usize;
+    let mut preserved = 0usize;
+    for id in ids {
+        if is_occurrence_rebuild_safe(tx, &id).await? {
+            purged += sqlx::query(
+                "DELETE FROM tasks WHERE id = ?1 AND occurrence_kind = 'generated'
+                 AND is_user_modified = 0 AND deleted_at IS NULL",
+            )
+            .bind(&id)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected() as usize;
+        } else {
+            preserved += sqlx::query(
+                "UPDATE tasks SET occurrence_kind = 'exception', is_exception = 1
+                 WHERE id = ?1 AND occurrence_kind = 'generated'",
+            )
+            .bind(&id)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected() as usize;
+        }
+    }
+
+    Ok((purged, preserved))
 }
 
 /// 供其它模块引用：给定系列在指定范围内的实例
@@ -1081,6 +1201,8 @@ pub async fn recurring_stats(
 #[serde(rename_all = "camelCase")]
 pub struct InstancePatch {
     #[serde(default)]
+    pub tzid: Option<String>,
+    #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
@@ -1212,6 +1334,38 @@ pub async fn edit_instance_impl(
 
     let series = get_series(state, &series_id).await?;
     let now = to_db_time(utc_now());
+
+    if scope == EditScope::ThisOnly && patch.tzid.is_some() {
+        return Err(AppError::validation("单次任务不能单独更换重复系列的时区"));
+    }
+    let zone_anchor = if scope == EditScope::WholeSeries {
+        &now
+    } else {
+        &occ_key
+    };
+    let segment_rows = sqlx::query_as::<_, SeriesSegmentRow>(
+        "SELECT * FROM task_series_segments WHERE series_id = ?1",
+    )
+    .bind(&series_id)
+    .fetch_all(db.pool())
+    .await?;
+    let segments: Vec<Segment> = segment_rows.into_iter().map(Segment::from).collect();
+    let timeline = build_rule_timeline(&series, &segments)?;
+    let current_tzid = timeline
+        .iter()
+        .rev()
+        .find(|(_, anchor, _, _)| {
+            anchor
+                .as_deref()
+                .is_none_or(|key| key <= zone_anchor.as_str())
+        })
+        .map(|(_, _, rule, _)| rule.tzid.clone())
+        .unwrap_or_else(|| series.tzid.clone());
+    let requested_tzid = patch.tzid.as_deref().unwrap_or(&current_tzid);
+    let _: chrono_tz::Tz = requested_tzid
+        .parse()
+        .map_err(|_| AppError::validation("时区名称无效，请使用 IANA 时区，例如 Asia/Shanghai"))?;
+    let changed_tzid = (requested_tzid != current_tzid).then(|| requested_tzid.to_string());
 
     // These fields have no segment-level representation. They can be changed
     // atomically on one occurrence, but a broader scope would silently drop
@@ -1405,7 +1559,7 @@ pub async fn edit_instance_impl(
                     // 新规则必须能解析，且要与系列的时区/起点兼容
                     RecurrenceRule::from_rrule_string(
                         r,
-                        &series.tzid,
+                        requested_tzid,
                         &series.dtstart_local,
                         series.has_start_time == 1,
                     )?;
@@ -1433,16 +1587,17 @@ pub async fn edit_instance_impl(
             let seg_id = uuid::Uuid::now_v7().to_string();
             sqlx::query(
                 "INSERT INTO task_series_segments
-                    (id, series_id, rule_version, effective_from_occurrence, new_rrule,
+                    (id, series_id, rule_version, effective_from_occurrence, new_rrule, new_tzid,
                      override_title, override_description, override_priority, override_project_id,
                      override_category_id, override_estimated_minutes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, ?10)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, ?10, ?11)",
             )
             .bind(&seg_id)
             .bind(&series_id)
             .bind(next_ver)
             .bind(&occ_key)
             .bind(&effective_rrule)
+            .bind(&changed_tzid)
             .bind(
                 patch
                     .title
@@ -1458,17 +1613,38 @@ pub async fn edit_instance_impl(
             .await?;
 
             // 系列自身的版本号推进，便于排查
-            sqlx::query("UPDATE task_series SET rule_version = ?1, updated_at = ?2 WHERE id = ?3")
+            if let Some(ref r) = effective_rrule {
+                let parsed = RecurrenceRule::from_rrule_string(
+                    r,
+                    requested_tzid,
+                    &series.dtstart_local,
+                    series.has_start_time == 1,
+                )?;
+                let (kind, until, count) = end_columns(&parsed);
+                sqlx::query("UPDATE task_series SET rule_version = ?1, recurrence_end_kind = ?2, recurrence_until = ?3, recurrence_count = ?4, updated_at = ?5 WHERE id = ?6")
+                    .bind(next_ver)
+                    .bind(kind)
+                    .bind(until)
+                    .bind(count)
+                    .bind(&now)
+                    .bind(&series_id)
+                    .execute(&mut *tx)
+                    .await?;
+            } else {
+                sqlx::query(
+                    "UPDATE task_series SET rule_version = ?1, updated_at = ?2 WHERE id = ?3",
+                )
                 .bind(next_ver)
                 .bind(&now)
                 .bind(&series_id)
                 .execute(&mut *tx)
                 .await?;
+            }
 
             // 删除"该次及以后、未改动且未完成"的旧实例。
             // 已完成的、以及用户单独改过的（exception）一律保留——
             // §5 明确要求历史不能因改规则而消失。
-            let purged = purge_future_generated(&mut tx, &series_id, &occ_key).await?;
+            let (purged, preserved) = purge_future_generated(&mut tx, &series_id, &occ_key).await?;
             let now_horizon = utc_now() + chrono::Duration::days(365);
             let anchor_dt = chrono::DateTime::parse_from_rfc3339(&occ_key)
                 .map_err(|_| AppError::validation("发生时间格式无效"))?
@@ -1495,7 +1671,7 @@ pub async fn edit_instance_impl(
 
             log::info!(
                 "系列 {series_id} 从 {occ_key} 起改用新规则（版本 {next_ver}）：\
-                 清理 {purged} 个旧实例，重新生成 {regenerated} 个"
+                 清理 {purged} 个纯物化实例，保留 {preserved} 个已使用实例，重新生成 {regenerated} 个"
             );
 
             Ok(ScopeActionResult {
@@ -1503,8 +1679,8 @@ pub async fn edit_instance_impl(
                 affected_history: history,
                 regenerated: regenerated as i64,
                 message: format!(
-                    "已修改这一次及以后的所有发生（规则版本 {next_ver}）；\
-                     之前的 {history} 个已完成记录保持不变"
+                    "已修改这一次及以后的发生（规则版本 {next_ver}）；\
+                     保留 {preserved} 个已有数据的实例，之前的 {history} 个已完成记录保持不变"
                 ),
             })
         }
@@ -1517,22 +1693,28 @@ pub async fn edit_instance_impl(
 
             let mut tx = db.pool().begin().await?;
             let mut rebuild_from: Option<String> = None;
+            let mut preserved_by_rebuild = 0usize;
 
             if let Some(r) = new_rrule.as_ref().filter(|r| !r.trim().is_empty()) {
-                RecurrenceRule::from_rrule_string(
+                let parsed = RecurrenceRule::from_rrule_string(
                     r,
-                    &series.tzid,
+                    requested_tzid,
                     &series.dtstart_local,
                     series.has_start_time == 1,
                 )?;
+                let (kind, until, count) = end_columns(&parsed);
                 // `task_series.rrule` is the original segment's rule. Changing
                 // it here would retroactively rewrite the base timeline when
                 // an old range is requested again. The new rule lives only in
                 // the segment whose anchor starts the future schedule.
                 sqlx::query(
-                    "UPDATE task_series SET rule_version = rule_version + 1, updated_at = ?1
-                     WHERE id = ?2",
+                    "UPDATE task_series SET rule_version = rule_version + 1,
+                     recurrence_end_kind = ?1, recurrence_until = ?2,
+                     recurrence_count = ?3, updated_at = ?4 WHERE id = ?5",
                 )
+                .bind(kind)
+                .bind(until)
+                .bind(count)
                 .bind(&now)
                 .bind(&series_id)
                 .execute(&mut *tx)
@@ -1564,18 +1746,20 @@ pub async fn edit_instance_impl(
                 .await?;
                 sqlx::query(
                     "INSERT INTO task_series_segments
-                     (id, series_id, rule_version, effective_from_occurrence, new_rrule, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                     (id, series_id, rule_version, effective_from_occurrence, new_rrule, new_tzid, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .bind(uuid::Uuid::now_v7().to_string())
                 .bind(&series_id)
                 .bind(next_ver)
                 .bind(anchor)
                 .bind(r)
+                .bind(&changed_tzid)
                 .bind(&now)
                 .execute(&mut *tx)
                 .await?;
-                purge_future_generated(&mut tx, &series_id, anchor).await?;
+                let (_, preserved) = purge_future_generated(&mut tx, &series_id, anchor).await?;
+                preserved_by_rebuild = preserved;
                 let end = to_db_time(utc_now() + chrono::Duration::days(365));
                 sqlx::query(
                     "INSERT INTO task_series_rebuilds
@@ -1722,7 +1906,7 @@ pub async fn edit_instance_impl(
                 regenerated,
                 message: format!(
                     "已修改整个系列（本次同步了 {affected} 个未完成实例）；\
-                     已完成的 {history} 个历史记录保持原样"
+                     保留 {preserved_by_rebuild} 个已有数据的实例，已完成的 {history} 个历史记录保持原样"
                 ),
             })
         }
@@ -1889,11 +2073,16 @@ pub async fn delete_recurring_impl(
             .await?
             .rows_affected() as i64;
 
-            // 系列结束条件改为"到该次为止"，从而不再产生未来发生
+            // The stable UTC key is an exclusive cutoff. Updating only the
+            // local UNTIL date would allow future occurrences to reappear,
+            // especially near timezone/DST boundaries.
             sqlx::query(
-                "UPDATE task_series SET recurrence_end_kind = 'until',
-                        recurrence_until = substr(?1, 1, 10), updated_at = ?2
-                 WHERE id = ?3",
+                "UPDATE task_series SET
+                   terminated_from_occurrence_key = CASE
+                     WHEN terminated_from_occurrence_key IS NULL
+                       OR terminated_from_occurrence_key > ?1 THEN ?1
+                     ELSE terminated_from_occurrence_key END,
+                   updated_at = ?2 WHERE id = ?3",
             )
             .bind(&occ_key)
             .bind(&now)

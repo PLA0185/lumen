@@ -274,6 +274,645 @@ async fn whole_series_rule_change_removes_old_future_schedule() {
 }
 
 #[tokio::test]
+async fn rule_rebuild_preserves_attachment_and_trashed_occurrence() {
+    let (state, dir) = setup("rec-preserve-attachment-trash").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "保留实例".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2026-10-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(10),
+        },
+    )
+    .await
+    .unwrap();
+    let rows = list_instances(&state, &created.series_id).await.unwrap();
+    let attached = &rows[1];
+    let trashed = &rows[2];
+    let file_name = format!("{}.pdf", uuid::Uuid::now_v7());
+    let stored_path = format!("attachments/{file_name}");
+    let file = state.db.data_dir().join(&stored_path);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"user attachment").unwrap();
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    sqlx::query(
+        "INSERT INTO attachments
+         (id, task_id, file_name, storage_mode, stored_path, created_at)
+         VALUES ('keep-copy', ?1, ?2, 'copied', ?3, ?4)",
+    )
+    .bind(&attached.id)
+    .bind(&file_name)
+    .bind(&stored_path)
+    .bind(&now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    skip_occurrence_impl(&state, trashed.id.clone())
+        .await
+        .unwrap();
+
+    edit_instance_impl(
+        &state,
+        rows[0].id.clone(),
+        EditScope::WholeSeries,
+        InstancePatch::default(),
+        Some("FREQ=WEEKLY;BYDAY=TH".into()),
+        true,
+    )
+    .await
+    .unwrap();
+
+    let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id IN (?1, ?2)")
+        .bind(&attached.id)
+        .bind(&trashed.id)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(retained, 2, "带附件或在回收站的实例不得因改规则而硬删除");
+    let attachment_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id = 'keep-copy'")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(attachment_count, 1);
+    crate::attachments::cleanup_orphans_impl(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        file.exists(),
+        "仍被实例引用的 copied attachment 不得被孤儿清理删除"
+    );
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn rule_rebuild_preserves_child_data_and_reverted_instance_state() {
+    let (state, dir) = setup("rec-preserve-child-state").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "保留用户数据".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2026-10-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(10),
+        },
+    )
+    .await
+    .unwrap();
+    let rows = list_instances(&state, &created.series_id).await.unwrap();
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    sqlx::query(
+        "INSERT INTO subtasks (id, task_id, title, created_at, updated_at)
+         VALUES ('preserve-subtask', ?1, '需要完成', ?2, ?2)",
+    )
+    .bind(&rows[1].id)
+    .bind(&now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reminders (id, task_id, kind, remind_at, created_at, updated_at)
+         VALUES ('preserve-reminder', ?1, 'custom', ?2, ?3, ?3)",
+    )
+    .bind(&rows[2].id)
+    .bind("2026-10-03T08:00:00.000Z")
+    .bind(&now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO task_dependencies (task_id, depends_on_id, created_at)
+         VALUES (?1, ?2, ?3)",
+    )
+    .bind(&rows[3].id)
+    .bind(&rows[4].id)
+    .bind(&now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    // Even if the visible status is later reverted, this occurrence was used.
+    for status in ["doing", "todo"] {
+        sqlx::query("UPDATE tasks SET status = ?1 WHERE id = ?2")
+            .bind(status)
+            .bind(&rows[5].id)
+            .execute(state.db.pool())
+            .await
+            .unwrap();
+    }
+
+    edit_instance_impl(
+        &state,
+        rows[0].id.clone(),
+        EditScope::WholeSeries,
+        InstancePatch::default(),
+        Some("FREQ=WEEKLY;BYDAY=TH".into()),
+        true,
+    )
+    .await
+    .unwrap();
+    for row in &rows[1..=5] {
+        let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id = ?1")
+            .bind(&row.id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(retained, 1, "已使用的实例 {} 不得硬删", row.id);
+    }
+    for table in ["subtasks", "reminders", "task_dependencies"] {
+        let query = format!("SELECT COUNT(*) FROM {table}");
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "关联数据 {table} 不得丢失");
+    }
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn delete_from_occurrence_prevents_future_materialization() {
+    let (state, dir) = setup("rec-terminate-from").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "停止未来".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2026-10-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(5),
+        },
+    )
+    .await
+    .unwrap();
+    let rows = list_instances(&state, &created.series_id).await.unwrap();
+    delete_recurring_impl(&state, rows[1].id.clone(), DeleteMode::ThisAndFuture, true)
+        .await
+        .unwrap();
+    let added = recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        "2026-11-01T00:00:00.000Z".into(),
+        "2026-11-15T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(added, 0, "停止系列后浏览未来日历不得重新生成实例");
+    let visible: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tasks WHERE series_id = ?1 AND deleted_at IS NULL",
+    )
+    .bind(&created.series_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(visible, 1);
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn count_and_until_bound_materialization_across_dst() {
+    let (state, dir) = setup("rec-end-dst").await;
+    for (rrule, expected) in [
+        ("FREQ=DAILY;COUNT=3", 3usize),
+        ("FREQ=DAILY;UNTIL=20260308", 2usize),
+    ] {
+        let created = create_recurring_impl(
+            &state,
+            CreateRecurringInput {
+                title: rrule.into(),
+                description: None,
+                priority: None,
+                project_id: None,
+                category_id: None,
+                estimated_minutes: None,
+                tag_ids: vec![],
+                rrule: rrule.into(),
+                tzid: Some("America/New_York".into()),
+                dtstart_local: "2026-03-07T09:00:00".into(),
+                has_start_time: Some(true),
+                due_local: None,
+                materialize_days: Some(20),
+            },
+        )
+        .await
+        .unwrap();
+        let rows = list_instances(&state, &created.series_id).await.unwrap();
+        assert_eq!(rows.len(), expected, "{rrule}");
+        let later = recurring_materialize_inner(
+            &state,
+            created.series_id,
+            "2026-04-01T00:00:00.000Z".into(),
+            "2026-04-20T00:00:00.000Z".into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(later, 0, "{rrule} 的结束条件不得在未来失效");
+        if rrule.contains("COUNT") {
+            assert!(rows[0].occurrence_key.as_deref().unwrap().contains("14:00"));
+            assert!(rows[1].occurrence_key.as_deref().unwrap().contains("13:00"));
+        }
+    }
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn timezone_change_keeps_history_and_uses_new_dst_offset() {
+    let (state, dir) = setup("rec-change-timezone").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "跨时区".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2027-03-08T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    let range_start = "2027-03-08T00:00:00.000Z".to_string();
+    let range_end = "2027-03-18T00:00:00.000Z".to_string();
+    recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        range_start.clone(),
+        range_end.clone(),
+    )
+    .await
+    .unwrap();
+    let old = find_by_occurrence(&state, &created.series_id, "2027-03-08T09:00:00.000Z")
+        .await
+        .unwrap();
+    let target = find_by_occurrence(&state, &created.series_id, "2027-03-10T09:00:00.000Z")
+        .await
+        .unwrap();
+    edit_instance_impl(
+        &state,
+        target.id,
+        EditScope::ThisAndFuture,
+        InstancePatch {
+            tzid: Some("America/New_York".into()),
+            ..Default::default()
+        },
+        Some("FREQ=DAILY".into()),
+        false,
+    )
+    .await
+    .unwrap();
+    recurring_materialize_inner(&state, created.series_id.clone(), range_start, range_end)
+        .await
+        .unwrap();
+    let old_after = find_by_occurrence(&state, &created.series_id, "2027-03-08T09:00:00.000Z")
+        .await
+        .unwrap();
+    assert_eq!(old.id, old_after.id, "旧实例身份不能被新时区重解释");
+    let rows = list_instances(&state, &created.series_id).await.unwrap();
+    assert!(rows
+        .iter()
+        .any(|t| t.occurrence_key.as_deref() == Some("2027-03-11T14:00:00.000Z")));
+    assert!(rows
+        .iter()
+        .any(|t| t.occurrence_key.as_deref() == Some("2027-03-14T13:00:00.000Z")));
+    assert!(!rows
+        .iter()
+        .any(|t| t.occurrence_key.as_deref() == Some("2027-03-11T09:00:00.000Z")));
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn newer_whole_series_rule_supersedes_old_future_segment() {
+    let (state, dir) = setup("rec-segment-supersede").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "分段覆盖".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2027-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    let sid = &created.series_id;
+    recurring_materialize_inner(
+        &state,
+        sid.clone(),
+        "2027-09-01T00:00:00.000Z".into(),
+        "2027-10-20T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    let future = find_by_occurrence(&state, sid, "2027-10-01T09:00:00.000Z")
+        .await
+        .unwrap();
+    edit_instance_impl(
+        &state,
+        future.id,
+        EditScope::ThisAndFuture,
+        InstancePatch::default(),
+        Some("FREQ=WEEKLY".into()),
+        false,
+    )
+    .await
+    .unwrap();
+    let first = find_by_occurrence(&state, sid, "2027-01-01T09:00:00.000Z")
+        .await
+        .unwrap();
+    edit_instance_impl(
+        &state,
+        first.id,
+        EditScope::WholeSeries,
+        InstancePatch::default(),
+        Some("FREQ=MONTHLY".into()),
+        false,
+    )
+    .await
+    .unwrap();
+    recurring_materialize_inner(
+        &state,
+        sid.clone(),
+        "2027-10-01T00:00:00.000Z".into(),
+        "2027-10-20T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    assert!(find_by_occurrence(&state, sid, "2027-10-01T09:00:00.000Z")
+        .await
+        .is_some());
+    assert!(
+        find_by_occurrence(&state, sid, "2027-10-08T09:00:00.000Z")
+            .await
+            .is_none(),
+        "较旧的未来每周分段不得在整系列月规则之后复活"
+    );
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn tag_merge_updates_future_series_template() {
+    use crate::organize::{merge_tag_impl, MergeInput};
+    let (state, dir) = setup("rec-tag-merge").await;
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    for id in ["old-tag", "new-tag"] {
+        sqlx::query(
+            "INSERT INTO tags (id, name, sort_order, created_at, updated_at)
+            VALUES (?1, ?1, 0, ?2, ?2)",
+        )
+        .bind(id)
+        .bind(&now)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    }
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "标签合并".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec!["old-tag".into()],
+            rrule: "FREQ=WEEKLY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2027-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    merge_tag_impl(
+        &state.db,
+        &MergeInput {
+            source_ids: vec!["old-tag".into()],
+            target_id: "new-tag".into(),
+        },
+    )
+    .await
+    .unwrap();
+    recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        "2027-02-01T00:00:00.000Z".into(),
+        "2027-02-28T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT tt.tag_id FROM task_tags tt
+        JOIN tasks t ON t.id = tt.task_id WHERE t.series_id = ?1",
+    )
+    .bind(&created.series_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(ids, vec!["new-tag"]);
+    let canonical: Vec<String> =
+        sqlx::query_scalar("SELECT tag_id FROM task_series_tags WHERE series_id = ?1")
+            .bind(&created.series_id)
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(canonical, vec!["new-tag"]);
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn project_merge_updates_future_series_template() {
+    use crate::organize::{merge_project_impl, MergeInput};
+    let (state, dir) = setup("rec-project-merge").await;
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    for id in ["old-project", "new-project"] {
+        sqlx::query(
+            "INSERT INTO projects (id, name, sort_order, created_at, updated_at)
+            VALUES (?1, ?1, 0, ?2, ?2)",
+        )
+        .bind(id)
+        .bind(&now)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    }
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "项目合并".into(),
+            description: None,
+            priority: None,
+            project_id: Some("old-project".into()),
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=WEEKLY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2027-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    merge_project_impl(
+        &state.db,
+        &MergeInput {
+            source_ids: vec!["old-project".into()],
+            target_id: "new-project".into(),
+        },
+    )
+    .await
+    .unwrap();
+    recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        "2027-02-01T00:00:00.000Z".into(),
+        "2027-02-28T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    let project_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT project_id FROM tasks
+        WHERE series_id = ?1 AND deleted_at IS NULL",
+    )
+    .bind(&created.series_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(project_ids, vec!["new-project"]);
+    let canonical: String =
+        sqlx::query_scalar("SELECT project_id FROM task_series_template WHERE series_id = ?1")
+            .bind(&created.series_id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(canonical, "new-project");
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn project_cascade_delete_stops_future_series_materialization() {
+    use crate::organize::{project_delete_impl, OrphanStrategy};
+    let (state, dir) = setup("rec-project-delete").await;
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    sqlx::query(
+        "INSERT INTO projects (id, name, sort_order, created_at, updated_at)
+        VALUES ('delete-project', 'delete-project', 0, ?1, ?1)",
+    )
+    .bind(&now)
+    .execute(state.db.pool())
+    .await
+    .unwrap();
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "删除项目".into(),
+            description: None,
+            priority: None,
+            project_id: Some("delete-project".into()),
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2027-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    project_delete_impl(
+        &state.db,
+        "delete-project",
+        OrphanStrategy::CascadeSoftDelete,
+    )
+    .await
+    .unwrap();
+    let later = recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        "2027-02-01T00:00:00.000Z".into(),
+        "2027-02-28T00:00:00.000Z".into(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(later, 0);
+    let cutoff: Option<String> =
+        sqlx::query_scalar("SELECT terminated_from_occurrence_key FROM task_series WHERE id = ?1")
+            .bind(&created.series_id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(cutoff.as_deref(), Some("1970-01-01T00:00:00.000Z"));
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tasks
+        WHERE series_id = ?1 AND deleted_at IS NULL",
+    )
+    .bind(&created.series_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(live, 0);
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn concurrent_materialization_is_idempotent() {
     let (state, dir) = setup("rec-concurrent").await;
     let created = create_recurring_impl(
