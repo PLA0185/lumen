@@ -13,12 +13,24 @@
  *
  * 直接对应数据库中的五种状态中的四种（归档不在看板中显示，
  * 它属于"从视野中移除"而不是一个工作阶段）。
+ *
+ * ## 跨窗口同步（第三轮整改任务书 §12 / §13）
+ *
+ * 看板自己分页（每页 `PAGE_SIZE` + 「加载更多」），而 OFFSET 分页在数据集变化时
+ * 天然不稳定：已经加载了 1..200，另一个窗口删掉第 50 条，再用 OFFSET 200 取下一页
+ * 就会**漏掉**原来的第 201 条。所以别的窗口一改数据，看板必须作废在飞请求、
+ * 从第一页重取——这与 `App.tsx` 里主列表接 `bus.onTasksChanged` 是同一套做法。
+ *
+ * "分页 + 代际作废"的逻辑全部放在 `../lib/board-paging` 的无 DOM 状态机里：
+ * 本仓库没有 jsdom / testing-library，逻辑留在组件里就等于测不到（§13）。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
+import * as bus from '../lib/bus'
 import { PAGE_SIZE } from '../lib/store'
+import { createBoardPaging } from '../lib/board-paging'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
 import type { Task, TaskQuery, TaskStatus } from '../lib/types'
 import { Icon } from './Icons'
@@ -35,95 +47,61 @@ const COLUMNS: { status: TaskStatus; label: string; hint: string }[] = [
   { status: 'done', label: '已完成', hint: '完成时间会被真实记录' },
 ]
 
+/** 看板的查询条件（不显示归档与回收站内容） */
+function boardQuery(): TaskQuery {
+  return {
+    statuses: ['todo', 'doing', 'waiting', 'done'],
+    sortBy: 'manual',
+  }
+}
+
 interface BoardViewProps {
   onEdit: (task: Task) => void
 }
 
 export function BoardView({ onEdit }: BoardViewProps) {
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null)
   const [busy, setBusy] = useState(false)
-  /** 当前条件下的总条数（后端 count）——看板同样不得静默只显示一部分 */
-  const [total, setTotal] = useState(0)
-  const [loadingMore, setLoadingMore] = useState(false)
+
   /**
-   * 是否还有下一页。
+   * 分页状态机（见 `../lib/board-paging`）。
    *
-   * 为什么不能只看 `tasks.length < total`（第三轮任务书 §6）：
-   * `total` 是快照，并发删除之后它会过期，于是"总数说还有、下一页却是空的"，
-   * 按钮就会永远留着一个点了没反应的入口。这里改用与主列表一致的
-   * "取到空页就停 + 空页后刷新一次真实计数"。
+   * 用 `useMemo` 建一次并长期持有：它内部有"代数"，每次渲染都新建实例会把
+   * 代数和在飞请求的归属一起换掉，下面的 `useEffect` 也会被反复触发
+   * （重复加载、重复注册跨窗口监听）。
    */
-  const [hasMore, setHasMore] = useState(false)
+  const paging = useMemo(
+    () =>
+      createBoardPaging({
+        listTasks: ipc.listTasks,
+        countTasks: ipc.countTasks,
+        query: boardQuery,
+        pageSize: PAGE_SIZE,
+        describeError: errText,
+      }),
+    [],
+  )
 
-  /** 看板的查询条件（不显示归档与回收站内容） */
-  const boardQuery = (): TaskQuery => ({
-    statuses: ['todo', 'doing', 'waiting', 'done'],
-    sortBy: 'manual',
-  })
-
-  const reload = useCallback(async () => {
-    setLoading(true)
-    try {
-      const q = boardQuery()
-      // 与列表同一个策略：按页取，总数单独查（§4.2 不得静默截断）
-      const [list, count] = await Promise.all([
-        ipc.listTasks({ ...q, limit: PAGE_SIZE, offset: 0 }),
-        ipc.countTasks(q),
-      ])
-      setTasks(list)
-      setTotal(count.total)
-      setHasMore(list.length < count.total)
-      setError(null)
-    } catch (e) {
-      setError(errText(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const loadMore = async () => {
-    if (loadingMore || !hasMore) return
-    setLoadingMore(true)
-    try {
-      // 先刷新一次真实总数：`total` 可能是过期的快照
-      let currentTotal = total
-      try {
-        currentTotal = (await ipc.countTasks(boardQuery())).total
-      } catch {
-        // 计数失败就用旧值继续，不挡住翻页
-      }
-      if (tasks.length >= currentTotal) {
-        setTotal(currentTotal)
-        setHasMore(false)
-        return
-      }
-
-      const rows = await ipc.listTasks({
-        ...boardQuery(),
-        limit: PAGE_SIZE,
-        offset: tasks.length,
-      })
-      const seen = new Set(tasks.map((t) => t.id))
-      const fresh = rows.filter((t) => !seen.has(t.id))
-      const merged = [...tasks, ...fresh]
-      setTasks(merged)
-      setTotal(currentTotal)
-      // 空页（并发删除等）立刻停下，避免按钮永远存在却加载不出东西
-      setHasMore(fresh.length > 0 && merged.length < currentTotal)
-    } catch (e) {
-      setError(errText(e))
-    } finally {
-      setLoadingMore(false)
-    }
-  }
+  // 状态机是 React 之外的可变对象，用官方订阅接口读它的快照
+  const { tasks, total, hasMore, loading, loadingMore, error } = useSyncExternalStore(
+    paging.subscribe,
+    paging.getState,
+  )
 
   useEffect(() => {
-    void reload()
-  }, [reload])
+    void paging.reload()
+
+    // 跨窗口同步：别的窗口删/加了任务，就作废在飞的请求、从第一页重取。
+    // 与 App.tsx 里主列表的用法一致，只是看板走自己的分页状态机。
+    const off = bus.onTasksChanged(() => void paging.handleExternalChange())
+
+    return () => {
+      off()
+      // 卸载后不再接受任何在飞请求的结果（代数 +1，它们回来时会被丢弃）
+      paging.dispose()
+    }
+  }, [paging])
 
   const byStatus = useMemo(() => {
     const m: Record<string, Task[]> = { todo: [], doing: [], waiting: [], done: [] }
@@ -145,18 +123,18 @@ export function BoardView({ onEdit }: BoardViewProps) {
     if (!task || task.status === status) return // 原地放下，不产生无意义写入
 
     setBusy(true)
-    setError(null)
+    paging.setError(null)
 
     // 乐观更新：先动界面让操作跟手，失败再回滚（§3 交互状态要有反馈）
     const prev = tasks
-    setTasks((cur) => cur.map((t) => (t.id === id ? { ...t, status } : t)))
+    paging.applyLocalUpdate((cur) => cur.map((t) => (t.id === id ? { ...t, status } : t)))
 
     try {
       await ipc.updateTask(id, { status })
-      await reload()
+      await paging.reload()
     } catch (e) {
-      setTasks(prev) // 回滚
-      setError(errText(e))
+      paging.applyLocalUpdate(() => prev) // 回滚
+      paging.setError(errText(e))
     } finally {
       setBusy(false)
     }
@@ -174,7 +152,12 @@ export function BoardView({ onEdit }: BoardViewProps) {
       {error && (
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
-          <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="关闭"
+            onClick={() => paging.setError(null)}
+          >
             <Icon name="close" size={14} />
           </button>
         </div>
@@ -193,7 +176,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
             type="button"
             className="btn btn--ghost btn--sm"
             disabled={loadingMore}
-            onClick={() => void loadMore()}
+            onClick={() => void paging.loadMore()}
           >
             {loadingMore ? '正在加载…' : `加载更多（还有 ${total - tasks.length} 条）`}
           </button>
@@ -213,7 +196,7 @@ export function BoardView({ onEdit }: BoardViewProps) {
           <button
             type="button"
             className="btn btn--ghost btn--sm"
-            onClick={() => void reload()}
+            onClick={() => void paging.reload()}
           >
             刷新看板
           </button>
