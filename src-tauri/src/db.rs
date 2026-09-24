@@ -539,6 +539,99 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 升级路径：老版本数据库（没有 0005 那一列）必须能就地升级，
+    /// 且**已有数据一条不少**——这是任务书 §22「不破坏现有数据库」的直接验收。
+    ///
+    /// 模拟办法：把 0005 的效果回退掉（删列 + 删迁移记录），得到一个"v4 库"，
+    /// 写入数据后再跑一次 `Db::init`，观察是否 (1) 重新应用迁移、(2) 数据完好、
+    /// (3) 留有迁移前备份。
+    #[tokio::test]
+    async fn upgrading_a_v4_database_preserves_existing_data() {
+        let dir = std::env::temp_dir().join(format!("lumen-upgrade-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.expect("建立当前版本数据库");
+
+        // 造数据：一个任务 + 一条"用户关闭"的提醒
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, priority, created_at, updated_at, sort_order,
+                                is_pinned, is_favorite, has_planned_time, has_due_time,
+                                actual_minutes, occurrence_kind, is_exception, period_type)
+             VALUES ('t-old', '升级前就存在的任务', 'todo', 2, ?1, ?1, 1, 0, 0, 0, 0, 0, 'single', 0, 'none')",
+        )
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO reminders (id, task_id, kind, remind_at, is_enabled, disabled_reason, created_at, updated_at)
+             VALUES ('r-old', 't-old', 'custom', '2026-01-01T00:00:00.000Z', 0, 'user', ?1, ?1)",
+        )
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        // 回退成"v4 库"
+        sqlx::query("ALTER TABLE reminders DROP COLUMN disabled_reason")
+            .execute(db.pool())
+            .await
+            .expect("SQLite 应支持 DROP COLUMN");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 5")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.pool().close().await;
+
+        // 再次初始化 = 用户升级到新版本
+        let pending = pending_migrations(&dir.join("lumen.db")).await.unwrap();
+        assert!(
+            pending.contains(&"5".to_string()),
+            "回退之后应检测到待执行迁移，实际：{pending:?}"
+        );
+
+        let upgraded = Db::init(&dir).await.expect("升级应成功");
+
+        // 1) 数据还在
+        let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id = 't-old'")
+            .fetch_one(upgraded.pool())
+            .await
+            .unwrap();
+        assert_eq!(title, "升级前就存在的任务");
+        let (enabled, reason): (i64, Option<String>) =
+            sqlx::query_as("SELECT is_enabled, disabled_reason FROM reminders WHERE id = 'r-old'")
+                .fetch_one(upgraded.pool())
+                .await
+                .unwrap();
+        assert_eq!(enabled, 0, "用户关闭状态必须保留");
+        assert_eq!(
+            reason.as_deref(),
+            Some("user"),
+            "迁移应把老数据里停用的提醒保守地标记为用户关闭"
+        );
+
+        // 2) 迁移记录补齐
+        let applied: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version = 5")
+                .fetch_one(upgraded.pool())
+                .await
+                .unwrap();
+        assert_eq!(applied, 1);
+
+        // 3) 留下了迁移前备份（升级有退路）
+        let backups = dir.join("backups");
+        let n = std::fs::read_dir(&backups)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| e.file_name().to_string_lossy().starts_with("pre-migrate-"))
+                    .count()
+            })
+            .unwrap_or(0);
+        assert!(n >= 1, "升级前应生成一份 pre-migrate 备份，实际 {n} 份");
+
+        upgraded.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// 迁移必须能在空库上跑通，且重复执行幂等。
     #[tokio::test]
     async fn migrations_apply_and_are_idempotent() {
