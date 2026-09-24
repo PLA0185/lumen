@@ -96,6 +96,14 @@ impl From<crate::db::DbError> for AppError {
             DbError::Migrate(e) => Self::new(ErrorCode::Database, format!("数据库迁移失败：{e}"))
                 .with_hint("请先备份数据目录，再联系支持或检查迁移脚本"),
             DbError::Io(e) => Self::new(ErrorCode::Io, format!("文件操作失败：{e}")),
+            DbError::PreMigrationBackup(e) => Self::new(
+                ErrorCode::Database,
+                format!("迁移前的安全备份失败，已中止升级以免丢数据：{e}"),
+            )
+            .with_hint(
+                "请检查数据目录所在磁盘是否已满、是否有其它程序占用 lumen.db，\
+                 然后重新启动；本次不会执行任何数据库结构变更，数据保持升级前的状态",
+            ),
         }
     }
 }
