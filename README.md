@@ -404,3 +404,15 @@ pnpm typecheck                # 类型检查
 应用图标由 `tools/make-icon.mjs` 以纯代码合成，**不含任何第三方素材**。
 
 技术调研记录（含官方文档链接、访问日期与未核实项）见 `docs/`。
+
+## 文档索引
+
+| 文档 | 内容 |
+| --- | --- |
+| `docs/remediation-report.md` | **项目整改报告**：逐条列出修复了什么问题、怎么修的、新增了哪些测试、还有哪些没做 |
+| `docs/acceptance-checklist.md` | 功能验收表：按任务书章节逐项列出实现状态与操作路径 |
+| `docs/test-report.md` | 测试报告：环境、测试分布、端到端验证记录、发现并修复的真实缺陷 |
+| `docs/data-structure.md` | 数据结构与迁移策略 |
+| `docs/design-recurrence.md` | 重复规则与例外的设计说明 |
+| `docs/tech-selection.md` | 技术选型记录 |
+| `docs/api-research*.md` | 三家 AI 服务商与 Tauri 能力的官方文档核实记录 |

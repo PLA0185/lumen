@@ -6,6 +6,11 @@
 >
 > 验收环境：Windows 11 专业版 10.0.26200 · Intel i5-14400 · 15.7 GB RAM ·
 > WebView2 153.0.4234.48 · Rust 1.98.1（MSVC）· Node 24.21.0
+>
+> **2026-09-24 整改**：按《Lumen 项目整改任务书》完成 P1 全部与 P2 大部分整改，
+> 详见 `docs/remediation-report.md`。整改后 Rust 测试 **310** 项、前端 **85** 项，
+> 并新增 `pnpm lint`、`cargo fmt --check`、`cargo clippy -D warnings` 三道门禁
+> 与独立的 CI 工作流（`.github/workflows/ci.yml`）。下表已同步整改后的状态。
 
 ---
 
@@ -13,10 +18,12 @@
 
 | 手段 | 覆盖内容 |
 | --- | --- |
-| `cargo test --lib` | **243 项** Rust 测试，18 个模块（详见 §附一） |
+| `cargo test --lib` | **310 项** Rust 测试，20 个模块（详见 §附一） |
 | `pnpm test` | **85 项** 前端单元测试（3 个文件） |
 | `cargo check --all-targets` | 0 错误 0 警告 |
-| `pnpm typecheck` | 0 错误 |
+| `cargo fmt --check` / `cargo clippy -D warnings` | 通过（整改时新增的门禁） |
+| `pnpm typecheck` / `pnpm lint` | 0 错误 / 0 problems（lint 配置为整改时补上） |
+| GitHub Actions `CI` | push 到 main 时真实执行上面这些检查 |
 | 实机启动 | 应用启动、窗口创建、数据库迁移、日志无 ERROR |
 | Win32 API 读取 | 窗口扩展样式位（置顶/穿透/任务栏）**直接读取而非界面自述** |
 | `tools/*.py` | 数据库结构、提醒调度、窗口恢复、周期口径的端到端验证 |
