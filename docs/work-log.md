@@ -15,6 +15,73 @@
 
 ---
 
+## 第 12 轮 · 2026-09-24 · 全仓库架构收口（基线 `d6e76fe`）
+
+BASE=`d6e76feec660d8532e4ddfafe7e99a22daa4fa97`。本节先记录代码与本机证据；
+最终 HEAD、提交范围与 CI run 以提交推送后的交付回执为准。
+2026-09-25 继续完成暂停时未验证的改动，并补跑全套门禁与隔离实机验收。
+
+### 做了
+
+- **Mutation architecture**：十个前端 IPC 模块统一通过 `data-change.ts` 调用；集中声明
+  mutation 影响域，在后端成功返回后同步通知本窗口，并经 Tauri event 通知其它窗口。
+  Main、Board、Calendar、Floating、Stats、Organize、Focus、PDF watcher 与任务详情订阅相应域。
+  组件中的 `notifyTasksChanged()` 业务调用已移除。
+- **Recurrence**：普通 task 更新和批量操作不能绕过重复范围；TaskEditor 编辑、主列表删除接入
+  ScopeDialog。自动物化在启动、每日维护、Calendar 查询时执行。展开按请求范围扫描，
+  分段按 `[anchor, next anchor)` 生效；系列模板与标签独立持久化，v5 数据升级回填。
+  ThisAndFuture 重建使用持久游标与明确错误；WholeSeries 改规则重建未来，后端强制历史确认；
+  ThisOnly 改时间和提醒同事务。单次例外采用整体保护模型。
+- **Async**：通用 request gate 用于 Calendar、Stats、Organize、Floating、Focus；过期请求
+  不得覆盖新结果。
+- **Scale**：Floating 显示真实总数与前 100 项提示；DependencyEditor 使用服务端搜索；
+  Calendar 最多渲染 1000 条且展示总数与截断提示；移除生产 `task_report_all` IPC。
+- **Atomic editor**：普通任务 `task_save` 在同一事务更新字段、标签和提醒，失败回滚。
+  重复任务实例状态可单独保存，范围内容变动必须选 scope；「仅此次」还可原子编辑
+  备注、链接、项目、分类、标签、周期与清空预计耗时。缺少分段模型的这些字段在更大范围
+  编辑时明确报错，不会悄悄丢失。
+- **拖拽与 AI Apply**：日历格子中的拖放提示不再因子元素间的 `dragleave` 反复卸载，
+  真实鼠标拖拽可改期；AI 把第一条子任务应用到空父任务时修正 SQLite 排序值类型，
+  并新增重复任务 AI 改期标记例外的回归测试。
+- **Backup**：restore 发布 `all` 失效域，设置界面明确要求重启并提供重启按钮，
+  提示附件恢复的语义边界。
+- **Acceptance**：补充可自启、自停应用且每次创建独立临时 profile 的启动器；
+  seed 失败可按前缀找回 ID，清理串行重试并断言残留为零。
+- **Release**：CI 与 Release 检查三处版本一致；Release 校验 tag 与版本，复用完整质量门禁；
+  移除把 main 当作 tag 的手动触发路径。仍保持 0.3.0，未发布 0.4.0。
+
+### 没做到 / 尚未验证
+
+- 重复任务备注、链接、归属、标签与周期目前只支持「仅此次」；「此次及以后」和「整个系列」
+  没有这些字段的分段持久化模型，后端与界面均明确拒绝。状态与内容同时编辑需分开保存。
+- 实机验收覆盖 QuickAdd → Main/Board/Calendar/Floating、Board 与 Calendar 真实鼠标拖拽、
+  重复任务编辑/删除 scope、backup restore、回收站与分页。AI Apply 用无密钥的后端
+  数据库回归测试验证了子任务创建和重复任务改期；真实服务商调用与 UI Apply 未验证。
+  PDF 取消、上限及导出期间变化触发取消仍无本轮实机记录，仅有既有单元测试。
+- 旧版 AI provider 实机测试的四个密钥状态都为“未配置”，无法验证混合密钥状态。
+- 目录联接验收证明扫描未触及目录外文件，但该联接没有进入实际删除分支。
+- 0.4.0 版本更新、安装包签名与 updater assets 尚未执行；须在完整复审通过后单独处理。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`、`pnpm build`、
+  `pnpm lint`、`pnpm check:version` 通过；前端 152 项测试通过。Rust
+  `cargo fmt --check`、`cargo check --all-targets`、`cargo test --lib`（352 项）、
+  `cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- 隔离 profile 实机脚本：回收站与分页 42/42，残留 0；跨视图架构 24/24，残留 0。
+  规模链路脚本 10/10：1100 条当日任务下，Board 显示 200/1100 加载入口、Calendar
+  显示前 1000/1100 警示、Floating 显示前 100/1100 提示；残留 0。
+- 新增/扩展回归：mutation 成功与失败通知、request gate、`task_save` 回滚、旧系列 3000+
+  次发生、分段边界、WholeSeries 规则/标题重建、v5 升级模板回填、历史确认、并发物化、
+  恢复跳过发生、仅此次字段/标签的事务性、AI Apply 空父任务与重复任务改期。
+
+### 相关文档
+
+- 本轮任务书：《Lumen 全仓库架构收口任务书》（外部接手说明）。
+- `docs/remediation-report.md` 保留前轮整改背景；本节作为第 12 轮证据索引。
+
+---
+
 ## 第 9 轮 · 2026-09-24 · 第三轮整改（按《Lumen 第三轮整改任务书》）
 
 外部审查（网页版 GPT 直连仓库）交回一份第三轮任务书，基线是 `8aa8d8b`：

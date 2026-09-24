@@ -46,6 +46,9 @@ jobs:
       - name: 类型检查
         run: pnpm typecheck
 
+      - name: 三处版本一致性
+        run: pnpm check:version
+
       - name: 单元测试
         run: pnpm test
 

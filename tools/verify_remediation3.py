@@ -713,6 +713,19 @@ def count_tasks(main_win: ui.Target, query: dict) -> int:
     return int(r["total"])
 
 
+def discover_test_ids(main_win: ui.Target) -> list[str]:
+    """Recover IDs even if a CDP seed batch failed after writing some rows."""
+    query = {"search": ANY_PREFIX, "includeDeleted": True, "statuses": []}
+    total = count_tasks(main_win, query)
+    ids: list[str] = []
+    for offset in range(0, total, 500):
+        page = main_win.eval(invoke_js("task_list", {
+            "query": {**query, "limit": 500, "offset": offset, "sortBy": "created"}
+        })) or []
+        ids.extend(str(row["id"]) for row in page if str(row.get("title", "")).startswith(ANY_PREFIX))
+    return list(dict.fromkeys(ids))
+
+
 def seed_tasks(
     main_win: ui.Target,
     prefix: str,
@@ -733,11 +746,13 @@ def seed_tasks(
         js = """
         (async () => {
           const ids = [];
+          window.__zzr3_created = window.__zzr3_created || [];
           for (let i = 0; i < %d; i++) {
             const t = await window.__TAURI_INTERNALS__.invoke('task_create', {
               input: { title: %s + '-' + (window.__zzr3_index++), status: 'todo' }
             });
             ids.push(t.id);
+            window.__zzr3_created.push(t.id);
           }
           return ids;
         })()
@@ -770,26 +785,34 @@ def bulk_delete(main_win: ui.Target, ids: list[str]) -> str:
     return str(main_win.eval(js))
 
 
-def purge_ids(main_win: ui.Target, ids: list[str], batch: int = 100) -> int:
-    """逐个永久删除（分批并发）。返回成功删除的数量。
+def purge_ids(main_win: ui.Target, ids: list[str]) -> int:
+    """Serial purge with bounded retries; residue is checked by the caller.
 
     刻意**不用** `task_purge_all_deleted`：那会把用户自己回收站里的任务一起删掉。
     这里只删脚本自己造的那些 id；已经不在回收站里的会被后端拒绝，忽略即可。
     """
     removed = 0
-    for i in range(0, len(ids), batch):
-        chunk = ids[i : i + batch]
-        js = """
-        (async () => {
-          let ok = 0;
-          await Promise.all(%s.map(async (id) => {
-            try { await window.__TAURI_INTERNALS__.invoke('task_purge', { id }); ok++; }
-            catch (e) { /* 已经不在回收站里的忽略 */ }
-          }));
-          return ok;
-        })()
-        """ % json.dumps(chunk)
-        removed += int(main_win.eval(js) or 0)
+    for task_id in ids:
+        for attempt in range(3):
+            js = """
+            (async () => {
+              try {
+                await window.__TAURI_INTERNALS__.invoke('task_purge', { id: %s });
+                return true;
+      } catch (e) {
+        if (e && e.code === 'not_found') return 'GONE';
+        return JSON.stringify(e) || String(e);
+      }
+            })()
+            """ % json.dumps(task_id)
+            result = main_win.eval(js)
+            if result is True or result == "GONE":
+                removed += 1
+                break
+            if attempt < 2:
+                time.sleep(0.2 * (attempt + 1))
+        else:
+            print(f"   清理失败 {task_id}: {result}", flush=True)
     return removed
 
 
@@ -1490,7 +1513,7 @@ def section_attachment_links(main_win: ui.Target) -> None:
 
 SET_AI_PROVIDER_JS = r"""
 (() => {
-  const rows = Array.from(document.querySelectorAll('.settings label.formrow'));
+  const rows = Array.from(document.querySelectorAll('.settings .formrow'));
   const provRow = rows.find((r) => {
     const l = r.querySelector('.formlabel');
     return l && l.innerText.includes('服务商');
@@ -1508,7 +1531,7 @@ SET_AI_PROVIDER_JS = r"""
 
 READ_AI_PANEL_JS = r"""
 (() => {
-  const rows = Array.from(document.querySelectorAll('.settings label.formrow'));
+  const rows = Array.from(document.querySelectorAll('.settings .formrow'));
   const findRow = (kw) => rows.find((r) => {
     const l = r.querySelector('.formlabel');
     return l && l.innerText.includes(kw);
@@ -1561,7 +1584,9 @@ def section_ai_key_status(main_win: ui.Target) -> None:
     click_sidebar(main_win, "设置")
     click_tab(main_win, "AI")
     ready = main_win.wait_for(
-        "!!document.querySelector('.settings label.formrow select')", timeout=15
+        "!!document.querySelector('.settings .formrow select') && "
+        "!!document.querySelector('.settings .formrow .formlabel .chip, .settings .formrow input[type=password]')",
+        timeout=15,
     )
     check("「设置 → AI」页渲染出服务商下拉框", ready, "AI 面板已就绪")
     if not ready:
@@ -1651,13 +1676,19 @@ def main() -> int:
             set_search(main_win, "", wait=0.8)
             click_sidebar(main_win, "全部任务")
 
-            ids = list(dict.fromkeys(created))  # 去重但保持顺序
-            for i in range(0, len(ids), 500):
-                chunk = ids[i : i + 500]
+            ids = list(dict.fromkeys(created + discover_test_ids(main_win)))
+            for i in range(0, len(ids), 100):
+                chunk = ids[i : i + 100]
                 print(f"   软删 {len(chunk)} 条…", flush=True)
-                bulk_delete(main_win, chunk)
+                for attempt in range(3):
+                    result = bulk_delete(main_win, chunk)
+                    if not result.startswith("ERR:"):
+                        break
+                    time.sleep(0.2 * (attempt + 1))
+                else:
+                    print(f"   软删失败（第 {i} 批）：{result}", flush=True)
             removed = purge_ids(main_win, ids)
-            print(f"   已永久删除 {removed}/{len(ids)} 条", flush=True)
+            print(f"   已删除或确认不存在 {removed}/{len(ids)} 条", flush=True)
 
             set_search(main_win, "")
             click_sidebar(main_win, "今天")

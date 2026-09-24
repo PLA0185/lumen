@@ -16,6 +16,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "typecheck": "tsc --noEmit",
+    "check:version": "node tools/check-version.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",

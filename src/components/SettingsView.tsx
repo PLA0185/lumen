@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { save, open } from '@tauri-apps/plugin-dialog'
+import { relaunch } from '@tauri-apps/plugin-process'
 import { UpdatePanel } from './UpdatePanel'
 import * as bk from '../lib/backup-ipc'
 import * as att from '../lib/attachment-ipc'
@@ -35,6 +36,7 @@ type Tab = 'appearance' | 'window' | 'ai' | 'data' | 'reminders' | 'about'
 
 export function SettingsView() {
   const { appInfo, dataPaths, theme, setTheme, pushToast } = useApp()
+  const [restoreNeedsRestart, setRestoreNeedsRestart] = useState(false)
   const [tab, setTab] = useState<Tab>('appearance')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -229,8 +231,10 @@ export function SettingsView() {
       pushToast(
         'success',
         `已恢复 ${r.imported.tasks} 个任务、${r.imported.projects} 个项目` +
-          (r.safetyBackup ? `\n恢复前的数据已快照保存，可随时退回` : ''),
+          (r.safetyBackup ? `\n恢复前的数据已快照保存` : '') +
+          '\n请重启应用以完整应用备份中的设置',
       )
+      setRestoreNeedsRestart(true)
       setPreview(null)
       setPendingRestore(null)
       await loadBackups()
@@ -609,7 +613,7 @@ export function SettingsView() {
             <h3 className="setgroup__title">恢复</h3>
             <p className="setgroup__desc">
               恢复会<strong>整体替换</strong>当前所有数据。程序会在替换前自动为当前数据生成一份快照，
-              因此恢复后仍可退回。请务必先查看下面的预览。
+              数据记录可用这份快照退回；附件文件本体不在 JSON 备份中。请务必先查看下面的预览。
             </p>
             <div className="setactions">
               <button
@@ -622,6 +626,14 @@ export function SettingsView() {
               </button>
             </div>
           </div>
+
+          {restoreNeedsRestart && (
+            <div className="alert alert--warn" role="status">
+              数据已恢复。备份中的窗口、AI 等运行时设置需要重启后才会完整生效。
+              <button type="button" className="btn btn--primary"
+                onClick={() => void relaunch()}>立即重启</button>
+            </div>
+          )}
 
           {preview && (
             <div className="preview">
@@ -699,6 +711,7 @@ export function SettingsView() {
                 <div className="alert alert--warn" role="alert">
                   恢复后，当前库中的 <strong>{preview.willReplaceTasks}</strong> 个任务将被备份内容替换。
                   程序会先为当前数据生成快照，但仍建议你现在先自行导出一份。
+                  JSON 备份不包含附件文件本体，安全快照也不保证能恢复附件文件。
                 </div>
               )}
 
