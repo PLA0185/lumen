@@ -27,6 +27,7 @@ import rehypeSanitize from 'rehype-sanitize'
 import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
+import { useApp } from '../lib/store'
 import { IpcError } from '../lib/ipc'
 import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/datetime'
 import type { PeriodType, Task, TaskStatus } from '../lib/types'
@@ -34,6 +35,7 @@ import { PERIOD_LABELS } from '../lib/types'
 import type { Category, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
 import { Icon } from './Icons'
 import { ScopeDialog } from './ScopeDialog'
+import { SeriesRuleDialog } from './SeriesRuleDialog'
 import { onDataChanged } from '../lib/data-change'
 
 function errText(e: unknown): string {
@@ -82,6 +84,9 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [isFavorite, setIsFavorite] = useState(task.isFavorite === 1)
   /** 周期跨度：表达"这周/这个月做完就行"，不绑定具体日期 */
   const [periodType, setPeriodType] = useState<PeriodType>(task.periodType ?? 'none')
+  const [advancedOpen, setAdvancedOpen] = useState(
+    Boolean(task.noteMd || task.isPinned || task.isFavorite || (task.periodType && task.periodType !== 'none')),
+  )
 
   // 选项数据
   const [projects, setProjects] = useState<ProjectWithCount[]>([])
@@ -94,6 +99,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [pendingRecurringPatch, setPendingRecurringPatch] = useState<rec.InstancePatch | null>(null)
   const [pendingRecurringRestrictedReason, setPendingRecurringRestrictedReason] = useState<string | null>(null)
+  const [showRuleEditor, setShowRuleEditor] = useState(false)
   const [optionsLoaded, setOptionsLoaded] = useState(false)
 
   // 载入选项与初始值
@@ -138,11 +144,14 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   /** Esc 关闭（§3 关键操作可用键盘完成） */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        if (showRuleEditor) setShowRuleEditor(false)
+        else onClose()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [onClose, showRuleEditor])
 
   /** 客户端校验，减少一次往返就能告诉用户哪里填错了 */
   const validate = (): boolean => {
@@ -328,6 +337,14 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           </div>
         )}
 
+        {task.seriesId && task.occurrenceKey && (
+          <div className="alert alert--info">
+            <span>这是一项重复任务。本页修改的是当前任务内容；重复频率和结束条件在系列规则中设置。</span>
+            <button type="button" className="btn btn--quiet btn--sm"
+              onClick={() => setShowRuleEditor(true)}>修改重复规则</button>
+          </div>
+        )}
+
         {/* ---------------- 基本信息 ---------------- */}
         <div className="formrow">
           <label className="formlabel" htmlFor="ed-title">
@@ -450,9 +467,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         <fieldset className="formfieldset">
           <legend>时间</legend>
           <p className="setgroup__hint" style={{ marginTop: 0 }}>
-            这三个时间含义不同：<strong>计划时间</strong>决定任务出现在「今天」和日历的哪一天；
-            <strong>截止时间</strong>只用于判断是否逾期；<strong>提醒</strong>在任务卡片展开区单独设置。
-            只填日期表示全天，不算作凌晨到期。
+            计划时间决定任务出现在哪一天；截止时间用于判断逾期。提醒在任务卡片中设置。
+            只填日期表示全天。
           </p>
 
           <div className="formgrid">
@@ -603,6 +619,9 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           )}
         </div>
 
+        <details className="editor-advanced" open={advancedOpen}
+          onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}>
+          <summary>更多选项：周期、标记和备注</summary>
         {/* ---------------- 周期跨度 ---------------- */}
         <div className="formrow">
           <span className="formlabel">周期跨度</span>
@@ -684,6 +703,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             />
           )}
         </div>
+        </details>
 
         <div className="modal__actions">
           <button type="button" className="btn btn--ghost" onClick={onClose} disabled={saving}>
@@ -719,6 +739,11 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           onClose()
         }}
       />
+    )}
+    {showRuleEditor && task.seriesId && task.occurrenceKey && (
+      <SeriesRuleDialog taskId={task.id} seriesId={task.seriesId}
+        occurrenceKey={task.occurrenceKey} onClose={() => setShowRuleEditor(false)}
+        onSaved={(message) => { useApp.getState().pushToast('success', message); onSaved(task); onClose() }} />
     )}
     </>
   )

@@ -58,6 +58,7 @@ export type DeleteMode = 'this_only' | 'this_and_future' | 'whole_series'
 
 /** 单次编辑的字段补丁 */
 export interface InstancePatch {
+  tzid?: string
   title?: string
   description?: string
   noteMd?: string
@@ -132,16 +133,19 @@ export interface SeriesDetail {
     recurrenceEndKind: string
     recurrenceUntil: string | null
     recurrenceCount: number | null
+    terminatedFromOccurrenceKey: string | null
     ruleVersion: number
   }
   description: string
   edgeNote: string | null
+  nextFutureOccurrenceKey: string | null
   segments: Array<{
     id: string
     seriesId: string
     ruleVersion: number
     effectiveFromOccurrence: string
     newRrule: string | null
+    newTzid: string | null
     overrideTitle: string | null
     overridePriority: number | null
   }>
@@ -320,9 +324,11 @@ export function buildRrule(opts: {
     }
   }
 
-  if (opts.freq === 'yearly' && opts.byMonth && opts.byMonth.length > 0) {
-    const list = [...opts.byMonth].sort((a, b) => a - b)
-    parts.push(`BYMONTH=${list.join(',')}`)
+  if (opts.freq === 'yearly') {
+    if (opts.byMonth && opts.byMonth.length > 0) {
+      const list = [...opts.byMonth].sort((a, b) => a - b)
+      parts.push(`BYMONTH=${list.join(',')}`)
+    }
     if (opts.byMonthday && opts.byMonthday.length > 0) {
       const days = [...opts.byMonthday].sort((a, b) => a - b)
       parts.push(`BYMONTHDAY=${days.join(',')}`)
@@ -399,8 +405,10 @@ export function describeRule(opts: {
     }
   }
 
-  if (opts.freq === 'yearly' && opts.byMonth && opts.byMonth.length > 0) {
-    s += `的${[...opts.byMonth].sort((a, b) => a - b).join('、')}月`
+  if (opts.freq === 'yearly') {
+    if (opts.byMonth && opts.byMonth.length > 0) {
+      s += `的${[...opts.byMonth].sort((a, b) => a - b).join('、')}月`
+    }
     if (opts.byMonthday && opts.byMonthday.length > 0) {
       s += `${[...opts.byMonthday].sort((a, b) => a - b).join('、')}日`
     }

@@ -34,18 +34,23 @@ interface RuleEditorProps {
   onChange: (v: RuleEditorValue) => void
   /** 起始日期的初始值（默认今天） */
   defaultDate?: Date
+  /** Editing an existing series keeps its original start identity. */
+  fixedStart?: boolean
+  tzid?: string
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7]
 
 /** 从 RRULE 字符串反推控件状态（用于编辑已有系列时回显） */
-function parseRrule(rrule: string): {
+export function parseRrule(rrule: string): {
   freq: Freq
   interval: number
   byWeekday: number[]
   weekdaysOnly: boolean
   byMonthday: number[]
+  byMonth: number[]
   setPos: SetPos | null
+  end: EndCondition
 } {
   const out = {
     freq: 'weekly' as Freq,
@@ -53,7 +58,9 @@ function parseRrule(rrule: string): {
     byWeekday: [] as number[],
     weekdaysOnly: false,
     byMonthday: [] as number[],
+    byMonth: [] as number[],
     setPos: null as SetPos | null,
+    end: { kind: 'never' } as EndCondition,
   }
   const codes: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 }
 
@@ -80,10 +87,18 @@ function parseRrule(rrule: string): {
       out.byMonthday = v
         .split(',')
         .map((d) => Number(d.trim()))
-        .filter((n) => Number.isFinite(n) && n >= 1 && n <= 31)
+        .filter((n) => Number.isInteger(n) && n !== 0 && n >= -31 && n <= 31)
     } else if (key === 'BYSETPOS') {
       const n = Number(v)
       if (Number.isFinite(n)) setpos = n
+    } else if (key === 'BYMONTH') {
+      out.byMonth = v.split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 12)
+    } else if (key === 'UNTIL') {
+      const m = v.match(/^(\d{4})(\d{2})(\d{2})$/)
+      if (m) out.end = { kind: 'until', date: `${m[1]}-${m[2]}-${m[3]}` }
+    } else if (key === 'COUNT') {
+      const count = Number(v)
+      if (Number.isInteger(count) && count > 0) out.end = { kind: 'count', count }
     }
   }
 
@@ -114,7 +129,7 @@ function splitDtstart(s: string): { date: string; time: string } {
   return { date, time }
 }
 
-export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
+export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, tzid }: RuleEditorProps) {
   // 初始状态从传入的 value 反推，这样编辑已有系列时能正确回显；
   // 新建时 value 是默认值，行为不变。
   const initial = useMemo(() => parseRrule(value.rrule), [value.rrule])
@@ -128,12 +143,13 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
     initial.setPos ? 'setpos' : 'day',
   )
   const [byMonthday, setByMonthday] = useState<number[]>(initial.byMonthday)
+  const [byMonth, setByMonth] = useState<number[]>(initial.byMonth)
   const [setPos, setSetPos] = useState<SetPos | null>(initial.setPos)
-  const [endKind, setEndKind] = useState<EndCondition['kind']>('never')
+  const [endKind, setEndKind] = useState<EndCondition['kind']>(initial.end.kind)
   const [endDate, setEndDate] = useState(() =>
-    format(new Date(Date.now() + 90 * 86400000), 'yyyy-MM-dd'),
+    initial.end.kind === 'until' ? initial.end.date : format(new Date(Date.now() + 90 * 86400000), 'yyyy-MM-dd'),
   )
-  const [endCount, setEndCount] = useState(10)
+  const [endCount, setEndCount] = useState(initial.end.kind === 'count' ? initial.end.count : 10)
 
   const [dateStr, setDateStr] = useState(
     () => initialDt.date || format(defaultDate ?? new Date(), 'yyyy-MM-dd'),
@@ -164,9 +180,10 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
       weekdaysOnly,
       byMonthday: monthMode === 'day' ? byMonthday : undefined,
       setPos: monthMode === 'setpos' ? setPos : null,
+      byMonth,
       end,
     })
-  }, [freq, interval, byWeekday, weekdaysOnly, monthMode, byMonthday, setPos, end])
+  }, [freq, interval, byWeekday, weekdaysOnly, monthMode, byMonthday, setPos, byMonth, end])
 
   const dtstartLocal = timeStr ? `${dateStr}T${timeStr}:00` : `${dateStr}T00:00:00`
   const hasStartTime = Boolean(timeStr)
@@ -185,7 +202,7 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
         try {
           const list = await rec.recurringPreview({
             rrule,
-            tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+            tzid: tzid || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
             dtstartLocal,
             hasStartTime,
             count: 10,
@@ -206,7 +223,7 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
       cancelled = true
       window.clearTimeout(t)
     }
-  }, [rrule, dtstartLocal, hasStartTime])
+  }, [rrule, dtstartLocal, hasStartTime, tzid])
 
   const toggleWeekday = (w: number) => {
     setWeekdaysOnly(false)
@@ -396,6 +413,36 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
         </div>
       )}
 
+      {freq === 'yearly' && (
+        <div className="formrow">
+          <span className="formlabel">在每年的</span>
+          <div className="rulerow">
+            <select
+              className="input input--compact"
+              value={byMonth[0] ?? 0}
+              aria-label="重复月份"
+              onChange={(e) => setByMonth(Number(e.target.value) ? [Number(e.target.value)] : [])}
+            >
+              <option value={0}>沿用起始月份</option>
+              {Array.from({ length: 12 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>{i + 1} 月</option>
+              ))}
+            </select>
+            <select
+              className="input input--compact"
+              value={byMonthday[0] ?? 0}
+              aria-label="重复日期"
+              onChange={(e) => setByMonthday(Number(e.target.value) ? [Number(e.target.value)] : [])}
+            >
+              <option value={0}>沿用起始日期</option>
+              {Array.from({ length: 31 }, (_, i) => (
+                <option key={i + 1} value={i + 1}>{i + 1} 日</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* ---------------- 结束条件 ---------------- */}
       <div className="formrow">
         <span className="formlabel">结束</span>
@@ -438,8 +485,8 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
 
       {/* ---------------- 首次发生时间 ---------------- */}
       <div className="formrow">
-        <span className="formlabel">
-          首次发生 <span className="req">*</span>
+          <span className="formlabel">
+          {fixedStart ? '预览起点' : '首次发生'} <span className="req">*</span>
         </span>
         <div className="dtd">
           <input
@@ -447,6 +494,7 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
             className="input"
             value={dateStr}
             aria-label="首次发生日期"
+            disabled={fixedStart}
             onChange={(e) => setDateStr(e.target.value)}
           />
           <input
@@ -454,11 +502,14 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
             className="input"
             value={timeStr}
             aria-label="首次发生时刻（留空表示仅日期）"
+            disabled={fixedStart}
             onChange={(e) => setTimeStr(e.target.value)}
           />
         </div>
         <p className="setgroup__hint" style={{ marginTop: 4 }}>
-          留空时刻表示全天任务，不会被视为当天零点到期。
+          {fixedStart
+            ? '按所选范围的起点预览；已有任务的发生时间不会因此改写。'
+            : '留空时刻表示全天任务，不会被视为当天零点到期。'}
         </p>
       </div>
 
@@ -478,7 +529,7 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
       <div className="rulepreview">
         <div className="rulepreview__head">
           <span>接下来 10 次发生</span>
-          <code className="rulepreview__rrule selectable">{rrule}</code>
+          <strong>{rec.describeRule({ freq, interval, byWeekday, weekdaysOnly, byMonthday, setPos, byMonth, end })}</strong>
         </div>
         {previewError ? (
           <div className="formerr" role="alert">
@@ -493,6 +544,10 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
             ))}
           </ol>
         )}
+        <details className="setgroup__hint">
+          <summary>查看技术规则</summary>
+          <code className="selectable">{rrule}</code>
+        </details>
       </div>
     </div>
   )
