@@ -1,4 +1,5 @@
-//! 本轮新增能力的端到端集成测试：复制任务、拖拽排序、组织项合并。
+//! 本轮新增能力的端到端集成测试：复制任务、拖拽排序、组织项合并、
+//! 收件箱筛选语义、任务时间与提醒的原子更新。
 //!
 //! ## 为什么用 `*_impl` 而不是 `#[tauri::command]`
 //!
@@ -10,7 +11,9 @@
 //! - 副本必须是**未完成**、且不复制附件（附件原件是共享的）；
 //! - 连续复制要产生「（副本）」「（副本 2）」这样的可区分名字；
 //! - 排序用中点插入法，只动一行，其它任务的相对顺序不能变；
-//! - 合并要转移任务、软删除源项，并且**回收站里的任务不受影响**。
+//! - 合并要转移任务、软删除源项，并且**回收站里的任务不受影响**；
+//! - 收件箱只含"没有项目的未完成任务"，不能被当成"全部未完成任务"；
+//! - 任务时间与相对提醒的时刻必须一起成功或一起失败。
 
 use crate::commands::{
     create_task_impl, duplicate_task_impl, list_tasks_impl, reorder_task_impl, update_task_impl,
@@ -481,6 +484,146 @@ async fn none_project_id_alone_means_unlimited() {
     )
     .await;
     assert_eq!(unlimited.len(), 2, "不传条件时应返回全部，实际：{unlimited:?}");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// =============================================================================
+// 任务时间与提醒的原子一致性（整改任务书 §5.5）
+// =============================================================================
+
+/// 验收：改截止时间时，相对提醒必须跟着走，且**在同一个事务里**。
+#[tokio::test]
+async fn changing_due_time_moves_relative_reminder_atomically() {
+    let (state, dir) = setup("atomic-reminder").await;
+    let db = &state.db;
+
+    // 截止 2026-10-01 18:00（本地时间语义在库里是 UTC 存储，这里直接用 UTC）
+    let t = create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "原子性验证".into(),
+            due_at: Some("2026-10-01T18:00:00.000Z".into()),
+            has_due_time: Some(true),
+            ..task("")
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(t.due_at.as_deref(), Some("2026-10-01T18:00:00.000Z"));
+
+    // 挂一条"到期前 30 分钟"
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    let rid = uuid::Uuid::now_v7().to_string();
+    sqlx::query(
+        "INSERT INTO reminders (id, task_id, kind, offset_minutes, remind_at, is_enabled, created_at, updated_at)
+         VALUES (?1, ?2, 'before_due', 30, ?3, 1, ?4, ?4)",
+    )
+    .bind(&rid)
+    .bind(&t.id)
+    .bind("2026-10-01T17:30:00.000Z")
+    .bind(&now)
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    // 改截止时间 → 17:30 必须变成 19:30
+    update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            due_at: Some("2026-10-02T20:00:00.000Z".into()),
+            has_due_time: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("改期应成功");
+
+    let at: String = sqlx::query_scalar("SELECT remind_at FROM reminders WHERE id = ?1")
+        .bind(&rid)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        at, "2026-10-02T19:30:00.000Z",
+        "提醒时刻必须与新截止时间一致（19:30 = 20:00 - 30 分钟）"
+    );
+
+    // 清空截止时间 → 提醒自动暂停（并记录原因）
+    update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            clear_due_at: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("清空截止时间应成功");
+    let (enabled, reason): (i64, Option<String>) =
+        sqlx::query_as("SELECT is_enabled, disabled_reason FROM reminders WHERE id = ?1")
+            .bind(&rid)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(enabled, 0, "依赖时间被清空后提醒应暂停");
+    assert_eq!(reason.as_deref(), Some("missing_base_time"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 验收：提醒重算失败时，任务时间**不得**被部分保存（整体回滚）。
+///
+/// 怎么让重算失败：把 `reminders` 表临时改名，`recompute_task_reminders_tx`
+/// 查表就会报错。这是"注入故障"而不是改代码逻辑，验的是真实事务边界。
+#[tokio::test]
+async fn failed_reminder_recompute_rolls_back_task_update() {
+    let (state, dir) = setup("atomic-rollback").await;
+    let db = &state.db;
+
+    let t = create_task_impl(
+        db,
+        CreateTaskInput {
+            title: "回滚验证".into(),
+            due_at: Some("2026-10-01T18:00:00.000Z".into()),
+            has_due_time: Some(true),
+            ..task("")
+        },
+    )
+    .await
+    .unwrap();
+
+    // 故障注入：让重算时读 reminders 表必然失败
+    sqlx::query("ALTER TABLE reminders RENAME TO reminders_hidden")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let result = update_task_impl(
+        db,
+        &t.id,
+        UpdateTaskInput {
+            due_at: Some("2026-12-31T23:00:00.000Z".into()),
+            has_due_time: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    assert!(result.is_err(), "重算失败时整个更新必须失败，而不是静默成功");
+
+    // 关键断言：任务时间**没有被改**
+    sqlx::query("ALTER TABLE reminders_hidden RENAME TO reminders")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let after = crate::commands::get_task_row(db, &t.id).await.unwrap();
+    assert_eq!(
+        after.due_at.as_deref(),
+        Some("2026-10-01T18:00:00.000Z"),
+        "更新必须整体回滚：任务截止时间不能留下半新半旧的状态"
+    );
 
     let _ = std::fs::remove_dir_all(dir);
 }

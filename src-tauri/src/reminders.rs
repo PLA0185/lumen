@@ -330,12 +330,21 @@ pub async fn reminder_set_enabled(
 ) -> AppResult<Reminder> {
     get_reminder(&state, &id).await?;
     let now = to_db_time(utc_now());
-    sqlx::query("UPDATE reminders SET is_enabled = ?1, updated_at = ?2 WHERE id = ?3")
-        .bind(enabled as i64)
-        .bind(&now)
-        .bind(&id)
-        .execute(state.db.pool())
-        .await?;
+    // 用户的操作必须把"停用原因"一并写清楚（整改任务书 §6.2）：
+    // - 用户打开 → 清空原因（恢复正常启用）；
+    // - 用户关闭 → 记成 `user`，这样将来任务时间变了，
+    //   重算逻辑也不会"好心"把它自动打开。
+    // 如果这里不写原因，重算逻辑就无法区分"用户关的"和"系统关的"。
+    let reason: Option<&str> = if enabled { None } else { Some(DISABLED_BY_USER) };
+    sqlx::query(
+        "UPDATE reminders SET is_enabled = ?1, disabled_reason = ?2, updated_at = ?3 WHERE id = ?4",
+    )
+    .bind(enabled as i64)
+    .bind(reason)
+    .bind(&now)
+    .bind(&id)
+    .execute(state.db.pool())
+    .await?;
     get_reminder(&state, &id).await
 }
 
@@ -801,6 +810,241 @@ pub async fn reminder_list_pending(
 /// [`recompute_task_reminders_tx`]，保证两步原子。
 pub async fn on_task_time_changed(db: &crate::db::Db, task_id: &str) -> AppResult<i64> {
     recompute_task_reminders(db, task_id).await
+}
+
+#[cfg(test)]
+mod disable_reason_tests {
+    //! 整改任务书 §6.4：自动暂停 vs 用户主动关闭，两者不能混为一谈。
+    //!
+    //! 这两条场景是**产品规则**的直接映射，必须用真实的数据库事务跑，
+    //! 因为它们验的是"离散状态机"（启用 → 暂停 → 恢复）而不是某个纯函数。
+
+    use super::*;
+    use crate::db::Db;
+    use sqlx::Row;
+
+    async fn setup(name: &str) -> (Db, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lumen-rem-{name}-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.expect("初始化数据库");
+        (db, dir)
+    }
+
+    /// 建一个带截止时间的任务，并挂一条"到期前 30 分钟"的相对提醒
+    async fn task_with_relative_reminder(db: &Db, due: Option<&str>) -> (String, String) {
+        let task_id = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, priority, due_at, has_due_time,
+                                created_at, updated_at, sort_order, is_pinned, is_favorite,
+                                has_planned_time, actual_minutes, occurrence_kind, is_exception, period_type)
+             VALUES (?1, '带提醒的任务', 'todo', 0, ?2, 1, ?3, ?3, 1, 0, 0, 0, 0, 'single', 0, 'none')",
+        )
+        .bind(&task_id)
+        .bind(due)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let reminder_id = uuid::Uuid::now_v7().to_string();
+        let remind_at = due.unwrap_or(&now).to_string();
+        sqlx::query(
+            "INSERT INTO reminders (id, task_id, kind, offset_minutes, remind_at, is_enabled,
+                                    created_at, updated_at)
+             VALUES (?1, ?2, 'before_due', 30, ?3, 1, ?4, ?4)",
+        )
+        .bind(&reminder_id)
+        .bind(&task_id)
+        .bind(&remind_at)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        (task_id, reminder_id)
+    }
+
+    async fn reminder_row(db: &Db, id: &str) -> (i64, Option<String>, String) {
+        let row = sqlx::query("SELECT is_enabled, disabled_reason, remind_at FROM reminders WHERE id = ?1")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        (
+            row.try_get("is_enabled").unwrap(),
+            row.try_get("disabled_reason").unwrap(),
+            row.try_get("remind_at").unwrap(),
+        )
+    }
+
+    /// 场景 A：清空 due → 自动暂停（标记为 missing_base_time）；恢复 due → 自动恢复启用
+    #[tokio::test]
+    async fn scenario_a_auto_pause_then_auto_resume() {
+        let (db, dir) = setup("a").await;
+        let due = "2026-10-01T10:00:00.000Z";
+        let (task_id, reminder_id) = task_with_relative_reminder(&db, Some(due)).await;
+
+        // 建好之后先重算一次（等价于"通过命令创建提醒"的流程），
+        // 让 remind_at 从占位值变成真正的"到期前 30 分钟"。
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+
+        // 初始：启用，remind_at = 09:30
+        let (enabled, reason, at) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 1);
+        assert!(reason.is_none());
+        assert_eq!(at, "2026-10-01T09:30:00.000Z");
+
+        // 清空截止时间 → 系统暂停，并记下原因
+        sqlx::query("UPDATE tasks SET due_at = NULL, has_due_time = 0 WHERE id = ?1")
+            .bind(&task_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+
+        let (enabled, reason, _) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 0, "缺少依赖时间时应被自动暂停");
+        assert_eq!(
+            reason.as_deref(),
+            Some(DISABLED_MISSING_BASE_TIME),
+            "必须记下是「系统因缺少时间」暂停的，而不是当成用户关闭"
+        );
+
+        // 恢复截止时间（改成另一天）→ 自动恢复启用，且 remind_at 跟着更新
+        sqlx::query("UPDATE tasks SET due_at = ?1, has_due_time = 1 WHERE id = ?2")
+            .bind("2026-10-02T12:00:00.000Z")
+            .bind(&task_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+
+        let (enabled, reason, at) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 1, "依赖时间恢复后应自动重新启用（§6.2 的产品规则）");
+        assert!(reason.is_none(), "恢复后不应再带停用原因");
+        assert_eq!(at, "2026-10-02T11:30:00.000Z", "提醒时刻要跟着新截止时间走");
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 场景 B：用户主动关闭 → 改 due → **不得**自动帮用户打开
+    #[tokio::test]
+    async fn scenario_b_user_disabled_stays_disabled() {
+        let (db, dir) = setup("b").await;
+        let (task_id, reminder_id) =
+            task_with_relative_reminder(&db, Some("2026-10-01T10:00:00.000Z")).await;
+
+        // 用户主动关闭（等价于 reminder_set_enabled(false)，这里直接写库，
+        // 因为命令函数要 State 而测试只有 Db；语义与命令实现保持一致）
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "UPDATE reminders SET is_enabled = 0, disabled_reason = ?1, updated_at = ?2 WHERE id = ?3",
+        )
+        .bind(DISABLED_BY_USER)
+        .bind(&now)
+        .bind(&reminder_id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        // 改截止时间
+        sqlx::query("UPDATE tasks SET due_at = ?1 WHERE id = ?2")
+            .bind("2026-10-05T08:00:00.000Z")
+            .bind(&task_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+
+        let (enabled, reason, at) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 0, "用户关掉的提醒不能被系统自动打开");
+        assert_eq!(reason.as_deref(), Some(DISABLED_BY_USER));
+        assert_eq!(
+            at, "2026-10-05T07:30:00.000Z",
+            "时刻仍应跟着任务更新，这样用户手动打开时就是对的"
+        );
+
+        // 清空再填回时间也不得改变用户的选择
+        sqlx::query("UPDATE tasks SET due_at = NULL WHERE id = ?1")
+            .bind(&task_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+        let (enabled, reason, _) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 0);
+        assert_eq!(
+            reason.as_deref(),
+            Some(DISABLED_BY_USER),
+            "用户关闭的原因不能被系统原因覆盖"
+        );
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 自定义（absolute）提醒不受任务时间影响，重算时必须跳过
+    #[tokio::test]
+    async fn custom_reminders_are_not_touched_by_recompute() {
+        let (db, dir) = setup("custom").await;
+        let (task_id, _) = task_with_relative_reminder(&db, Some("2026-10-01T10:00:00.000Z")).await;
+
+        let custom_id = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO reminders (id, task_id, kind, remind_at, is_enabled, created_at, updated_at)
+             VALUES (?1, ?2, 'custom', '2026-12-31T00:00:00.000Z', 1, ?3, ?3)",
+        )
+        .bind(&custom_id)
+        .bind(&task_id)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        sqlx::query("UPDATE tasks SET due_at = '2026-11-01T00:00:00.000Z' WHERE id = ?1")
+            .bind(&task_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        recompute_task_reminders(&db, &task_id).await.unwrap();
+
+        let (enabled, _, at) = reminder_row(&db, &custom_id).await;
+        assert_eq!(enabled, 1, "自定义提醒不应被停用");
+        assert_eq!(at, "2026-12-31T00:00:00.000Z", "自定义提醒的时刻不该被改");
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 迁移 0005 的兼容性：老的 `is_enabled = 0` 记录必须被当作「用户关闭」，
+    /// 而不是被自动恢复——宁可让用户手动打开，也不要擅自打开他关掉的提醒。
+    #[tokio::test]
+    async fn migration_marks_legacy_disabled_as_user_disabled() {
+        let (db, dir) = setup("legacy").await;
+        let (_, reminder_id) = task_with_relative_reminder(&db, Some("2026-10-01T10:00:00.000Z")).await;
+
+        // 模拟"升级前就是停用状态"的老数据
+        sqlx::query("UPDATE reminders SET is_enabled = 0, disabled_reason = NULL WHERE id = ?1")
+            .bind(&reminder_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        // 迁移脚本里的那条 UPDATE 语句：
+        sqlx::query("UPDATE reminders SET disabled_reason = 'user' WHERE is_enabled = 0")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let (enabled, reason, _) = reminder_row(&db, &reminder_id).await;
+        assert_eq!(enabled, 0);
+        assert_eq!(reason.as_deref(), Some(DISABLED_BY_USER), "老数据应保守地视为用户关闭");
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]
