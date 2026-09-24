@@ -231,8 +231,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 **job summary**（页面上可见）。这次能快速排除"版本差异"这类猜测，
 靠的就是这条铺垫。
 
-修好后的提交 CI `frontend` 与 `rust` 两个 job 均为 success
-（提交号见仓库 `PLA0185/lumen` 的 Actions 记录）。
+修好后的提交 **`862f423`** 上 CI `frontend` 与 `rust` 两个 job **均为 success**。
+（此后若只有文档改动，提交号会继续前进；以仓库 HEAD 的 Actions 记录为准。）
 
 ### 相关文档
 

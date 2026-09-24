@@ -797,9 +797,11 @@ DPAPI 挡的是"文件被拷走 / 被别的账户读到 / 误提交进仓库"；
 | `cargo fmt --check` | ✅ 无差异 |
 | `cargo test --lib` | ✅ **323 passed; 0 failed**（第一轮 310，新增 13） |
 | `cargo clippy --all-targets --all-features -- -D warnings` | ✅ 通过（**无豁免**，与 CI 同一条命令） |
+| GitHub Actions `CI`（提交 `862f423`） | ✅ `frontend` = success、`rust` = success |
 
 > 上一轮本表里也写着"`--all-features` 通过"，但当时 CI 实际带着两条豁免。
-> 本轮把 CI 改成同一命令后，这句话与 CI 行为**真正一致**了。
+> 本轮把 CI 改成同一命令后，这句话与 CI 行为**真正一致**了；
+> 而为让 CI 真的能跑这条命令，rust job 还补上了 `pnpm build`（见 §7 末尾）。
 
 ## 12. 尚未解决的问题（第二轮）
 
