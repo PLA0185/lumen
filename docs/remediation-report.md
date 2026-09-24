@@ -1048,6 +1048,8 @@ COMMIT
 - 脚本侧：造数据**之前**先读 `app_data_paths` 并规范化比较，是生产目录就
   打印拒绝说明、`exit 1`、**一个写操作都不发**；`--expect-data-dir` 用于声明期望目录，
   `--allow-production` 必须显式传且首尾各警告一次。
+  > **后续更新（最终收口轮）**：`--allow-production` 已被彻底删除，目录判定改用
+  > `realpath + normcase` 以识别 junction 别名。见本文件「最终收口」一节。
 - 原先的 confirm 接管 / 前缀 / 按 id 清理降级为**第二层**防护。
 
 ## 8. 测试结果（收口轮，本机实跑）
@@ -1071,3 +1073,102 @@ COMMIT
 5. **updater `-Build` / `-Clear` 未跑**；"数据变化即取消导出"没有端到端验证。
 6. 列表虚拟化、大文件拆分、代码签名、本地模型指引：沿用前两轮结论，未做。
 7. **没有发布新版本**：用户机器上仍是 0.3.0。
+
+---
+---
+
+# 最终收口
+
+> 依据：《Lumen 最终收口整改任务书》
+> 复审基线：`0e681c7`（第三轮收口后的 HEAD）
+> 本节同样是**追加**，不修改上面任何历史结论。
+
+## 0. 本轮的新发现（任务书 §35 要求逐条记录）
+
+第三轮收口把"数量 vs 身份"和"符号链接"都修了，但复审又找出一批**同类但更深一层**的问题：
+
+| # | 新发现 | 为什么上一轮没发现 |
+| --- | --- | --- |
+| 1 | **单条永久删除的"检查"与"DELETE"不原子**：`SELECT` 看 `deleted_at` 之后再 `DELETE WHERE id = ?`，中间有人恢复就仍会被删 | 上一轮把注意力全放在**批量**删除的身份快照上，单条那条路径被认为"只有一条，没什么可错的"——恰恰是它少了条件删除 |
+| 2 | **被标注为"已弃用"的旧批量删除仍然暴露在 IPC 上**：`#[tauri::command]` 与 `generate_handler` 注册都还在，前端 CMD 常量与 wrapper 也在 | 把"标注 deprecated"当成了"不可达"。**接口是否暴露必须单独验证**，行为测试覆盖不到 |
+| 3 | **Board/PDF 的 bus self-ignore 造成同窗口状态不同步**：默认忽略"自己窗口发出的事件"对主列表是对的，但看板与 PDF 有独立状态，主窗口自己在看板里新建任务不会让看板刷新 | 上一轮只测了"跨窗口"，天然不会覆盖"同窗口"这条路径 |
+| 4 | **Board 普通 `reload()` 不作废在飞 `loadMore`**：上一轮明确写进了"已知边界"就算交代了 | 把已知边界写进注释 ≠ 可以不做——它会真实地 append 进一条过时任务 |
+| 5 | **PDF 的 cancel 在 `exportPdf` 之前存在时间窗**：第一次检查之后还有"两帧 + 180ms"，用户在这段时间点取消仍会写出文件 | 只检查了"取消能不能被感知到"，没检查"最后一次检查离写文件有多远" |
+| 6 | **`attachment_remove` 先删文件再删 DB**：删文件成功、DB 失败 → "活记录指向不存在的文件"，不可自愈 | 前面所有讨论都围绕"删任务时怎么清理副本"，没有人回头看"单独删一个附件"的顺序 |
+| 7 | **破坏性验收仍保留 `--allow-production`**，且目录判定用 `abspath + normcase`，junction 别名可绕过 | 上一轮刚做完隔离就留了一个"逃生舱"；而 `abspath` 不解析重解析点这件事，只有把 junction 真的建出来才会暴露 |
+
+这七条的共性：**上一轮修的是"当时想到的攻击面"，本轮补的是"同一类问题的其它入口"**。
+
+## 1. P0-① 单条永久删除：把条件写进 DELETE
+
+```text
+BEGIN
+  1. SELECT deleted_at（确认存在且在回收站）
+  2. 同事务取 copied 附件路径
+  3. DELETE FROM tasks WHERE id = ? AND deleted_at IS NOT NULL
+  4. rows_affected != 1 → ROLLBACK + conflict
+COMMIT
+  5. 提交后才删文件
+```
+
+关键是第 3 步：**把"仍在回收站"变成原子条件**，而不是在它前面多查几次。
+回归测试用真两连接模拟"检查之后被恢复"，断言条件删除命中 0 行、任务仍在、
+`deleted_at` 为 NULL、副本文件仍在、真实入口返回冲突。
+
+## 2. P0-② 旧危险 IPC 彻底移除
+
+- 去掉 `#[tauri::command]` 与 `generate_handler` 注册；
+- 删掉前端 `CMD.taskPurgeAllDeleted` 与 `purgeAllDeleted` 包装；
+- 保留内部 helper 给集成测试当反例；
+- **加静态护栏**：Rust 侧 `include_str!` 断言 `lib.rs` 与 `src/lib/ipc.ts` 不含旧命令名，
+  前端 `ipc-surface.test.ts` 做同样检查，并反向断言两阶段命令仍在。
+
+## 3. P0-③ 附件删除顺序
+
+先删 DB 记录（失败即返回、一个文件都不碰），成功之后才删副本。
+测试用 SQLite 触发器让 DELETE 必然失败，断言**文件仍在**——这正是旧实现会留下
+"活记录指向不存在文件"的地方。
+
+## 4. P1 异步一致性
+
+| 位置 | 改动 |
+| --- | --- |
+| store | 补"卡在 `fetchProgress`"的两条测试（reload / loadMore），突变验证 2 红 |
+| bus | `onTasksChanged(cb, { includeSelf })`，默认 false 保持兼容 |
+| Board | 用 `includeSelf: true`；`reload()` 递增 generation 以作废在飞 loadMore |
+| PDF | 用 `includeSelf: true`；`exportPdf` 前最后一次 cancel 检查 |
+| report-export | 取消下沉到每一行；`shouldStop`/`rowGate`/`consumeRows` 三个纯函数统一判定；上限语义统一为"恰好等于仍可写入" |
+
+## 5. P1 验收安全
+
+- 删除 `--allow-production`（无任何绕过开关）；
+- `canonical_dir` 用 `realpath + normcase`，junction/symlink 别名无法伪装隔离目录；
+- `decide_profile()` 纯函数 + 隐藏自测入口，22 项通过（含真实 junction 别名），
+  换回旧写法 18/22 且 exit 1。
+
+## 6. 测试结果（最终收口轮，本机实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | ✅ 0 错误 |
+| `pnpm test` | ✅ **148 passed**（第三轮收口 125） |
+| `pnpm build` / `pnpm lint` | ✅ / 0 problems |
+| `cargo fmt --check` | ✅ |
+| `cargo test --lib` | ✅ **340 passed; 0 failed**（第三轮收口 335） |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅ 通过（无豁免） |
+
+## 7. 隔离 profile 实机验收（§33）
+
+在 `LUMEN_TEST_DATA_DIR=%TEMP%\lumen-acceptance` 下启动并跑完 `verify_remediation3.py`：
+脚本确认 `生产目录=False`（隔离放行路径通），B/C 两段全通过；
+**结果 35/42**，失败项为 D 段的 4 条"provider 状态无法区分"与脚本自身清理缺陷 3 条。
+用户真实数据目录全程未被触碰，跑完已清理隔离目录。详细记录见
+`docs/work-log.md` 第 11 轮的"实机验收"一节（含未实机验收的 A/C/D 三项）。
+
+## 8. 尚未解决（最终收口轮）
+
+1. **§33 的 A/C/D 未实机验收**（单条 purge 竞态、PDF 同窗口变化、PDF 手动取消），只有单元测试证据。
+2. **验收脚本的清理缺陷未修**（隔离目录里残留 1460 条，未复现修验证）。
+3. symlink（`mklink /D`）形态、`LUMEN_TEST_DATA_DIR` 指向生产别名，均未实测。
+4. keyset 分页、文件级 symlink、报表四组压力数据、updater `-Build`/`-Clear`：沿用未做。
+5. **0.4.0 未发布**：本轮修完三个发布阻断项，但按任务书 §40 需复审通过后才允许发布。

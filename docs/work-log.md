@@ -313,6 +313,183 @@ $ git diff --stat 8aa8d8b..HEAD
 
 ---
 
+## 第 11 轮 · 2026-09-24 · 最终收口（基线 `0e681c7`）
+
+> 本轮起点是 `0e681c7`。目标是把 0.4.0 的三个绝对发布阻断项修掉，并补齐
+> "发布前必须能自己证明自己"的部分。
+
+### 做了
+
+**P0-① 单条永久删除的"检查后恢复仍被删"竞态（§2/§3/§4）**
+
+旧实现是"先 `SELECT` 看 `deleted_at` 是不是 NULL，再 `DELETE WHERE id = ?`"，
+两步之间有真实窗口：窗口 1 查到 A 在回收站 → 窗口 2 把 A 恢复 → 窗口 1 继续删，
+**A 已经回到正常列表却仍被永久删除**。
+
+现在把"仍在回收站"写进 DELETE 的 WHERE（条件删除），并检查 `rows_affected`：
+只要期间有人恢复过它，就是 0 行，整体回滚并返回冲突。
+副本路径改在同一事务内取（`copied_paths_of_task_tx`），避免"文件集合 ≠ 记录集合"。
+
+**P0-② 旧的危险批量删除从 IPC 层彻底移除（§5~§7）**
+
+上一轮只是把 `task_purge_all_deleted` 标注成"已弃用"，但它**仍然注册在
+`generate_handler` 里**、前端也还留着命令常量与 wrapper —— 任何代码依旧能
+`invoke("task_purge_all_deleted")` 走到那条旧路径（事务外取附件路径 + 只校验数量 +
+按动态 query 删除）。现在：去掉 `#[tauri::command]` 与注册、删掉前端 CMD 常量与封装，
+只保留内部 helper 给集成测试当反例。生产路径只剩两阶段。
+
+加了两道**静态护栏**（行为测试覆盖不到"接口还在不在"）：Rust 侧对
+`include_str!("lib.rs")` 与 `include_str!("../../src/lib/ipc.ts")` 断言不含旧命令名，
+前端侧新增 `ipc-surface.test.ts` 做同样的检查，并反向断言两阶段命令仍在。
+
+**P0-③ 附件删除的顺序反了（§23~§25）**
+
+旧实现是"先删副本文件、再删 DB 记录"。第一步成功、第二步失败时会留下
+**"活记录指向一个不存在的文件"**：用户看到附件还在、点开却打不开，
+而且没有任何机制能自愈。
+
+现在先删记录、**成功之后**才删文件——最坏情况只是留一个没人引用的孤儿副本，
+那是 `cleanup_orphans` 能扫掉的可恢复状态。同时把逻辑抽成
+`attachment_remove_impl(db, id)` 以便单测。
+
+**P1-④ store：`fetchProgress` 那个 await 的窗口终于被测到了（§8~§10）**
+
+代码上一轮已经改成"`await fetchProgress` 之后再查一次代数"，但**测试只卡住了
+`listTasks`，没卡住 `fetchProgress`**。本轮补了两条：reload 卡在 fetchProgress
+与 loadMore 卡在 fetchProgress，各自验证"旧结果不得落地/不得追加、旧进度不得混入、
+`totalCount` 不得回退、`loadingMore` 不得卡住"。
+突变验证：把两处二次检查注释掉 → 2 项立刻红（旧 reload 整份覆盖新结果；
+旧第二页 200 条被追加到新结果上），恢复后绿。
+
+**P1-⑤ 同窗口的变更此前根本传不到看板和 PDF（§11~§18）**
+
+`bus.onTasksChanged` 默认忽略"当前窗口自己发出的事件"（对主列表是对的，
+避免自己刷新自己），但**看板与 PDF 导出各自有独立状态**——
+"主窗口在看板里用 QuickAdd 新建任务"这件事压根不会让看板刷新。
+
+`onTasksChanged(cb, { includeSelf?: boolean })`：默认仍是 `false`（现有调用行为不变），
+看板与 PDF 导出改为 `includeSelf: true`。
+
+**P1-⑥ 看板普通 reload 不作废在飞 loadMore（§14~§16）**
+
+上一轮明确承认了这个边界。现在 `reload()` 开头也递增 `generation`（方案 A），
+`handleExternalChange` 去掉自己那次递增（避免双增导致 reload 自己的结果被判过期）。
+
+**P1-⑦ PDF 取消与上限语义（§19~§22）**
+
+- 取消检查从"每页开始"下沉到**每一行写入之前**（点取消不用等整页 500 行跑完）；
+- **写文件前的最后一次检查**：原来第一次检查之后还有"两帧 + 180ms"，用户在这段时间
+  点取消仍会落下一个 PDF；现在 `exportPdf` 之前再查一次；
+- 上限语义统一为"写入前预判"：累计**恰好等于**上限的内容可完整写入，超过才停
+  （原来是"达到即停"）。抽出 `shouldStop` / `rowGate` / `consumeRows` 三个纯函数，
+  让构建器与测试共用同一份判定，页脚按真实原因写（取消 / 行数超限 / 字符超限）。
+
+**P1-⑧ 破坏性验收彻底封死生产 profile（§26~§29）**
+
+- **删掉 `--allow-production` 绕过开关**（连同 `PRODUCTION_WARNING` 等符号）；
+- 目录判定从 `abspath + normcase` 升级为 **`realpath + normcase`**：
+  以前把 `C:\Temp\fake-test` 做成指向生产目录的 junction 就能骗过校验，现在会被识别并拒绝；
+- 抽出纯函数 `decide_profile()`（原因码 `read-failed` / `empty-data-dir` /
+  `production` / `expect-mismatch`），并加了隐藏自测入口，22 项全通过
+  （含**真的用 `mklink /J` 建 4 个 junction 别名再删掉**）；
+- 反向验证：把判定换回旧的 `abspath` 写法 → 同样的自测 18/22、exit 1，
+  红的正是那 4 条 junction 用例。
+
+**顺手补的东西**
+
+- 应用侧新增 `LUMEN_TEST_DATA_DIR`（只认环境变量，不接受命令行参数），
+  启用时打一条 warn 明确说明"本次不使用用户真实数据目录"。
+
+### 实机验收（§33）
+
+**在隔离 profile 下跑通了**（这是上一轮欠的账）：
+
+```
+$env:LUMEN_TEST_DATA_DIR = "$env:TEMP\lumen-acceptance"
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+pnpm tauri dev
+python tools/verify_remediation3.py --expect-data-dir "$env:TEMP\lumen-acceptance"
+```
+
+启动日志确认走的是隔离目录：
+
+```
+[WARN] 已启用隔离 profile（LUMEN_TEST_DATA_DIR）：C:\Users\win\AppData\Local\Temp\lumen-acceptance
+       —— 本次运行**不使用**用户真实数据目录 C:\Users\win\AppData\Roaming\com.pla0185.lumen
+[INFO] Lumen 启动，数据目录：C:\Users\win\AppData\Local\Temp\lumen-acceptance
+```
+
+脚本自己也确认了：`dataDir = …\lumen-acceptance（生产目录=False）`，
+**没有被拒绝**（说明"隔离就放行"这条路径是通的），B 段 17 项、C 段 8 项全通过。
+跑完关掉实例并清理隔离目录；**用户真实数据目录全程未被触碰**。
+
+**本轮结果 35/42**，7 项失败里有 4 项是上一轮就存在的 D 段问题（本机四个 provider
+都没配密钥，界面**无法区分**"按 provider 独立"，脚本也没能定位到那个 `<select>`），
+另外 3 项是**脚本自身的清理缺陷**：A 段残留 1 条、结束时残留 1460 条、
+"用户原有数据未被改动"因此判负。这三项不是产品缺陷，但必须记下来：
+
+- 好在这次跑在隔离目录里，残留只是临时目录里的垃圾（已整目录删除）；
+  这也正好说明"隔离 profile"这条要求不是形式主义。
+
+### 没做到
+
+| 项 | 说明 |
+| --- | --- |
+| **§33 的 A/C/D 三项没有实机验收** | 单条 purge 竞态（A）、PDF 同窗口变化（C）、PDF 手动取消（D）都**只有单元测试证据**，没有在真实界面上制造出对应时序。A 的竞态需要两个连接同时操作，实机难以稳定复现；C/D 需要在真实导出过程中点击/并发写入，本轮没做 |
+| **验收脚本的清理缺陷没修** | 上面那 3 项失败（残留 1460 条）只在隔离目录里复现过，没有去修脚本的清理逻辑，也没有再跑一遍验证 |
+| **symlink（`mklink /D`）形态未实测** | 需要管理员或开发者模式；junction 与 symlink 在 `realpath` 里走同一条解析路径，但这是推断 |
+| **`LUMEN_TEST_DATA_DIR` 指向生产 junction 别名**未实测 | 判定逻辑上会被"别名 → 生产目录"那条覆盖，但没有真的这样启动过 |
+| **PDF 逐行取消的真实时延**未实测 | 只能证明判定逻辑正确，证明不了"点取消后立即停下"的实际观感 |
+| **Board 的多窗口真机投递**未实测 | bus 那一层用替身事件总线真跑通了（`vi.stubGlobal` + 内存总线），但真实 Tauri emit 是否确实投递给发送者窗口没在本机核实 |
+| **keyset 分页仍未做**；文件级 symlink、报表四组压力数据、updater `-Build`/`-Clear` 同前两轮 | 沿用未做清单 |
+| **没有发布 0.4.0** | 本轮修完了三个发布阻断项，但按任务书 §40 还需复审通过才允许发布 |
+
+### 新发现问题
+
+1. **"标注为 deprecated"不等于"不可达"**：上一轮把危险命令标了"已弃用"就以为安全了，
+   但它仍注册在 IPC 里。**接口是否暴露要单独验证**——所以本轮加了读源码文本的静态护栏。
+2. **竞态要修在"条件的原子性"上，不是"检查得更仔细"上**：把"仍在回收站"写进
+   DELETE 的 WHERE，比在它前面加多少次 `SELECT` 都管用。这与上一轮"数量 vs 身份"是同一类教训。
+3. **删除顺序决定失败模式可不可恢复**：先删文件再删记录 → 失败留下"活记录指向不存在的文件"
+   （不可自愈）；反过来 → 最坏只是一个能被扫掉的孤儿。**选可恢复的那一侧。**
+4. **默认忽略自己的事件，对"有独立状态的消费者"是错的**：同一份事件语义，
+   主列表要 `false`、看板与 PDF 要 `true`。这类差异必须由调用方显式声明。
+5. **验收脚本自身也要被验收**：本轮它跑了 42 项、通过了 35 项，却没清理干净自己的数据。
+   脚本的"收尾断言"这次真的抓到了它自己的问题——这正是那两条断言存在的意义。
+
+### 怎么验证的
+
+```powershell
+pnpm typecheck        # 通过
+pnpm test             # 148 passed（第 10 轮 125）
+pnpm build / lint     # 通过 / 0 problems
+cargo fmt --check     # 通过
+cargo test --lib      # 340 passed（第 10 轮 335）
+cargo clippy --all-targets --all-features -- -D warnings   # 通过（无豁免）
+```
+
+**新增的自动化回归**
+
+- Rust（+5）：`single_purge_refuses_task_restored_after_initial_check`（检查后恢复 →
+  条件删除 0 行、任务仍在、`deleted_at` 为 NULL、副本文件仍在、真实入口报冲突）、
+  `dangerous_bulk_purge_command_is_not_exposed_anymore`（静态源码护栏）、
+  `attachment_remove_deletes_the_record_before_the_copied_file`、
+  `attachment_remove_keeps_the_file_when_the_db_delete_fails`（用触发器让 DELETE 必然失败，
+  断言文件仍在、记录仍在）、`attachment_remove_never_touches_the_referenced_original`。
+- 前端（+23）：store 两条 fetchProgress 竞态；board 五条（含 reload 作废在飞 loadMore、
+  includeSelf 开/关两条路径）；report-export 十二条（行数/字符各三档边界、取消三例、
+  取消优先于超限）；ipc-surface 四条静态护栏。
+- **突变验证**（证明测试不是摆设）：store 二次检查注释掉 → 2 红；
+  report 字符判定改回 `>=` → 3 红；取消检查只查第一行 → 1 红；
+  验收脚本判定改回 `abspath` → 4 条 junction 用例红、exit 1。
+
+### 相关文档
+
+- `docs/remediation-report.md` —— 「最终收口」章节（含本轮新发现的 7 条）
+- `tools/verify_remediation3.py` —— 实机验收脚本（已无任何生产绕过开关）
+
+---
+
 ## 第 10 轮 · 2026-09-24 · 第三轮**收口**整改（基线 `dd950d5`）
 
 > 本轮起点是 `dd950d5`。`8aa8d8b → dd950d5` 那 7 个提交属于**上一轮**，
@@ -381,6 +558,8 @@ $ git diff --stat 8aa8d8b..HEAD
 （只认环境变量，不接受命令行参数）。脚本侧：**造任何数据之前**先读 `app_data_paths`，
 规范化比较后若是生产目录就打印拒绝说明并 `exit 1`，**一个写操作都不发**；
 新增 `--expect-data-dir` 与 `--allow-production`（后者必须显式传、首尾各警告一次）。
+> **第 11 轮更新**：`--allow-production` 已被**彻底删除**（任务书 §26/§27 —— 本项目真实误删过数据，
+> 这类绕过开关不该存在），目录判定也升级为 `realpath + normcase`。上面这句描述的是第 10 轮当时的状态。
 confirm 接管、`ZZR3-` 前缀、按 id 清理全部保留，但降级为第二层。
 
 ### 没做到
