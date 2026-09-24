@@ -25,14 +25,16 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
 import * as ipc from '../lib/ipc'
-import * as bus from '../lib/bus'
 import * as org from '../lib/organize-ipc'
+import * as rec from '../lib/recurrence-ipc'
 import { IpcError } from '../lib/ipc'
 import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/datetime'
 import type { PeriodType, Task, TaskStatus } from '../lib/types'
 import { PERIOD_LABELS } from '../lib/types'
 import type { Category, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
 import { Icon } from './Icons'
+import { ScopeDialog } from './ScopeDialog'
+import { onDataChanged } from '../lib/data-change'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -90,9 +92,13 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [pendingRecurringPatch, setPendingRecurringPatch] = useState<rec.InstancePatch | null>(null)
+  const [pendingRecurringRestrictedReason, setPendingRecurringRestrictedReason] = useState<string | null>(null)
+  const [optionsLoaded, setOptionsLoaded] = useState(false)
 
   // 载入选项与初始值
   useEffect(() => {
+    setOptionsLoaded(false)
     void (async () => {
       try {
         const [p, c, t, mine] = await Promise.all([
@@ -105,11 +111,18 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         setCategories(c)
         setTags(t)
         setTagIds(mine.map((x) => x.id))
+        setOptionsLoaded(true)
       } catch (e) {
         setError(errText(e))
       }
     })()
   }, [task.id])
+
+  useEffect(() => onDataChanged(['organization', 'all'], () => {
+    void Promise.all([org.projectList(true), org.categoryList(), org.tagList()])
+      .then(([p, c, t]) => { setProjects(p); setCategories(c); setTags(t) })
+      .catch((e) => setError(errText(e)))
+  }), [])
 
   // 时间字段初始化：把 UTC 转成本地日期/时间控件值
   useEffect(() => {
@@ -163,6 +176,10 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   }
 
   const save = async () => {
+    if (!optionsLoaded) {
+      setError('项目、分类和标签尚未加载完成，请稍后再保存。')
+      return
+    }
     if (!validate()) return
     setSaving(true)
     setError(null)
@@ -209,13 +226,73 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
       if (categoryId) patch.categoryId = categoryId
       else patch.clearCategory = true
 
-      const saved = await ipc.updateTask(task.id, patch)
-      // 标签用整体替换语义，单独调用
-      await org.taskTagsSet(task.id, tagIds)
-      // 悬浮窗可能正显示这条任务，改完立刻广播
-      void bus.notifyTasksChanged()
-      onSaved(saved)
-      onClose()
+      if (task.seriesId) {
+        const originalTags = (await org.taskTagsGet(task.id)).map((tag) => tag.id).sort()
+        const changedTags = JSON.stringify([...tagIds].sort()) !== JSON.stringify(originalTags)
+        const plannedChanged = (patch.plannedAt ?? null) !== task.plannedAt ||
+          (patch.hasPlannedTime ?? false) !== (task.hasPlannedTime === 1)
+        const dueChanged = (patch.dueAt ?? null) !== task.dueAt ||
+          (patch.hasDueTime ?? false) !== (task.hasDueTime === 1)
+        const clearEstimated = !estimated.trim() && task.estimatedMinutes !== null
+        const singleOnlyChanged = noteMd !== task.noteMd ||
+          linkUrl.trim() !== (task.linkUrl ?? '') ||
+          projectId !== (task.projectId ?? '') || categoryId !== (task.categoryId ?? '') ||
+          changedTags || periodType !== task.periodType || clearEstimated
+        const stateChanged = status !== task.status || Number(actual || 0) !== task.actualMinutes ||
+          isPinned !== (task.isPinned === 1) || isFavorite !== (task.isFavorite === 1)
+        const contentChanged = title.trim() !== task.title || description !== task.description ||
+          priority !== task.priority ||
+          (estimated.trim() ? Number(estimated) : null) !== task.estimatedMinutes ||
+          plannedChanged || dueChanged || singleOnlyChanged
+        if (stateChanged && contentChanged) {
+          setError('本次状态、耗时或标记的修改请与系列内容修改分开保存，以免出现部分成功。')
+          return
+        }
+        if (stateChanged) {
+          const saved = await ipc.updateTask(task.id, {
+            status, actualMinutes: Number(actual || 0), isPinned, isFavorite,
+          })
+          onSaved(saved)
+          onClose()
+          return
+        }
+        if (!contentChanged) {
+          onClose()
+          return
+        }
+        setPendingRecurringRestrictedReason(plannedChanged || dueChanged
+          ? '改期只支持「仅此次」。'
+          : singleOnlyChanged
+            ? '备注、链接、归属、标签、周期和清空预计耗时仅支持「仅此次」。'
+            : null)
+        setPendingRecurringPatch({
+          title: title.trim() !== task.title ? title.trim() : undefined,
+          description: description !== task.description ? description : undefined,
+          priority: priority !== task.priority ? priority : undefined,
+          plannedAt: plannedChanged ? (patch.plannedAt ?? undefined) : undefined,
+          hasPlannedTime: plannedChanged && planned ? patch.hasPlannedTime : undefined,
+          dueAt: dueChanged ? (patch.dueAt ?? undefined) : undefined,
+          hasDueTime: dueChanged && due ? patch.hasDueTime : undefined,
+          clearPlannedAt: plannedChanged && !planned,
+          clearDueAt: dueChanged && !due,
+          estimatedMinutes: estimated.trim() && Number(estimated) !== task.estimatedMinutes
+            ? Number(estimated) : undefined,
+          clearEstimatedMinutes: clearEstimated,
+          noteMd: noteMd !== task.noteMd ? noteMd : undefined,
+          linkUrl: linkUrl.trim() && linkUrl.trim() !== (task.linkUrl ?? '') ? linkUrl.trim() : undefined,
+          clearLink: !linkUrl.trim() && Boolean(task.linkUrl),
+          projectId: projectId && projectId !== (task.projectId ?? '') ? projectId : undefined,
+          clearProject: !projectId && Boolean(task.projectId),
+          categoryId: categoryId && categoryId !== (task.categoryId ?? '') ? categoryId : undefined,
+          clearCategory: !categoryId && Boolean(task.categoryId),
+          tagIds: changedTags ? tagIds : undefined,
+          periodType: periodType !== task.periodType ? periodType : undefined,
+        })
+      } else {
+        const saved = await ipc.saveTask(task.id, patch, tagIds)
+        onSaved(saved)
+        onClose()
+      }
     } catch (e) {
       setError(errText(e))
     } finally {
@@ -238,6 +315,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   )
 
   return (
+    <>
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="editor-title">
       <div className="modal modal--wide">
         <h2 className="modal__title" id="editor-title">
@@ -615,12 +693,33 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             type="button"
             className="btn btn--primary"
             onClick={() => void save()}
-            disabled={saving}
+            disabled={saving || !optionsLoaded}
           >
             {saving ? '保存中…' : '保存'}
           </button>
         </div>
       </div>
     </div>
+    {pendingRecurringPatch && (
+      <ScopeDialog
+        taskId={task.id}
+        taskTitle={task.title}
+        intent="edit"
+        allowThisAndFuture={!pendingRecurringRestrictedReason}
+        allowWholeSeries={!pendingRecurringRestrictedReason}
+        restrictedReason={pendingRecurringRestrictedReason ?? undefined}
+        onCancel={() => { setPendingRecurringPatch(null); setPendingRecurringRestrictedReason(null) }}
+        onConfirm={async (scope, confirmHistory) => {
+          await rec.recurringEditInstance({
+            taskId: task.id, scope, patch: pendingRecurringPatch, confirmHistory,
+          })
+          setPendingRecurringPatch(null)
+          setPendingRecurringRestrictedReason(null)
+          onSaved(task)
+          onClose()
+        }}
+      />
+    )}
+    </>
   )
 }

@@ -16,8 +16,8 @@
 //! - 任务时间与相对提醒的时刻必须一起成功或一起失败。
 
 use crate::commands::{
-    create_task_impl, duplicate_task_impl, list_tasks_impl, reorder_task_impl, update_task_impl,
-    AppState, ReorderInput,
+    create_task_impl, duplicate_task_impl, list_tasks_impl, reorder_task_impl, save_task_impl,
+    update_task_impl, AppState, ReorderInput,
 };
 use crate::db::Db;
 use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
@@ -644,6 +644,35 @@ async fn failed_reminder_recompute_rolls_back_task_update() {
         "更新必须整体回滚：任务截止时间不能留下半新半旧的状态"
     );
 
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn failed_tag_insert_rolls_back_task_save() {
+    let (state, dir) = setup("save-rollback").await;
+    let task = create_task_impl(&state.db, task("原标题")).await.unwrap();
+    let result = save_task_impl(
+        &state.db,
+        &task.id,
+        UpdateTaskInput {
+            title: Some("新标题".into()),
+            ..Default::default()
+        },
+        Some(vec!["missing-tag".into()]),
+    )
+    .await;
+    assert!(result.is_err(), "标签写入失败必须让整个保存失败");
+    let after = crate::commands::get_task_row(&state.db, &task.id)
+        .await
+        .unwrap();
+    assert_eq!(after.title, "原标题");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM task_tags WHERE task_id = ?1")
+        .bind(&task.id)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    state.db.pool().close().await;
     let _ = std::fs::remove_dir_all(dir);
 }
 

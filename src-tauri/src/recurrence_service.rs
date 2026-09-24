@@ -92,6 +92,7 @@ pub struct Segment {
     pub effective_from_occurrence: String,
     pub new_rrule: Option<String>,
     pub override_title: Option<String>,
+    pub override_description: Option<String>,
     pub override_priority: Option<i64>,
     pub override_project_id: Option<String>,
     pub override_category_id: Option<String>,
@@ -118,7 +119,7 @@ pub struct CreateRecurringInput {
 
     /// RRULE 字符串，例如 `FREQ=WEEKLY;BYDAY=MO,WE,FR`
     pub rrule: String,
-    /// 时区标识，默认 Asia/Shanghai
+    /// 时区标识，由桌面客户端读取系统 IANA 时区；IPC 缺省按 UTC
     #[serde(default)]
     pub tzid: Option<String>,
     /// 首次发生的本地墙上时间 `YYYY-MM-DDTHH:MM:SS`
@@ -145,6 +146,8 @@ pub struct CreateRecurringResult {
     pub description: String,
     /// 边界策略说明（若该规则涉及月末等情形）
     pub edge_note: Option<String>,
+    pub warning: Option<String>,
+    pub needs_repair: bool,
 }
 
 // =============================================================================
@@ -164,11 +167,10 @@ async fn get_series(state: &AppState, id: &str) -> AppResult<Series> {
 ///
 /// 返回 `(rule_version, 生效起点, 规则, 字段覆盖)`，按生效起点升序。
 /// 物化时对每个发生找出"对它生效的那一段"。
-fn build_rule_timeline(
-    base: &Series,
-    segments: &[Segment],
-) -> AppResult<Vec<(i64, String, RecurrenceRule, FieldOverride)>> {
-    let mut out: Vec<(i64, String, RecurrenceRule, FieldOverride)> = Vec::new();
+type RuleTimeline = Vec<(i64, Option<String>, RecurrenceRule, FieldOverride)>;
+
+fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTimeline> {
+    let mut out = Vec::new();
 
     // 第 1 段永远存在：系列本身的规则，从 dtstart 起生效
     let base_rule = RecurrenceRule::from_rrule_string(
@@ -177,59 +179,50 @@ fn build_rule_timeline(
         &base.dtstart_local,
         base.has_start_time == 1,
     )?;
-    let base_anchor = parse_local_datetime(&base.dtstart_local)?
-        .date()
-        .format("%Y-%m-%d")
-        .to_string();
-    out.push((
-        // 基线分段的"规则版本"恒为 1：分段只在用户选择"此次及以后"
-        // 修改规则时产生，第 1 段永远是原始规则。
-        // 之前写成 `.min(1).max(1)`，clippy 直接判为常量（而且确实绕）。
-        1,
-        base_anchor,
-        base_rule,
-        FieldOverride::default(),
-    ));
+    out.push((1, None, base_rule.clone(), FieldOverride::default()));
+    let mut current_rule = base_rule;
+    let mut current_override = FieldOverride::default();
 
     for seg in segments {
-        let anchor = segment_anchor_local(seg, &base.dtstart_local)?;
+        let anchor = segment_anchor_local(seg, &base.tzid)?;
         let rule = match &seg.new_rrule {
-            Some(r) => RecurrenceRule::from_rrule_string(
-                r,
-                &base.tzid,
-                &base.dtstart_local,
-                base.has_start_time == 1,
-            )?,
-            None => RecurrenceRule::from_rrule_string(
-                &base.rrule,
-                &base.tzid,
-                &base.dtstart_local,
-                base.has_start_time == 1,
-            )?,
+            Some(r) => {
+                RecurrenceRule::from_rrule_string(r, &base.tzid, &anchor, base.has_start_time == 1)?
+            }
+            None => current_rule.clone(),
         };
+        current_rule = rule.clone();
+        if let Some(title) = &seg.override_title {
+            current_override.title = Some(title.clone());
+        }
+        if let Some(description) = &seg.override_description {
+            current_override.description = Some(description.clone());
+        }
+        if let Some(priority) = seg.override_priority {
+            current_override.priority = Some(priority);
+        }
+        if let Some(project_id) = &seg.override_project_id {
+            current_override.project_id = Some(project_id.clone());
+        }
+        if let Some(category_id) = &seg.override_category_id {
+            current_override.category_id = Some(category_id.clone());
+        }
+        if let Some(estimated) = seg.override_estimated_minutes {
+            current_override.estimated_minutes = Some(estimated);
+        }
         out.push((
             seg.rule_version,
-            anchor,
+            Some(seg.effective_from_occurrence.clone()),
             rule,
-            FieldOverride {
-                title: seg.override_title.clone(),
-                priority: seg.override_priority,
-                project_id: seg.override_project_id.clone(),
-                category_id: seg.override_category_id.clone(),
-                estimated_minutes: seg.override_estimated_minutes,
-            },
+            current_override.clone(),
         ));
     }
 
-    out.sort_by(|a, b| a.1.cmp(&b.1));
     Ok(out)
 }
 
 /// 分段生效起点的本地日期串
-fn segment_anchor_local(seg: &Segment, dtstart_local: &str) -> AppResult<String> {
-    // effective_from_occurrence 存的是 UTC 时刻；转成本地日期需要 tzid，
-    // 但这里只需要"哪个分段的起点更早"这一相对顺序，用 UTC 日期比较同样正确，
-    // 因此直接取其日期部分作为排序键，避免引入时区换算的额外失败点。
+fn segment_anchor_local(seg: &Segment, tzid: &str) -> AppResult<String> {
     let dt =
         chrono::DateTime::parse_from_rfc3339(&seg.effective_from_occurrence).map_err(|_| {
             AppError::validation(format!(
@@ -237,11 +230,12 @@ fn segment_anchor_local(seg: &Segment, dtstart_local: &str) -> AppResult<String>
                 seg.effective_from_occurrence
             ))
         })?;
-    let _ = dtstart_local;
+    let tz: chrono_tz::Tz = tzid
+        .parse()
+        .map_err(|_| AppError::validation("重复系列时区无效"))?;
     Ok(dt
-        .with_timezone(&chrono::Utc)
-        .date_naive()
-        .format("%Y-%m-%d")
+        .with_timezone(&tz)
+        .format("%Y-%m-%dT%H:%M:%S")
         .to_string())
 }
 
@@ -249,7 +243,20 @@ fn segment_anchor_local(seg: &Segment, dtstart_local: &str) -> AppResult<String>
 #[derive(Debug, Clone, Default)]
 struct FieldOverride {
     title: Option<String>,
+    description: Option<String>,
     priority: Option<i64>,
+    project_id: Option<String>,
+    category_id: Option<String>,
+    estimated_minutes: Option<i64>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct SeriesTemplate {
+    title: String,
+    description: String,
+    note_md: String,
+    link_url: Option<String>,
+    priority: i64,
     project_id: Option<String>,
     category_id: Option<String>,
     estimated_minutes: Option<i64>,
@@ -299,7 +306,20 @@ async fn materialize_range(
             .await?;
     let skip_keys: std::collections::HashSet<String> = skips.into_iter().map(|(k,)| k).collect();
 
-    // 展开足够多的发生，再用 UTC 范围过滤
+    let start_utc = chrono::DateTime::parse_from_rfc3339(range_start_utc)
+        .map_err(|_| AppError::validation("物化起点不是有效 UTC 日期时间"))?
+        .with_timezone(&chrono::Utc);
+    let end_utc = chrono::DateTime::parse_from_rfc3339(range_end_utc)
+        .map_err(|_| AppError::validation("物化终点不是有效 UTC 日期时间"))?
+        .with_timezone(&chrono::Utc);
+    if end_utc <= start_utc {
+        return Err(AppError::validation("物化终点必须晚于起点"));
+    }
+    let tz: chrono_tz::Tz = series
+        .tzid
+        .parse()
+        .map_err(|_| AppError::validation("重复系列时区无效"))?;
+
     let mut created = 0usize;
     let to_utc = |local: &str| -> AppResult<String> {
         let dt = parse_local_datetime(local)?;
@@ -313,81 +333,66 @@ async fn materialize_range(
         Ok(to_db_time(pair[0].1))
     };
 
-    // 逐段展开。每一段用自己的规则生成，然后整体去重。
-    let mut candidates: Vec<(String, String, Occurrence, &FieldOverride)> = Vec::new();
-    for (version, _anchor, rule, ov) in &timeline {
-        let occ = rule.expand(MAX_MATERIALIZE)?;
-        for o in occ {
+    // Each segment owns [anchor, next anchor). Expand only near the requested
+    // range, never only the first N occurrences from DTSTART.
+    let mut candidates: Vec<(String, i64, Occurrence, FieldOverride)> = Vec::new();
+    for (i, (version, anchor, rule, ov)) in timeline.iter().enumerate() {
+        let next_anchor = timeline.get(i + 1).and_then(|segment| segment.1.as_deref());
+        let local_start = start_utc.with_timezone(&tz).naive_local() - chrono::Duration::days(1);
+        let local_end = end_utc.with_timezone(&tz).naive_local() + chrono::Duration::days(1);
+        for o in rule.expand_between(local_start, local_end, limit + 1)? {
             let key = to_utc(&o.local.to_string())?;
-            candidates.push((key, version.to_string(), o, ov));
+            if key.as_str() < range_start_utc
+                || key.as_str() >= range_end_utc
+                || anchor.as_deref().is_some_and(|a| key.as_str() < a)
+                || next_anchor.is_some_and(|a| key.as_str() >= a)
+            {
+                continue;
+            }
+            candidates.push((key, *version, o, ov.clone()));
         }
     }
-    // 同一 key 只保留第一条（分段的重叠部分由后段覆盖，但排序后先到先得，
-    // 因此这里按 key 去重时保留 rule_version 最大的那条）
+    // A boundary can coincide with both rules; the newer version wins.
     candidates.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     let mut seen: std::collections::HashSet<String> = Default::default();
     candidates.retain(|(k, _, _, _)| seen.insert(k.clone()));
 
-    // 建系列的基准字段（从 dtstart 对应的那条实例或系列本身推不出来，
-    // 因此创建系列时会先把"首个实例"作为模板写入 tasks，其余实例复制它的字段）
-    let template = sqlx::query_as::<_, Task>(
-        "SELECT * FROM tasks WHERE series_id = ?1 ORDER BY occurrence_key ASC LIMIT 1",
+    let template = sqlx::query_as::<_, SeriesTemplate>(
+        "SELECT title, description, note_md, link_url, priority, project_id,
+                category_id, estimated_minutes
+         FROM task_series_template WHERE series_id = ?1",
     )
     .bind(series_id)
     .fetch_optional(state.db.pool())
-    .await?;
+    .await?
+    .ok_or_else(|| AppError::conflict("重复系列缺少持久化模板，无法安全物化"))?;
 
     let mut tx = state.db.pool().begin().await?;
 
     for (key, _ver, occ, ov) in candidates {
-        if created >= limit {
-            break;
-        }
-        // occurrence_key 是固定宽度的 UTC 字符串，字典序即时间序，
-        // 因此这里直接比较字符串；用 as_str() 避免为每次比较都做一次分配
-        if key.as_str() < range_start_utc || key.as_str() >= range_end_utc {
-            continue;
-        }
         if existing_keys.contains(&key) || skip_keys.contains(&key) {
             continue;
+        }
+        if created >= limit {
+            return Err(AppError::validation(
+                "本次物化范围内的实例超过安全上限，请缩小日期范围",
+            ));
         }
 
         let id = uuid::Uuid::now_v7().to_string();
         let now = to_db_time(utc_now());
 
-        // 字段来源优先级：分段覆盖 > 模板实例 > 仅有标题
-        let title = ov
-            .title
-            .clone()
-            .or_else(|| template.as_ref().map(|t| t.title.clone()))
-            .unwrap_or_else(|| "重复任务".to_string());
-        let description = template
-            .as_ref()
-            .map(|t| t.description.clone())
-            .unwrap_or_default();
-        let note_md = template
-            .as_ref()
-            .map(|t| t.note_md.clone())
-            .unwrap_or_default();
-        let priority = ov
-            .priority
-            .or_else(|| template.as_ref().map(|t| t.priority))
-            .unwrap_or(0);
-        let project_id = ov
-            .project_id
-            .clone()
-            .or_else(|| template.as_ref().and_then(|t| t.project_id.clone()));
-        let category_id = ov
-            .category_id
-            .clone()
-            .or_else(|| template.as_ref().and_then(|t| t.category_id.clone()));
-        let estimated = ov
-            .estimated_minutes
-            .or_else(|| template.as_ref().and_then(|t| t.estimated_minutes));
-        let link_url = template.as_ref().and_then(|t| t.link_url.clone());
+        let title = ov.title.as_deref().unwrap_or(&template.title);
+        let description = ov.description.as_deref().unwrap_or(&template.description);
+        let note_md = &template.note_md;
+        let priority = ov.priority.unwrap_or(template.priority);
+        let project_id = ov.project_id.as_ref().or(template.project_id.as_ref());
+        let category_id = ov.category_id.as_ref().or(template.category_id.as_ref());
+        let estimated = ov.estimated_minutes.or(template.estimated_minutes);
+        let link_url = &template.link_url;
 
-        sqlx::query(
-            "INSERT INTO tasks (
+        let inserted = sqlx::query(
+            "INSERT OR IGNORE INTO tasks (
                 id, title, description, note_md, link_url,
                 status, priority, project_id, category_id,
                 planned_at, has_planned_time, due_at, has_due_time,
@@ -406,13 +411,13 @@ async fn materialize_range(
              )",
         )
         .bind(&id)
-        .bind(&title)
-        .bind(&description)
-        .bind(&note_md)
-        .bind(&link_url)
+        .bind(title)
+        .bind(description)
+        .bind(note_md)
+        .bind(link_url)
         .bind(priority)
-        .bind(&project_id)
-        .bind(&category_id)
+        .bind(project_id)
+        .bind(category_id)
         .bind(&key)
         .bind(series.has_start_time)
         .bind(estimated)
@@ -422,7 +427,18 @@ async fn materialize_range(
         .bind(occ.index)
         .execute(&mut *tx)
         .await?;
+        if inserted.rows_affected() == 0 {
+            continue;
+        }
 
+        sqlx::query(
+            "INSERT OR IGNORE INTO task_tags (task_id, tag_id)
+             SELECT ?1, tag_id FROM task_series_tags WHERE series_id = ?2",
+        )
+        .bind(&id)
+        .bind(series_id)
+        .execute(&mut *tx)
+        .await?;
         created += 1;
     }
 
@@ -431,6 +447,61 @@ async fn materialize_range(
         log::info!("系列 {series_id} 物化了 {created} 个实例");
     }
     Ok(created)
+}
+
+/// Resume a committed rebuild in bounded chunks. The cursor is durable, so a
+/// crash or SQLite error cannot silently turn a partial rebuild into success.
+async fn regenerate_pending(state: &AppState, series_id: &str) -> AppResult<usize> {
+    let pending: Option<(String, String)> = sqlx::query_as(
+        "SELECT range_start_utc, range_end_utc FROM task_series_rebuilds WHERE series_id = ?1",
+    )
+    .bind(series_id)
+    .fetch_optional(state.db.pool())
+    .await?;
+    let Some((start, end)) = pending else {
+        return Ok(0);
+    };
+    let mut cursor = chrono::DateTime::parse_from_rfc3339(&start)
+        .map_err(|_| AppError::internal("待重建起点损坏"))?
+        .with_timezone(&chrono::Utc);
+    let finish = chrono::DateTime::parse_from_rfc3339(&end)
+        .map_err(|_| AppError::internal("待重建终点损坏"))?
+        .with_timezone(&chrono::Utc);
+    let mut total = 0usize;
+    while cursor < finish {
+        let next = (cursor + chrono::Duration::days(90)).min(finish);
+        let from = to_db_time(cursor);
+        let to = to_db_time(next);
+        match materialize_range(state, series_id, &from, &to, MAX_MATERIALIZE).await {
+            Ok(n) => {
+                total += n;
+                sqlx::query(
+                    "UPDATE task_series_rebuilds SET range_start_utc = ?1, last_error = NULL
+                     WHERE series_id = ?2",
+                )
+                .bind(&to)
+                .bind(series_id)
+                .execute(state.db.pool())
+                .await?;
+                cursor = next;
+            }
+            Err(e) => {
+                sqlx::query("UPDATE task_series_rebuilds SET last_error = ?1 WHERE series_id = ?2")
+                    .bind(e.to_string())
+                    .bind(series_id)
+                    .execute(state.db.pool())
+                    .await?;
+                return Err(AppError::internal(format!(
+                    "重复系列重建尚未完成，维护任务将重试：{e}"
+                )));
+            }
+        }
+    }
+    sqlx::query("DELETE FROM task_series_rebuilds WHERE series_id = ?1")
+        .bind(series_id)
+        .execute(state.db.pool())
+        .await?;
+    Ok(total)
 }
 
 /// 分段行 → 视图
@@ -442,6 +513,7 @@ struct SeriesSegmentRow {
     effective_from_occurrence: String,
     new_rrule: Option<String>,
     override_title: Option<String>,
+    override_description: Option<String>,
     override_priority: Option<i64>,
     override_project_id: Option<String>,
     override_category_id: Option<String>,
@@ -457,6 +529,7 @@ impl From<SeriesSegmentRow> for Segment {
             effective_from_occurrence: r.effective_from_occurrence,
             new_rrule: r.new_rrule,
             override_title: r.override_title,
+            override_description: r.override_description,
             override_priority: r.override_priority,
             override_project_id: r.override_project_id,
             override_category_id: r.override_category_id,
@@ -490,10 +563,11 @@ pub async fn create_recurring_impl(
         return Err(AppError::validation("标题不能超过 500 个字符"));
     }
 
-    let tzid = input
-        .tzid
-        .clone()
-        .unwrap_or_else(|| "Asia/Shanghai".to_string());
+    let tzid = input.tzid.clone().unwrap_or_else(|| {
+        // Frontend sends the system IANA zone. UTC is the unambiguous fallback
+        // for direct IPC clients that omit it.
+        "UTC".to_string()
+    });
     let has_start_time = input.has_start_time.unwrap_or(true);
 
     // 规则必须能解析，且 dtstart 合法
@@ -532,6 +606,22 @@ pub async fn create_recurring_impl(
     .bind(&end_until)
     .bind(end_count)
     .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO task_series_template
+         (series_id, title, description, note_md, link_url, priority,
+          project_id, category_id, estimated_minutes)
+         VALUES (?1, ?2, ?3, '', NULL, ?4, ?5, ?6, ?7)",
+    )
+    .bind(&series_id)
+    .bind(title)
+    .bind(input.description.as_deref().unwrap_or(""))
+    .bind(input.priority.unwrap_or(0))
+    .bind(input.project_id.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.category_id.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.estimated_minutes)
     .execute(&mut *tx)
     .await?;
 
@@ -575,6 +665,11 @@ pub async fn create_recurring_impl(
 
     // 标签
     for tid in input.tag_ids.iter().filter(|s| !s.is_empty()) {
+        sqlx::query("INSERT OR IGNORE INTO task_series_tags (series_id, tag_id) VALUES (?1, ?2)")
+            .bind(&series_id)
+            .bind(tid)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?1, ?2)")
             .bind(&task_id)
             .bind(tid)
@@ -597,13 +692,19 @@ pub async fn create_recurring_impl(
     let end_range = to_db_time(first_dt + chrono::Duration::days(days));
     // 物化失败必须**暴露出来**，不能静默吞掉：
     // 用户会以为"创建成功"，实际日历里只有第一个实例，且不知道原因。
-    let created = materialize_range(state, &series_id, &first_utc, &end_range, MAX_MATERIALIZE)
-        .await
-        .map_err(|e| {
-            log::error!("系列 {series_id} 物化失败：{e}");
-            AppError::internal(format!("重复任务已创建，但生成后续发生失败：{e}"))
-                .with_hint("可在任务列表中打开该任务并手动刷新；若持续失败请导出备份后联系支持")
-        })?;
+    let (created, warning) =
+        match materialize_range(state, &series_id, &first_utc, &end_range, MAX_MATERIALIZE).await {
+            Ok(n) => (n, None),
+            Err(e) => {
+                log::error!("系列 {series_id} 物化失败：{e}");
+                (
+                    0,
+                    Some(format!(
+                        "系列已创建，但后续发生尚未生成：{e}。后台维护会重试。"
+                    )),
+                )
+            }
+        };
 
     log::info!(
         "已创建重复系列 {series_id}（{}），共物化 {} 个实例",
@@ -616,6 +717,8 @@ pub async fn create_recurring_impl(
         created_count: created,
         description: rule.describe(),
         edge_note: rule.edge_policy_note(),
+        needs_repair: warning.is_some(),
+        warning,
     })
 }
 
@@ -637,7 +740,7 @@ pub async fn recurring_preview(
     has_start_time: Option<bool>,
     count: Option<usize>,
 ) -> AppResult<Vec<String>> {
-    let tz = tzid.unwrap_or_else(|| "Asia/Shanghai".to_string());
+    let tz = tzid.unwrap_or_else(|| "UTC".to_string());
     let rule = RecurrenceRule::from_rrule_string(
         &rrule,
         &tz,
@@ -689,6 +792,32 @@ pub async fn recurring_materialize_inner(
         MAX_MATERIALIZE,
     )
     .await
+}
+
+/// Repair and extend every active series before a view queries its date range.
+/// Repeated calls are idempotent because materialization uses stable occurrence keys.
+#[tauri::command]
+pub async fn recurring_ensure_range(
+    state: State<'_, AppState>,
+    range_start_utc: String,
+    range_end_utc: String,
+) -> AppResult<usize> {
+    let ids: Vec<(String,)> = sqlx::query_as("SELECT id FROM task_series ORDER BY id")
+        .fetch_all(state.db.pool())
+        .await?;
+    let mut total = 0usize;
+    for (id,) in ids {
+        total += regenerate_pending(&state, &id).await?;
+        total += materialize_range(
+            &state,
+            &id,
+            &range_start_utc,
+            &range_end_utc,
+            MAX_MATERIALIZE,
+        )
+        .await?;
+    }
+    Ok(total)
 }
 
 /// 读取系列及其分段（界面展示规则与"从某次起改用新规则"的历史）
@@ -956,6 +1085,18 @@ pub struct InstancePatch {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    pub note_md: Option<String>,
+    #[serde(default)]
+    pub link_url: Option<String>,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub category_id: Option<String>,
+    #[serde(default)]
+    pub tag_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub period_type: Option<String>,
+    #[serde(default)]
     pub priority: Option<i64>,
     #[serde(default)]
     pub planned_at: Option<String>,
@@ -971,6 +1112,14 @@ pub struct InstancePatch {
     pub clear_planned_at: bool,
     #[serde(default)]
     pub clear_due_at: bool,
+    #[serde(default)]
+    pub clear_link: bool,
+    #[serde(default)]
+    pub clear_project: bool,
+    #[serde(default)]
+    pub clear_category: bool,
+    #[serde(default)]
+    pub clear_estimated_minutes: bool,
 }
 
 /// 范围操作的结果
@@ -1064,6 +1213,26 @@ pub async fn edit_instance_impl(
     let series = get_series(state, &series_id).await?;
     let now = to_db_time(utc_now());
 
+    // These fields have no segment-level representation. They can be changed
+    // atomically on one occurrence, but a broader scope would silently drop
+    // them when a future occurrence is materialized.
+    if scope != EditScope::ThisOnly
+        && (patch.note_md.is_some()
+            || patch.link_url.is_some()
+            || patch.project_id.is_some()
+            || patch.category_id.is_some()
+            || patch.tag_ids.is_some()
+            || patch.period_type.is_some()
+            || patch.clear_link
+            || patch.clear_project
+            || patch.clear_category
+            || patch.clear_estimated_minutes)
+    {
+        return Err(AppError::validation(
+            "备注、链接、归属、标签、周期及清空预计耗时目前仅支持「仅此次」",
+        ));
+    }
+
     match scope {
         // ------------------------------------------------------------------
         // 仅此次：写例外，绝不影响其它发生
@@ -1076,6 +1245,9 @@ pub async fn edit_instance_impl(
                     let v = t.trim();
                     if v.is_empty() {
                         return Err(AppError::validation("标题不能为空"));
+                    }
+                    if v.chars().count() > 500 {
+                        return Err(AppError::validation("标题不能超过 500 个字符"));
                     }
                     Some(v.to_string())
                 }
@@ -1098,7 +1270,39 @@ pub async fn edit_instance_impl(
             }
             if let Some(d) = &patch.description {
                 sets.push("description = ?".into());
-                binds.push(BindValue::S(d.clone()));
+                binds.push(BindValue::S(crate::commands::validate_long_text(
+                    "描述", d,
+                )?));
+            }
+            if let Some(n) = &patch.note_md {
+                sets.push("note_md = ?".into());
+                binds.push(BindValue::S(crate::commands::validate_long_text(
+                    "备注", n,
+                )?));
+            }
+            if patch.clear_link {
+                sets.push("link_url = NULL".into());
+            } else if let Some(link) = &patch.link_url {
+                sets.push("link_url = ?".into());
+                binds.push(BindValue::S(crate::commands::validate_link_url(link)?));
+            }
+            if patch.clear_project {
+                sets.push("project_id = NULL".into());
+            } else if let Some(project) = &patch.project_id {
+                sets.push("project_id = ?".into());
+                binds.push(BindValue::S(project.clone()));
+            }
+            if patch.clear_category {
+                sets.push("category_id = NULL".into());
+            } else if let Some(category) = &patch.category_id {
+                sets.push("category_id = ?".into());
+                binds.push(BindValue::S(category.clone()));
+            }
+            if let Some(period) = &patch.period_type {
+                sets.push("period_type = ?".into());
+                binds.push(BindValue::S(
+                    crate::commands::validate_period(period)?.to_string(),
+                ));
             }
             if let Some(p) = patch.priority {
                 if !(0..=3).contains(&p) {
@@ -1107,9 +1311,14 @@ pub async fn edit_instance_impl(
                 sets.push("priority = ?".into());
                 binds.push(BindValue::I(p));
             }
-            if let Some(v) = patch.estimated_minutes {
+            if patch.clear_estimated_minutes {
+                sets.push("estimated_minutes = NULL".into());
+            } else if let Some(v) = patch.estimated_minutes {
                 sets.push("estimated_minutes = ?".into());
-                binds.push(BindValue::I(v));
+                binds.push(BindValue::I(crate::commands::validate_minutes(
+                    "预计耗时",
+                    v,
+                )?));
             }
 
             if patch.clear_planned_at {
@@ -1153,12 +1362,28 @@ pub async fn edit_instance_impl(
                     BindValue::I(i) => q.bind(i),
                 };
             }
-            q.bind(task_id.clone()).execute(db.pool()).await?;
+            let mut tx = db.pool().begin().await?;
+            q.bind(task_id.clone()).execute(&mut *tx).await?;
+
+            if let Some(tag_ids) = &patch.tag_ids {
+                sqlx::query("DELETE FROM task_tags WHERE task_id = ?1")
+                    .bind(&task_id)
+                    .execute(&mut *tx)
+                    .await?;
+                for tag_id in tag_ids.iter().filter(|id| !id.is_empty()) {
+                    sqlx::query("INSERT INTO task_tags (task_id, tag_id) VALUES (?1, ?2)")
+                        .bind(&task_id)
+                        .bind(tag_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+            }
 
             // 时间变了要重算相对型提醒（§4.3）。
             // 整改任务书 §5：这里同样不能吞掉错误——重算失败必须让整个
             // "只改这一次"的操作失败，而不是留下时间与提醒不一致的实例。
-            crate::reminders::on_task_time_changed(db, &task_id).await?;
+            crate::reminders::recompute_task_reminders_tx(&mut tx, &task_id).await?;
+            tx.commit().await?;
 
             Ok(ScopeActionResult {
                 affected: 1,
@@ -1184,10 +1409,10 @@ pub async fn edit_instance_impl(
                         &series.dtstart_local,
                         series.has_start_time == 1,
                     )?;
-                    r.clone()
+                    Some(r.clone())
                 }
-                // 没给新规则时沿用原规则，只改字段
-                _ => series.rrule.clone(),
+                // No rule change: retain the previous segment's phase.
+                _ => None,
             };
 
             let mut tx = db.pool().begin().await?;
@@ -1209,9 +1434,9 @@ pub async fn edit_instance_impl(
             sqlx::query(
                 "INSERT INTO task_series_segments
                     (id, series_id, rule_version, effective_from_occurrence, new_rrule,
-                     override_title, override_priority, override_project_id,
+                     override_title, override_description, override_priority, override_project_id,
                      override_category_id, override_estimated_minutes, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, NULL, ?8, ?9)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, NULL, ?9, ?10)",
             )
             .bind(&seg_id)
             .bind(&series_id)
@@ -1225,6 +1450,7 @@ pub async fn edit_instance_impl(
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty()),
             )
+            .bind(&patch.description)
             .bind(patch.priority)
             .bind(patch.estimated_minutes)
             .bind(&now)
@@ -1243,14 +1469,29 @@ pub async fn edit_instance_impl(
             // 已完成的、以及用户单独改过的（exception）一律保留——
             // §5 明确要求历史不能因改规则而消失。
             let purged = purge_future_generated(&mut tx, &series_id, &occ_key).await?;
+            let now_horizon = utc_now() + chrono::Duration::days(365);
+            let anchor_dt = chrono::DateTime::parse_from_rfc3339(&occ_key)
+                .map_err(|_| AppError::validation("发生时间格式无效"))?
+                .with_timezone(&chrono::Utc);
+            let end_range = to_db_time(now_horizon.max(anchor_dt + chrono::Duration::days(365)));
+            sqlx::query(
+                "INSERT INTO task_series_rebuilds
+                 (series_id, range_start_utc, range_end_utc, requested_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(series_id) DO UPDATE SET
+                   range_start_utc = excluded.range_start_utc,
+                   range_end_utc = excluded.range_end_utc,
+                   requested_at = excluded.requested_at, last_error = NULL",
+            )
+            .bind(&series_id)
+            .bind(&occ_key)
+            .bind(&end_range)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
             tx.commit().await?;
 
-            // 用新规则重新物化未来实例
-            let end_range = to_db_time(utc_now() + chrono::Duration::days(365));
-            let regenerated =
-                materialize_range(state, &series_id, &occ_key, &end_range, MAX_MATERIALIZE)
-                    .await
-                    .unwrap_or(0);
+            let regenerated = regenerate_pending(state, &series_id).await?;
 
             log::info!(
                 "系列 {series_id} 从 {occ_key} 起改用新规则（版本 {next_ver}）：\
@@ -1272,9 +1513,10 @@ pub async fn edit_instance_impl(
         // 整个系列：改基础规则/字段，历史实例的字段不动
         // ------------------------------------------------------------------
         EditScope::WholeSeries => {
-            let history = history_guard(state, &series_id, &occ_key, true).await?;
+            let history = history_guard(state, &series_id, &occ_key, confirm_history).await?;
 
             let mut tx = db.pool().begin().await?;
+            let mut rebuild_from: Option<String> = None;
 
             if let Some(r) = new_rrule.as_ref().filter(|r| !r.trim().is_empty()) {
                 RecurrenceRule::from_rrule_string(
@@ -1283,30 +1525,79 @@ pub async fn edit_instance_impl(
                     &series.dtstart_local,
                     series.has_start_time == 1,
                 )?;
+                // `task_series.rrule` is the original segment's rule. Changing
+                // it here would retroactively rewrite the base timeline when
+                // an old range is requested again. The new rule lives only in
+                // the segment whose anchor starts the future schedule.
                 sqlx::query(
-                    "UPDATE task_series SET rrule = ?1, rule_version = rule_version + 1, updated_at = ?2
-                     WHERE id = ?3",
+                    "UPDATE task_series SET rule_version = rule_version + 1, updated_at = ?1
+                     WHERE id = ?2",
                 )
-                .bind(r)
                 .bind(&now)
                 .bind(&series_id)
                 .execute(&mut *tx)
                 .await?;
+
+                // Preserve historical segments, but make a new final segment
+                // authoritative from the selected occurrence onward.
+                let next_future: Option<String> = sqlx::query_scalar(
+                    "SELECT MIN(occurrence_key) FROM tasks
+                     WHERE series_id = ?1 AND occurrence_key >= ?2 AND deleted_at IS NULL",
+                )
+                .bind(&series_id)
+                .bind(&now)
+                .fetch_one(&mut *tx)
+                .await?;
+                let anchor = next_future.as_deref().unwrap_or_else(|| {
+                    if occ_key > now {
+                        &occ_key
+                    } else {
+                        &now
+                    }
+                });
+                let next_ver: i64 = sqlx::query_scalar(
+                    "SELECT COALESCE(MAX(rule_version), 1) + 1
+                     FROM task_series_segments WHERE series_id = ?1",
+                )
+                .bind(&series_id)
+                .fetch_one(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO task_series_segments
+                     (id, series_id, rule_version, effective_from_occurrence, new_rrule, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                )
+                .bind(uuid::Uuid::now_v7().to_string())
+                .bind(&series_id)
+                .bind(next_ver)
+                .bind(anchor)
+                .bind(r)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+                purge_future_generated(&mut tx, &series_id, anchor).await?;
+                let end = to_db_time(utc_now() + chrono::Duration::days(365));
+                sqlx::query(
+                    "INSERT INTO task_series_rebuilds
+                     (series_id, range_start_utc, range_end_utc, requested_at)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(series_id) DO UPDATE SET
+                       range_start_utc = excluded.range_start_utc,
+                       range_end_utc = excluded.range_end_utc,
+                       requested_at = excluded.requested_at, last_error = NULL",
+                )
+                .bind(&series_id)
+                .bind(anchor)
+                .bind(&end)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+                rebuild_from = Some(anchor.to_string());
             }
 
-            // 同步字段到系列的实例。
-            //
-            // 关于"例外"（用户单独改过的实例）该怎么处理，这里采取的原则是：
-            // **例外只锁定用户真正改过的那个字段，其余字段仍跟随系列。**
-            //
-            // 理由：用户在这一次上改了标题，说明"这次内容不一样"；
-            // 但这不代表"这次的优先级永远不跟着系列走"。若把例外整体排除，
-            // 用户改完整个系列的优先级后会发现个别实例没变，而且找不到原因。
-            // 因此：
-            //   - 改标题时跳过例外（保护用户的自定义标题）；
-            //   - 改其它字段时包含例外（它们是系列的共同属性）。
-            //
-            // 已完成的历史实例一律不动（§5 保护历史）。
+            // 方案 A：单次例外的系列内容字段作为整体保留。
+            // schema 没有字段级例外元数据，所以所有系列内容更新均只覆盖
+            // generated 实例；已完成历史也一律不动。
             let mut affected = 0i64;
             if let Some(p) = patch.priority {
                 if !(0..=3).contains(&p) {
@@ -1315,7 +1606,7 @@ pub async fn edit_instance_impl(
                 affected += sqlx::query(
                     "UPDATE tasks SET priority = ?1, updated_at = ?2
                      WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
-                       AND deleted_at IS NULL",
+                       AND deleted_at IS NULL AND occurrence_kind = 'generated'",
                 )
                 .bind(p)
                 .bind(&now)
@@ -1323,6 +1614,18 @@ pub async fn edit_instance_impl(
                 .execute(&mut *tx)
                 .await?
                 .rows_affected() as i64;
+                sqlx::query("UPDATE task_series_template SET priority = ?1 WHERE series_id = ?2")
+                    .bind(p)
+                    .bind(&series_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE task_series_segments SET override_priority = ?1 WHERE series_id = ?2",
+                )
+                .bind(p)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?;
             }
             if let Some(t) = patch
                 .title
@@ -1342,12 +1645,24 @@ pub async fn edit_instance_impl(
                 .execute(&mut *tx)
                 .await?
                 .rows_affected() as i64;
+                sqlx::query("UPDATE task_series_template SET title = ?1 WHERE series_id = ?2")
+                    .bind(t)
+                    .bind(&series_id)
+                    .execute(&mut *tx)
+                    .await?;
+                sqlx::query(
+                    "UPDATE task_series_segments SET override_title = ?1 WHERE series_id = ?2",
+                )
+                .bind(t)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?;
             }
             if let Some(v) = patch.estimated_minutes {
                 affected += sqlx::query(
                     "UPDATE tasks SET estimated_minutes = ?1, updated_at = ?2
                      WHERE series_id = ?3 AND status <> 'done' AND completed_at IS NULL
-                       AND deleted_at IS NULL",
+                       AND deleted_at IS NULL AND occurrence_kind = 'generated'",
                 )
                 .bind(v)
                 .bind(&now)
@@ -1355,6 +1670,18 @@ pub async fn edit_instance_impl(
                 .execute(&mut *tx)
                 .await?
                 .rows_affected() as i64;
+                sqlx::query(
+                    "UPDATE task_series_template SET estimated_minutes = ?1 WHERE series_id = ?2",
+                )
+                .bind(v)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("UPDATE task_series_segments SET override_estimated_minutes = ?1 WHERE series_id = ?2")
+                    .bind(v)
+                    .bind(&series_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
             if let Some(d) = patch.description.as_ref() {
                 affected += sqlx::query(
@@ -1368,14 +1695,31 @@ pub async fn edit_instance_impl(
                 .execute(&mut *tx)
                 .await?
                 .rows_affected() as i64;
+                sqlx::query(
+                    "UPDATE task_series_template SET description = ?1 WHERE series_id = ?2",
+                )
+                .bind(d)
+                .bind(&series_id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query("UPDATE task_series_segments SET override_description = ?1 WHERE series_id = ?2")
+                    .bind(d)
+                    .bind(&series_id)
+                    .execute(&mut *tx)
+                    .await?;
             }
 
             tx.commit().await?;
+            let regenerated = if rebuild_from.is_some() {
+                regenerate_pending(state, &series_id).await? as i64
+            } else {
+                0
+            };
 
             Ok(ScopeActionResult {
                 affected,
-                affected_history: 0,
-                regenerated: 0,
+                affected_history: history,
+                regenerated,
                 message: format!(
                     "已修改整个系列（本次同步了 {affected} 个未完成实例）；\
                      已完成的 {history} 个历史记录保持原样"

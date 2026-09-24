@@ -17,7 +17,7 @@ function errText(e: unknown): string {
 
 interface RecurringTaskDialogProps {
   onClose: () => void
-  onCreated: (seriesId: string) => void
+  onCreated: (seriesId: string, warning?: string | null) => void
 }
 
 export function RecurringTaskDialog({ onClose, onCreated }: RecurringTaskDialogProps) {
@@ -58,11 +58,12 @@ export function RecurringTaskDialog({ onClose, onCreated }: RecurringTaskDialogP
         description: description.trim() || undefined,
         priority: priority || undefined,
         rrule: rule.rrule,
+        tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
         dtstartLocal: rule.dtstartLocal,
         hasStartTime: rule.hasStartTime,
         materializeDays,
       })
-      onCreated(r.seriesId)
+      onCreated(r.seriesId, r.warning)
       onClose()
     } catch (e) {
       setError(errText(e))

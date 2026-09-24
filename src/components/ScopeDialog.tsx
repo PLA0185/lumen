@@ -39,6 +39,8 @@ interface ScopeDialogProps {
   onConfirm: (scope: EditScope, confirmHistory: boolean) => Promise<void> | void
   /** 是否允许选择"此次及以后"（编辑时间时可用；某些操作不适用） */
   allowThisAndFuture?: boolean
+  allowWholeSeries?: boolean
+  restrictedReason?: string
 }
 
 export function ScopeDialog({
@@ -48,6 +50,8 @@ export function ScopeDialog({
   onCancel,
   onConfirm,
   allowThisAndFuture = true,
+  allowWholeSeries = true,
+  restrictedReason,
 }: ScopeDialogProps) {
   const [info, setInfo] = useState<ScopeInfo | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -77,7 +81,7 @@ export function ScopeDialog({
 
   /** 会影响历史时，必须额外确认 */
   const affectsHistory = (info?.completedBefore ?? 0) > 0
-  const needHistoryCheck = scope === 'whole_series' && affectsHistory
+  const needHistoryCheck = (scope === 'whole_series' || scope === 'this_and_future') && affectsHistory
   const canConfirm = scope !== null && (!needHistoryCheck || confirmHistory) && !busy
 
   const submit = async () => {
@@ -125,7 +129,7 @@ export function ScopeDialog({
       disabled: !allowThisAndFuture,
       disabledReason: allowThisAndFuture
         ? undefined
-        : '该操作不适用于「此次及以后」。例如完成状态只针对单次发生。',
+        : (restrictedReason ?? '该操作不适用于「此次及以后」。'),
     },
     {
       value: 'whole_series',
@@ -133,7 +137,8 @@ export function ScopeDialog({
       desc:
         notes?.wholeSeries ??
         '修改系列的基础设置，影响所有未完成的发生。',
-      disabled: false,
+      disabled: !allowWholeSeries,
+      disabledReason: allowWholeSeries ? undefined : (restrictedReason ?? '此次改期只支持「仅此次」。'),
     },
   ]
 
@@ -208,7 +213,7 @@ export function ScopeDialog({
               ))}
             </div>
 
-            {/* §5：整个系列且影响历史时，必须明确确认 */}
+            {/* 修改未来或整个系列时，若存在更早的已完成发生，必须明确确认。 */}
             {needHistoryCheck && (
               <label className="checkbox histcheck">
                 <input

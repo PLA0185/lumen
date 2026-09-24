@@ -145,7 +145,7 @@ fn validate_title(raw: &str) -> AppResult<String> {
 }
 
 /// 校验描述类长文本
-fn validate_long_text(field: &str, raw: &str) -> AppResult<String> {
+pub(crate) fn validate_long_text(field: &str, raw: &str) -> AppResult<String> {
     if raw.chars().count() > DESCRIPTION_MAX {
         return Err(AppError::validation(format!(
             "{field}过长（{} 字符），上限 {DESCRIPTION_MAX} 字符",
@@ -188,7 +188,7 @@ fn validate_status(s: &str) -> AppResult<&'static str> {
 ///
 /// 关键规则：period 型任务若没有 planned_at，**不会出现在「今天」视图**。
 /// 否则"这周做完就行"的任务会每天弹出，反而比不定时间更烦人。
-fn validate_period(v: &str) -> AppResult<&'static str> {
+pub(crate) fn validate_period(v: &str) -> AppResult<&'static str> {
     Ok(match v.trim() {
         "none" | "" => "none",
         "day" => "day",
@@ -400,9 +400,55 @@ pub async fn task_update(
 
 /// 更新任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
 pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppResult<Task> {
+    save_task_impl(db, id, input, None).await
+}
+
+/// Save task fields, tags and reminder recalculation in one transaction.
+#[tauri::command]
+pub async fn task_save(
+    state: State<'_, AppState>,
+    id: String,
+    input: UpdateTaskInput,
+    tag_ids: Vec<String>,
+) -> AppResult<Task> {
+    save_task_impl(&state.db, &id, input, Some(tag_ids)).await
+}
+
+pub async fn save_task_impl(
+    db: &Db,
+    id: &str,
+    input: UpdateTaskInput,
+    tag_ids: Option<Vec<String>>,
+) -> AppResult<Task> {
     let existing = get_task_row(db, id).await?;
     if existing.deleted_at.is_some() {
         return Err(AppError::conflict("任务已在回收站中，请先恢复再编辑"));
+    }
+    // Only instance state is writable through this general command. All content and
+    // schedule changes need an explicit recurrence scope, including direct IPC callers.
+    if existing.series_id.is_some()
+        && (input.title.is_some()
+            || input.description.is_some()
+            || input.note_md.is_some()
+            || input.link_url.is_some()
+            || input.priority.is_some()
+            || input.project_id.is_some()
+            || input.category_id.is_some()
+            || input.planned_at.is_some()
+            || input.has_planned_time.is_some()
+            || input.due_at.is_some()
+            || input.has_due_time.is_some()
+            || input.estimated_minutes.is_some()
+            || input.period_type.is_some()
+            || input.clear_planned_at
+            || input.clear_due_at
+            || input.clear_project
+            || input.clear_category
+            || input.clear_link)
+    {
+        return Err(AppError::conflict(
+            "该任务属于重复系列，请通过重复任务范围编辑接口修改",
+        ));
     }
 
     let title = match &input.title {
@@ -567,6 +613,23 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
         crate::reminders::recompute_task_reminders_tx(&mut tx, id).await?;
     }
 
+    if let Some(tag_ids) = tag_ids {
+        if existing.series_id.is_some() {
+            return Err(AppError::conflict("重复系列的标签必须通过范围编辑接口修改"));
+        }
+        sqlx::query("DELETE FROM task_tags WHERE task_id = ?1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        for tag_id in tag_ids.iter().filter(|tag_id| !tag_id.is_empty()) {
+            sqlx::query("INSERT INTO task_tags (task_id, tag_id) VALUES (?1, ?2)")
+                .bind(id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+
     tx.commit().await?;
 
     get_task_row(db, id).await
@@ -613,7 +676,12 @@ pub async fn task_soft_delete(
     id: String,
 ) -> AppResult<SoftDeleteResult> {
     let db = &state.db;
-    get_task_row(db, &id).await?; // 不存在则报 not_found
+    let existing = get_task_row(db, &id).await?; // 不存在则报 not_found
+    if existing.series_id.is_some() {
+        return Err(AppError::conflict(
+            "该任务属于重复系列，请通过重复任务范围删除接口修改",
+        ));
+    }
     let now = to_db_time(utc_now());
     sqlx::query("UPDATE tasks SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2")
         .bind(&now)
@@ -630,24 +698,39 @@ pub async fn task_soft_delete(
 /// 从回收站恢复。
 #[tauri::command]
 pub async fn task_restore(state: State<'_, AppState>, id: String) -> AppResult<Task> {
-    let db = &state.db;
+    restore_task_impl(&state.db, &id).await
+}
+
+pub async fn restore_task_impl(db: &Db, id: &str) -> AppResult<Task> {
     let row = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?1")
-        .bind(&id)
+        .bind(id)
         .fetch_optional(db.pool())
         .await?;
     let Some(t) = row else {
-        return Err(AppError::not_found("任务", &id));
+        return Err(AppError::not_found("任务", id));
     };
     if t.deleted_at.is_none() {
         return Err(AppError::conflict("该任务不在回收站中"));
     }
     let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
+    // A skipped occurrence is a soft-deleted task plus a skip marker. Restoring
+    // that task must clear the marker in the same transaction, otherwise a
+    // later purge would leave a permanent invisible hole in the series.
+    if let (Some(series_id), Some(occurrence_key)) = (&t.series_id, &t.occurrence_key) {
+        sqlx::query("DELETE FROM task_series_skips WHERE series_id = ?1 AND occurrence_key = ?2")
+            .bind(series_id)
+            .bind(occurrence_key)
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("UPDATE tasks SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2")
         .bind(&now)
-        .bind(&id)
-        .execute(db.pool())
+        .bind(id)
+        .execute(&mut *tx)
         .await?;
-    get_task_row(db, &id).await
+    tx.commit().await?;
+    get_task_row(db, id).await
 }
 
 /// 永久删除（仅限回收站内的任务）。
@@ -1290,14 +1373,6 @@ pub const REPORT_MAX_ROWS: i64 = 100_000;
 /// `REPORT_MAX_ROWS + 1` 这个 "+1" 是截断判断的关键：
 /// 只有**确实读到了第 100001 条**才说明还有没导出的，
 /// 恰好 100000 条时不会误报（§7.1 的原始缺陷）。
-#[tauri::command]
-pub async fn task_report_all(
-    state: State<'_, AppState>,
-    query: TaskQuery,
-) -> AppResult<ReportPage> {
-    report_all_impl(&state.db, query).await
-}
-
 /// 全量报告的实现（与 Tauri 解耦，便于集成测试直接调用）。
 pub async fn report_all_impl(db: &Db, query: TaskQuery) -> AppResult<ReportPage> {
     // 排序仍然与列表一致（用户选了什么顺序，报告就是什么顺序），
@@ -1414,6 +1489,21 @@ pub async fn task_bulk(state: State<'_, AppState>, input: BulkActionInput) -> Ap
     let mut affected: i64 = 0;
 
     for id in &input.ids {
+        if matches!(
+            input.action.as_str(),
+            "delete" | "set_priority" | "move_project" | "add_tag" | "remove_tag"
+        ) {
+            let series_id: Option<Option<String>> =
+                sqlx::query_scalar("SELECT series_id FROM tasks WHERE id = ?1")
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            if series_id.flatten().is_some() {
+                return Err(AppError::conflict(
+                    "批量操作包含重复任务，请通过重复任务范围接口修改",
+                ));
+            }
+        }
         let n = match input.action.as_str() {
             "complete" => sqlx::query(
                 "UPDATE tasks SET status = 'done', completed_at = COALESCE(completed_at, ?1), updated_at = ?1 WHERE id = ?2",
@@ -1587,18 +1677,39 @@ pub async fn today_overview(
 /// （它们只属于列表视图）。
 ///
 /// 前端按本地时区算出范围边界后传入 UTC，后端不做任何本地时区假设。
+const CALENDAR_MAX_ROWS: i64 = 1000;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CalendarPage {
+    pub rows: Vec<Task>,
+    pub total: i64,
+    pub truncated: bool,
+}
+
 #[tauri::command]
 pub async fn tasks_in_range(
     state: State<'_, AppState>,
     start_utc: String,
     end_utc: String,
-) -> AppResult<Vec<Task>> {
+) -> AppResult<CalendarPage> {
     let db = &state.db;
     let start = validate_time("范围起点", &start_utc)?;
     let end = validate_time("范围终点", &end_utc)?;
     if end <= start {
         return Err(AppError::validation("时间范围的终点必须晚于起点"));
     }
+
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status <> 'archived'
+           AND COALESCE(planned_at, due_at) IS NOT NULL
+           AND COALESCE(planned_at, due_at) >= ?1
+           AND COALESCE(planned_at, due_at) < ?2",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(db.pool())
+    .await?;
 
     // 已归档与已删除的不进日历；已完成仍显示（用户想知道那天做了什么）
     let rows = sqlx::query_as::<_, Task>(
@@ -1608,14 +1719,20 @@ pub async fn tasks_in_range(
            AND COALESCE(planned_at, due_at) IS NOT NULL
            AND COALESCE(planned_at, due_at) >= ?1
            AND COALESCE(planned_at, due_at) < ?2
-         ORDER BY COALESCE(planned_at, due_at) ASC, priority DESC, created_at ASC",
+         ORDER BY COALESCE(planned_at, due_at) ASC, priority DESC, created_at ASC
+         LIMIT ?3",
     )
     .bind(&start)
     .bind(&end)
+    .bind(CALENDAR_MAX_ROWS)
     .fetch_all(db.pool())
     .await?;
 
-    Ok(rows)
+    Ok(CalendarPage {
+        truncated: total > rows.len() as i64,
+        rows,
+        total,
+    })
 }
 
 /// 计算改期后的新计划时间。
@@ -1694,7 +1811,10 @@ pub async fn task_reschedule(
     // 放进一个事务，任何一步失败都整体回滚，而不是留下半新半旧的状态。
     let mut tx = db.pool().begin().await?;
     sqlx::query(
-        "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3 WHERE id = ?4",
+        "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3,
+         occurrence_kind = CASE WHEN series_id IS NOT NULL THEN 'exception' ELSE occurrence_kind END,
+         is_exception = CASE WHEN series_id IS NOT NULL THEN 1 ELSE is_exception END
+         WHERE id = ?4",
     )
     .bind(&new_at)
     .bind(has_time as i64)

@@ -289,6 +289,7 @@ pub fn run() {
             commands::app_data_paths,
             commands::task_create,
             commands::task_update,
+            commands::task_save,
             commands::task_get,
             commands::task_list,
             commands::task_count,
@@ -360,7 +361,6 @@ pub fn run() {
             // ---- PDF 导出（§6 中文可读）----
             pdf::export_pdf,
             commands::task_report,
-            commands::task_report_all,
             // ---- 附件受控存储（§4.1）----
             attachments::attachment_add,
             attachments::attachment_list,
@@ -372,6 +372,7 @@ pub fn run() {
             recurrence_service::recurring_create,
             recurrence_service::recurring_preview,
             recurrence_service::recurring_materialize,
+            recurrence_service::recurring_ensure_range,
             recurrence_service::recurring_get,
             recurrence_service::recurring_occurrences,
             recurrence_service::recurring_stats,

@@ -20,10 +20,12 @@ import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
+import { ScopeDialog } from './components/ScopeDialog'
+import * as recurrence from './lib/recurrence-ipc'
 import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
 import { buildPrintDocument } from './lib/report-export'
-import * as bus from './lib/bus'
+import { onDataChanged } from './lib/data-change'
 import * as win from './lib/window-ipc'
 import type { Task, ViewId } from './lib/types'
 import { Icon } from './components/Icons'
@@ -93,6 +95,7 @@ export default function App() {
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
+  const [deletingRecurring, setDeletingRecurring] = useState<Task | null>(null)
   /** 新建重复任务对话框 */
   const [showRecurring, setShowRecurring] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -104,7 +107,7 @@ export default function App() {
    * 导出取消标志（收口任务书 §20 / §21）。
    *
    * 两种来源：用户点「取消导出」，或导出期间数据发生变化
-   * （`bus.onTasksChanged`）——后者继续读下去会得到一份"前半段是旧数据、
+   * （`onDataChanged`）——后者继续读下去会得到一份"前半段是旧数据、
    * 后半段是新数据"的报告，必须中止而不是交付一份自相矛盾的文档。
    */
   const cancelExportRef = useRef(false)
@@ -161,8 +164,23 @@ export default function App() {
 
   // ------------------------------ 启动 ------------------------------
   useEffect(() => {
-    void init()
-  }, [init])
+    let disposed = false
+    const maintain = async () => {
+      const now = Date.now()
+      try {
+        await recurrence.recurringEnsureRange(
+          new Date(now).toISOString(),
+          new Date(now + 180 * 86_400_000).toISOString(),
+        )
+      } catch (error) {
+        if (!disposed) pushToast('error',
+          `重复任务未来安排维护失败：${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    void init().then(() => { if (!disposed) void maintain() })
+    const timer = window.setInterval(() => void maintain(), 24 * 60 * 60 * 1000)
+    return () => { disposed = true; window.clearInterval(timer) }
+  }, [init, pushToast])
 
   // 打印视图开关现在由 `doExportPdf` 在导出流程里直接控制
   // （`document.body.dataset.print`）——报告 DOM 由 buildPrintDocument 动态挂载，
@@ -223,7 +241,7 @@ export default function App() {
 
   // --------------------- 跨窗口同步（悬浮窗改了要立刻反映到这里） ---------------------
   useEffect(() => {
-    return bus.onTasksChanged(() => {
+    return onDataChanged(['tasks', 'subtasks', 'all'], () => {
       // 用 handleExternalChange 而不是裸 reload：它会先把 queryGeneration +1，
       // 让正在飞的 loadMore 结果作废，再从第一页重取。
       // 否则 OFFSET 分页在"别处刚删了一条"之后会漏掉一条（第三轮任务书 §5.4）。
@@ -372,12 +390,9 @@ export default function App() {
     // 当前窗口自己发出的事件，而"用户在主窗口一边导出、一边顺手新建/删掉一个任务"
     // 恰恰是最常见的情形——按默认行为那个事件会被丢掉，导出继续用 OFFSET 读到
     // 一份自相矛盾的数据。
-    const offTasksChanged = bus.onTasksChanged(
-      () => {
-        cancelExportRef.current = true
-      },
-      { includeSelf: true },
-    )
+    const offTasksChanged = onDataChanged(['tasks', 'organization', 'subtasks', 'all'], () => {
+      cancelExportRef.current = true
+    })
     try {
       const { save } = await import('@tauri-apps/plugin-dialog')
       const stamp = new Date().toISOString().slice(0, 10)
@@ -669,7 +684,11 @@ export default function App() {
             loadError={loadError}
             search={search}
             onToggle={toggleDone}
-            onDelete={remove}
+            onDelete={(id) => {
+              const task = tasks.find((item) => item.id === id)
+              if (task?.seriesId) setDeletingRecurring(task)
+              else void remove(id)
+            }}
             onRestore={restore}
             onPurge={purge}
             onEdit={setEditing}
@@ -704,12 +723,27 @@ export default function App() {
         />
       )}
 
+      {deletingRecurring && (
+        <ScopeDialog
+          taskId={deletingRecurring.id}
+          taskTitle={deletingRecurring.title}
+          intent="delete"
+          onCancel={() => setDeletingRecurring(null)}
+          onConfirm={async (scope, confirmHistory) => {
+            const result = await recurrence.recurringDelete(deletingRecurring.id, scope, confirmHistory)
+            setDeletingRecurring(null)
+            pushToast('success', result.message)
+          }}
+        />
+      )}
+
       {/* 新建重复任务（§5） */}
       {showRecurring && (
         <RecurringTaskDialog
           onClose={() => setShowRecurring(false)}
-          onCreated={async () => {
-            pushToast('success', '重复任务已创建，后续发生已按规则生成')
+          onCreated={async (_seriesId, warning) => {
+            pushToast(warning ? 'error' : 'success',
+              warning ?? '重复任务已创建，后续发生已按规则生成')
             await reload()
             await useApp.getState().refreshOverview()
           }}

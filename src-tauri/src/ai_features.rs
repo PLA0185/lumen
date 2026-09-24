@@ -1317,6 +1317,14 @@ pub async fn ai_apply(
     preview_id: String,
     accept_indices: Option<Vec<usize>>,
 ) -> AppResult<ApplyResult> {
+    ai_apply_impl(&state, preview_id, accept_indices).await
+}
+
+pub(crate) async fn ai_apply_impl(
+    state: &AppState,
+    preview_id: String,
+    accept_indices: Option<Vec<usize>>,
+) -> AppResult<ApplyResult> {
     let (capability, items) = take(&preview_id)?;
 
     let chosen: Vec<DiffItem> = match accept_indices {
@@ -1360,7 +1368,8 @@ pub async fn ai_apply(
                     if as_sub {
                         let id = uuid::Uuid::now_v7().to_string();
                         let row = sqlx::query(
-                            "SELECT COALESCE(MAX(sort_order), 0) + 1 AS n FROM subtasks WHERE task_id = ?1",
+                            "SELECT CAST(COALESCE(MAX(sort_order), 0) + 1 AS REAL) AS n
+                             FROM subtasks WHERE task_id = ?1",
                         )
                         .bind(parent)
                         .fetch_one(&mut *tx)
@@ -1451,7 +1460,9 @@ pub async fn ai_apply(
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
                     let n = sqlx::query(
-                        "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3
+                        "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3,
+                         occurrence_kind = CASE WHEN series_id IS NOT NULL THEN 'exception' ELSE occurrence_kind END,
+                         is_exception = CASE WHEN series_id IS NOT NULL THEN 1 ELSE is_exception END
                          WHERE id = ?4 AND deleted_at IS NULL",
                     )
                     .bind(p)
@@ -1462,6 +1473,9 @@ pub async fn ai_apply(
                     .await?
                     .rows_affected();
                     if n > 0 {
+                        // AI scheduling is explicitly a this-only change for recurring
+                        // occurrences; keep occurrence_key stable and reminders atomic.
+                        crate::reminders::recompute_task_reminders_tx(&mut tx, tid).await?;
                         updated += 1;
                     }
                 }
@@ -1546,6 +1560,106 @@ pub async fn schedule_conflicts(state: State<'_, AppState>) -> AppResult<Vec<ser
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn apply_first_ai_subtask_to_empty_parent() {
+        let dir = std::env::temp_dir().join(format!("lumen-ai-apply-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let state = AppState::new(db);
+        let now = crate::db::to_db_time(crate::db::utc_now());
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, created_at, updated_at, sort_order,
+             occurrence_kind, is_exception) VALUES ('ai-parent', '父任务', 'todo', ?1, ?1, 0, 'single', 0)",
+        )
+        .bind(&now)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+        let preview_id = register(
+            "拆分",
+            vec![DiffItem {
+                action: DiffAction::Create,
+                task_id: None,
+                title: "第一条子任务".into(),
+                changes: vec![],
+                payload: serde_json::json!({
+                    "parentTaskId": "ai-parent",
+                    "asSubtask": true
+                }),
+                note: None,
+            }],
+        );
+        let applied = ai_apply_impl(&state, preview_id, None).await.unwrap();
+        assert_eq!(applied.created, 1);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM subtasks WHERE task_id = 'ai-parent'")
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn apply_ai_reschedule_marks_recurring_occurrence_as_exception() {
+        let dir = std::env::temp_dir().join(format!("lumen-ai-recur-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let state = AppState::new(db);
+        let created = crate::recurrence_service::create_recurring_impl(
+            &state,
+            crate::recurrence_service::CreateRecurringInput {
+                title: "AI 重复排程".into(),
+                description: None,
+                priority: None,
+                project_id: None,
+                category_id: None,
+                estimated_minutes: None,
+                tag_ids: vec![],
+                rrule: "FREQ=DAILY".into(),
+                tzid: Some("UTC".into()),
+                dtstart_local: "2026-09-25T09:00:00".into(),
+                has_start_time: Some(true),
+                due_local: None,
+                materialize_days: Some(2),
+            },
+        )
+        .await
+        .unwrap();
+        let first = crate::recurrence_service::list_instances(&state, &created.series_id)
+            .await
+            .unwrap()
+            .remove(0);
+        let original_key = first.occurrence_key.clone();
+        let preview_id = register(
+            "排程",
+            vec![DiffItem {
+                action: DiffAction::Reschedule,
+                task_id: Some(first.id.clone()),
+                title: first.title.clone(),
+                changes: vec![],
+                payload: serde_json::json!({
+                    "plannedAt": "2026-09-26T11:00:00.000Z",
+                    "hasPlannedTime": true
+                }),
+                note: None,
+            }],
+        );
+        let applied = ai_apply_impl(&state, preview_id, None).await.unwrap();
+        assert_eq!(applied.updated, 1);
+        let after: crate::models::Task = sqlx::query_as("SELECT * FROM tasks WHERE id = ?1")
+            .bind(&first.id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            after.planned_at.as_deref(),
+            Some("2026-09-26T11:00:00.000Z")
+        );
+        assert_eq!(after.occurrence_key, original_key);
+        assert_eq!(after.occurrence_kind.as_deref(), Some("exception"));
+        assert_eq!(after.is_exception, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     // ------------------------- JSON 提取 -------------------------
 

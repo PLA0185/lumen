@@ -571,7 +571,18 @@ mod tests {
         .await
         .unwrap();
 
-        // 回退成"v4 库"
+        // 回退成"v4 库"（先撤销 v6 的独立表，再撤销 v5）。
+        for sql in [
+            "DROP TABLE task_series_rebuilds",
+            "DROP TABLE task_series_tags",
+            "DROP TABLE task_series_template",
+        ] {
+            sqlx::query(sql).execute(db.pool()).await.unwrap();
+        }
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 6")
+            .execute(db.pool())
+            .await
+            .unwrap();
         sqlx::query("ALTER TABLE reminders DROP COLUMN disabled_reason")
             .execute(db.pool())
             .await

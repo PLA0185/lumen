@@ -724,6 +724,61 @@ impl RecurrenceRule {
 
         Ok(out)
     }
+
+    /// Expand a requested local range without imposing a lifetime occurrence cap.
+    /// The index counts earlier matches so COUNT and occurrence_index keep their
+    /// original meaning even when the series is many years old.
+    pub fn expand_between(
+        &self,
+        range_start: chrono::NaiveDateTime,
+        range_end: chrono::NaiveDateTime,
+        max_results: usize,
+    ) -> AppResult<Vec<Occurrence>> {
+        if range_end <= range_start || max_results == 0 {
+            return Ok(Vec::new());
+        }
+        let start = parse_local_datetime(&self.dtstart_local)?;
+        let anchor = start.date();
+        let first = range_start.date().max(anchor);
+        let last = range_end.date();
+        let until = match &self.end {
+            EndCondition::Until { date } => Some(parse_local_date(date)?),
+            _ => None,
+        };
+
+        // Counting previous matches is independent of the result cap. The scan
+        // uses constant memory; only the requested range can fill the output.
+        let mut index = 0i64;
+        let mut date = anchor;
+        while date < first {
+            if self.date_matches(date, anchor) {
+                index += 1;
+            }
+            date += chrono::Duration::days(1);
+        }
+
+        let mut out = Vec::new();
+        date = first;
+        while date <= last && out.len() < max_results {
+            if until.is_some_and(|bound| date > bound) {
+                break;
+            }
+            if self.date_matches(date, anchor) {
+                index += 1;
+                if let EndCondition::Count { count } = self.end {
+                    if index > count {
+                        break;
+                    }
+                }
+                let local = date.and_time(start.time());
+                if local >= range_start && local < range_end {
+                    out.push(Occurrence { local, index });
+                }
+            }
+            date += chrono::Duration::days(1);
+        }
+        Ok(out)
+    }
 }
 
 /// d 是它所在月份的第几个同名星期（1–5）
@@ -784,6 +839,19 @@ pub fn occurrences_to_utc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_daily_series_expands_requested_range() {
+        let rule =
+            RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "2018-01-01T09:00:00", true)
+                .unwrap();
+        let start = parse_local_datetime("2026-04-01T00:00:00").unwrap();
+        let end = parse_local_datetime("2026-04-04T00:00:00").unwrap();
+        let rows = rule.expand_between(start, end, 500).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].index > 3000);
+        assert_eq!(rows[0].local.date().to_string(), "2026-04-01");
+    }
 
     fn rule(rrule: &str) -> RecurrenceRule {
         RecurrenceRule::from_rrule_string(rrule, "Asia/Shanghai", "2026-09-21T09:00:00", true)
