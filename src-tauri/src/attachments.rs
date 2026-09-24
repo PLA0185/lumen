@@ -110,14 +110,7 @@ fn attachments_dir_of(data_dir: &Path) -> PathBuf {
     data_dir.join("attachments")
 }
 
-/// 校验并规范化一个"允许操作"的路径必须位于受控目录内。
-///
-/// 若目录尚不存在会先创建，否则 `canonicalize` 必然失败。
-fn ensure_inside_attachments(state: &AppState, candidate: &Path) -> AppResult<PathBuf> {
-    ensure_inside_dir(&attachments_dir(state), candidate)
-}
-
-/// `ensure_inside_attachments` 的纯路径版本（整改任务书 §6.5）。
+/// 越界校验的纯路径版本（第二轮整改任务书 §6.5）。
 ///
 /// 抽出来是为了让"删附件副本"这件事在**没有 `AppState`** 的地方
 /// （后台孤儿清理、单元测试）也能复用同一套越界判断，
@@ -168,68 +161,108 @@ pub async fn copied_paths_of_task(db: &Db, task_id: &str) -> AppResult<Vec<Strin
     Ok(rows.into_iter().map(|(p,)| p).collect())
 }
 
-/// 清空回收站前，取出**所有**回收站任务的 copied 附件存储路径。
-pub async fn copied_paths_in_trash(db: &Db) -> AppResult<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT a.stored_path FROM attachments a
-         JOIN tasks t ON t.id = a.task_id
-         WHERE t.deleted_at IS NOT NULL
-           AND a.storage_mode = 'copied'
-           AND a.stored_path IS NOT NULL",
-    )
-    .fetch_all(db.pool())
-    .await?;
-    Ok(rows.into_iter().map(|(p,)| p).collect())
-}
-
 /// 删除一批受控副本文件，返回 `(已删除, 失败或跳过)`。
 ///
-/// **刻意不返回错误**：调用方按 §6.4 只记日志，
+/// **刻意不返回错误**：调用方按第二轮 §6.4 只记日志，
 /// 绝不因为删文件失败而回滚已经提交的数据库删除。
 ///
-/// 四重保护，只要有一层不过就跳过：
-/// 1. 词法归一化后必须仍在受控附件目录内（挡住 `../` 穿越与目录外绝对路径）；
-/// 2. 文件不存在才算"已完成"（幂等，重复调用安全）；
-/// 3. 存在的文件再走一次 `canonicalize` 校验（挡住符号链接指向目录外）；
-/// 4. 删除失败只计数，不影响调用方。
+/// 每个文件都交给 `safe_remove_managed_copy()`——它保证"只删目录项、
+/// 不跟随符号链接删目标"，与孤儿清理、单个附件删除共用同一套语义
+/// （第三轮任务书 §2.5 要求四处删除行为必须一致）。
 pub fn delete_copied_files(data_dir: &Path, stored_paths: &[String]) -> (usize, usize) {
     let root = attachments_dir_of(data_dir);
-    let root_lex = lexical_normalize(&root);
     let mut removed = 0usize;
     let mut failed = 0usize;
 
     for stored in stored_paths {
         let candidate = resolve_stored_path(data_dir, stored);
-
-        // 第 1 道：纯路径判断，**不依赖文件是否存在**
-        if !lexical_normalize(&candidate).starts_with(&root_lex) {
-            failed += 1;
-            log::warn!("附件副本路径越界（词法检查），已跳过删除：{stored}");
-            continue;
-        }
-
-        // 第 2 道：不存在就算已完成
-        if !candidate.exists() {
-            removed += 1;
-            continue;
-        }
-
-        // 第 3 道：解析符号链接后再比一次
-        match ensure_inside_dir(&root, &candidate) {
-            Ok(abs) => match std::fs::remove_file(&abs) {
-                Ok(()) => removed += 1,
-                Err(e) => {
-                    failed += 1;
-                    log::warn!("附件副本删除失败（保留文件，不影响已完成的删除）：{e}");
-                }
-            },
+        match safe_remove_managed_copy(&root, &candidate) {
+            Ok(()) => removed += 1,
             Err(e) => {
                 failed += 1;
-                log::warn!("附件副本路径越界（符号链接检查），已跳过删除：{stored}（{e}）");
+                log::warn!("附件副本未删除（不影响已完成的数据库删除）：{stored} —— {e}");
             }
         }
     }
     (removed, failed)
+}
+
+/// 安全删除一个"由 Lumen 管理的副本文件"（第三轮任务书 §2.2 / §2.4）。
+///
+/// ## 根本原则
+///
+/// 删除**数据库记录指向的那个目录项本身**，而不是它解析后的目标文件。
+///
+/// ## 为什么不能 canonicalize 之后删
+///
+/// `canonicalize` 会**跟随符号链接**。若 `attachments/B.pdf` 是指向
+/// `attachments/A.pdf` 的链接，而 A.pdf 属于另一个仍在使用的任务，那么
+/// `canonicalize(B) → remove_file(A)` 会把 A 的真实文件删掉，而 B 的链接还留着——
+/// 删除任务 B 时误伤了任务 A。这是第三轮任务书点名的 P0 缺陷。
+///
+/// ## 分情况处理
+///
+/// | 情况 | 处理 |
+/// | --- | --- |
+/// | 词法上越界，或等于受控目录本身 | 拒绝 |
+/// | 文件不存在 | `Ok`（幂等，重复清理安全） |
+/// | 符号链接 / junction（reparse point） | **只删链接自身**，绝不跟随；并记 warn |
+/// | 普通文件 | 校验**父目录**在受控目录内，再删原路径（不是 canonicalized 的结果） |
+/// | 目录 / 其它类型 | 拒绝（受控目录是平铺的，不该出现子目录） |
+pub fn safe_remove_managed_copy(root: &Path, candidate: &Path) -> Result<(), String> {
+    if !path_lexically_inside(root, candidate) {
+        return Err(format!("路径越界（词法检查）：{}", candidate.display()));
+    }
+    if same_path(root, candidate) {
+        return Err("拒绝删除受控目录本身".into());
+    }
+    let cand_lex = lexical_normalize(candidate);
+
+    // symlink_metadata **不跟随**链接；metadata 会跟随，不能用来判断类型
+    let meta = match std::fs::symlink_metadata(&cand_lex) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("读取文件属性失败：{e}")),
+    };
+
+    let ft = meta.file_type();
+    if ft.is_symlink() {
+        // Windows 上 junction 等 reparse point 也会走到这个分支。
+        // 删"链接自身"：目录链接用 remove_dir，文件链接用 remove_file。
+        // 这里读 metadata 只是为了判断链接指向的是文件还是目录，
+        // **删除动作仍然只作用于链接本身**，不会碰目标。
+        let points_to_dir = std::fs::metadata(&cand_lex)
+            .map(|m| m.is_dir())
+            .unwrap_or(false);
+        let res = if points_to_dir {
+            std::fs::remove_dir(&cand_lex)
+        } else {
+            std::fs::remove_file(&cand_lex)
+        };
+        res.map_err(|e| format!("删除符号链接自身失败：{e}"))?;
+        log::warn!(
+            "受控附件目录里出现了符号链接/junction，已只删除链接自身、未跟随目标：{}",
+            cand_lex.display()
+        );
+        return Ok(());
+    }
+
+    if !ft.is_file() {
+        return Err(format!("不是普通文件，拒绝删除：{}", cand_lex.display()));
+    }
+
+    // 普通文件：解析**父目录**（父目录必须真实位于受控目录内），
+    // 再用"规范化后的父目录 + 原文件名"删除。
+    // 这样既挡住了"父目录本身是链接"的情况，也不会跟随文件自身的链接。
+    let parent = cand_lex
+        .parent()
+        .ok_or_else(|| "无法确定父目录".to_string())?;
+    let file_name = cand_lex
+        .file_name()
+        .ok_or_else(|| "无法确定文件名".to_string())?;
+    let parent_abs = ensure_inside_dir(root, parent).map_err(|e| e.to_string())?;
+    let target = parent_abs.join(file_name);
+    std::fs::remove_file(&target).map_err(|e| format!("删除失败：{e}"))
 }
 
 /// 词法层面折叠 `..` 与 `.`（不访问文件系统）。
@@ -251,6 +284,40 @@ fn lexical_normalize(p: &Path) -> PathBuf {
         }
     }
     out
+}
+
+/// 词法上 `candidate` 是否位于 `root` 之下（Windows 下**大小写不敏感**）。
+///
+/// 为什么单独写一个：Windows 的文件路径大小写不敏感，而 `Path::starts_with`
+/// 是逐组件精确比较。数据库里存的是 Lumen 自己生成的相对路径，大小写通常一致；
+/// 但记录被手工改过、或数据目录改过大小写时，严格比较会把**受控目录内**的文件
+/// 误判成越界而拒绝删除（留下孤儿）。
+///
+/// 放宽成大小写不敏感只会让"本来就该删的副本"被正常删掉，不会放过真正的越界：
+/// 越界路径还要过下一道 `canonicalize`（`ensure_inside_dir`）的检查。
+fn path_lexically_inside(root: &Path, candidate: &Path) -> bool {
+    let r = lexical_normalize(root);
+    let c = lexical_normalize(candidate);
+    if cfg!(windows) {
+        let rs = r.to_string_lossy().to_lowercase();
+        let cs = c.to_string_lossy().to_lowercase();
+        // 必须是 root 本身，或以 "root + 分隔符" 开头——
+        // 否则 `…\attachments-evil` 会被误判成 `…\attachments` 的子路径
+        cs == rs || cs.starts_with(&format!("{rs}\\")) || cs.starts_with(&format!("{rs}/"))
+    } else {
+        c.starts_with(&r)
+    }
+}
+
+/// 两个路径是否指向同一位置（Windows 下大小写不敏感）。
+fn same_path(a: &Path, b: &Path) -> bool {
+    let a = lexical_normalize(a);
+    let b = lexical_normalize(b);
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
 }
 
 /// 判断一个文件名是否是 Lumen 自己生成的副本（`<uuid><扩展名>`）。
@@ -470,18 +537,13 @@ pub async fn attachment_remove(state: State<'_, AppState>, id: String) -> AppRes
     let mut removed_copy = false;
     if a.storage_mode == "copied" {
         if let Some(p) = a.stored_path.as_deref() {
-            // 删副本前再次确认路径在受控目录内：即使数据库被手工改过，
-            // 也不会因为这个操作删除目录外的文件。
-            // 注意先把可能存在的相对路径解析成绝对路径（§11.2）。
+            // 与任务删除、孤儿清理共用同一套安全语义（第三轮任务书 §2.5）：
+            // 只删数据库记录指向的那个目录项，绝不跟随符号链接删目标。
             let abs_candidate = resolve_stored_path(state.db.data_dir(), p);
-            match ensure_inside_attachments(&state, &abs_candidate) {
-                Ok(abs) => {
-                    if std::fs::remove_file(&abs).is_ok() {
-                        removed_copy = true;
-                    }
-                }
+            match safe_remove_managed_copy(&attachments_dir(&state), &abs_candidate) {
+                Ok(()) => removed_copy = true,
                 Err(e) => {
-                    log::warn!("附件副本路径校验未通过，跳过删除文件（仅删记录）：{e}");
+                    log::warn!("附件副本未删除，仅删记录：{e}");
                 }
             }
         }
@@ -658,21 +720,16 @@ pub async fn cleanup_orphans_impl(db: &Db) -> AppResult<OrphanCleanupResult> {
             continue;
         }
 
-        // 再走一次越界校验：这是删除前的最后一道闸
-        match ensure_inside_dir(&root, &path) {
-            Ok(abs) => match std::fs::remove_file(&abs) {
-                Ok(()) => {
-                    removed += 1;
-                    removed_files.push(name);
-                }
-                Err(e) => {
-                    skipped += 1;
-                    log::warn!("孤儿附件删除失败：{}：{e}", abs.display());
-                }
-            },
+        // 与任务删除共用同一个安全删除函数（第三轮任务书 §2.5）：
+        // 越界拒绝、符号链接只删链接自身、绝不跟随目标
+        match safe_remove_managed_copy(&root, &path) {
+            Ok(()) => {
+                removed += 1;
+                removed_files.push(name);
+            }
             Err(e) => {
                 skipped += 1;
-                log::warn!("孤儿附件路径越界，已跳过：{}（{e}）", path.display());
+                log::warn!("孤儿附件未删除：{} —— {e}", path.display());
             }
         }
     }
@@ -805,6 +862,170 @@ mod tests {
         assert_eq!(MAX_ATTACHMENT_BYTES, 200 * 1024 * 1024);
         const { assert!(MAX_PER_TASK > 0 && MAX_PER_TASK <= 1000) };
         const { assert!(MAX_ATTACHMENT_BYTES >= 10 * 1024 * 1024) };
+    }
+
+    // =========================================================================
+    // 第三轮 §2 / §10.2：安全删除受控副本
+    // =========================================================================
+
+    /// 建一个临时"受控附件目录" + 外部目录，返回 (受控目录, 外部目录, 清理句柄)
+    fn temp_dirs(tag: &str) -> (PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!("lumen-att-{tag}-{}", uuid::Uuid::now_v7()));
+        let root = base.join("attachments");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        (root, outside)
+    }
+
+    /// Windows 上创建目录联接（junction）。
+    ///
+    /// 为什么用它替代符号链接：本机与 CI 都没有
+    /// `SeCreateSymbolicLinkPrivilege`（`std::os::windows::fs::symlink_file`
+    /// 会报 "Administrator privilege required"），而 **junction 普通用户就能建**，
+    /// 且它与 symlink 一样都是 reparse point——`FileType::is_symlink()` 对两者
+    /// 都返回 true，走的是 `safe_remove_managed_copy` 里**同一段代码路径**。
+    #[cfg(windows)]
+    fn make_junction(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// 越界路径一律拒绝；受控目录本身拒绝；不存在的文件当"已完成"。
+    #[test]
+    fn safe_remove_refuses_outside_paths_and_is_idempotent() {
+        let (root, outside) = temp_dirs("escape");
+        let victim = outside.join("important.txt");
+        std::fs::write(&victim, b"do not delete").unwrap();
+
+        // 目录外绝对路径
+        assert!(safe_remove_managed_copy(&root, &victim).is_err());
+        // 相对穿越
+        assert!(safe_remove_managed_copy(&root, &root.join("../outside/important.txt")).is_err());
+        // UNC 路径：绝不能当成受控目录内的东西
+        #[cfg(windows)]
+        assert!(
+            safe_remove_managed_copy(&root, Path::new(r"\\server\share\file.pdf")).is_err(),
+            "UNC 路径必须被拒绝"
+        );
+        // 受控目录本身
+        assert!(safe_remove_managed_copy(&root, &root).is_err());
+        // 不存在的文件：幂等成功
+        assert!(safe_remove_managed_copy(&root, &root.join("nope.pdf")).is_ok());
+
+        assert!(victim.exists(), "受控目录之外的文件必须原样保留");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// 大小写差异不得造成错误判定（任务书 §2.6 最后一条）。
+    #[test]
+    fn safe_remove_handles_case_variants_safely() {
+        let (root, _outside) = temp_dirs("case");
+        let file = root.join("AbC.pdf");
+        std::fs::write(&file, b"x").unwrap();
+
+        // 同一路径写成不同大小写：应当被认作"在受控目录内"并被删掉
+        let upper = PathBuf::from(root.to_string_lossy().to_uppercase()).join("abc.PDF");
+        let res = safe_remove_managed_copy(&root, &upper);
+        assert!(res.is_ok(), "大小写变体应正常删除，实际：{res:?}");
+        assert!(!file.exists(), "文件应已删除");
+
+        // 而"看起来像受控目录、实际不是"的兄弟目录必须拒绝
+        let sibling = PathBuf::from(format!("{}-evil", root.to_string_lossy()));
+        assert!(
+            safe_remove_managed_copy(&root, &sibling.join("x.pdf")).is_err(),
+            "同前缀的兄弟目录不是受控目录，必须拒绝"
+        );
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// junction 指向受控目录**之外**：只删链接自身，外部目录与文件完好。
+    #[cfg(windows)]
+    #[test]
+    fn junction_to_outside_is_only_unlinked() {
+        let (root, outside) = temp_dirs("junc-out");
+        let inner = outside.join("keep.txt");
+        std::fs::write(&inner, b"keep me").unwrap();
+
+        // 受控目录里放一个指向外部的 junction（名字是 Lumen 会生成的 UUID 形式）
+        let link = root.join(uuid::Uuid::now_v7().to_string());
+        if !make_junction(&link, &outside) {
+            eprintln!("[skip] 本机无法创建 junction，跳过该用例");
+            let _ = std::fs::remove_dir_all(root.parent().unwrap());
+            return;
+        }
+
+        safe_remove_managed_copy(&root, &link).expect("删除链接自身应当成功");
+        assert!(!link.exists(), "junction 本身应被删除");
+        assert!(outside.is_dir(), "链接指向的外部目录必须完好");
+        assert!(inner.exists(), "外部目录里的文件必须完好");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// junction 指向**另一个仍在使用的副本所在目录**：
+    /// 删掉链接不能让那个文件消失（任务书 §2.1 的核心场景）。
+    #[cfg(windows)]
+    #[test]
+    fn junction_to_live_copy_dir_never_deletes_the_file_behind_it() {
+        let (root, _outside) = temp_dirs("junc-live");
+        let live = root.join("live-copy.pdf");
+        std::fs::write(&live, b"still needed").unwrap();
+
+        let link = root.join(uuid::Uuid::now_v7().to_string());
+        if !make_junction(&link, &root) {
+            eprintln!("[skip] 本机无法创建 junction，跳过该用例");
+            let _ = std::fs::remove_dir_all(root.parent().unwrap());
+            return;
+        }
+
+        safe_remove_managed_copy(&root, &link).expect("删除链接自身应当成功");
+        assert!(!link.exists(), "junction 本身应被删除");
+        assert!(live.exists(), "链接背后的 live 副本绝不能被删掉");
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    /// 删除副本集合时，链接与普通文件混合出现也不会误伤：
+    /// 用 delete_copied_files 走一遍完整路径（它内部调用同一个安全函数）。
+    #[cfg(windows)]
+    #[test]
+    fn delete_copied_files_only_unlinks_and_keeps_normal_files_safe() {
+        let (root, outside) = temp_dirs("mixed");
+        let data_dir = root.parent().unwrap().to_path_buf();
+        let outside_file = outside.join("user.pdf");
+        std::fs::write(&outside_file, b"user data").unwrap();
+
+        // 一个正常的受控副本 + 一个指向外部的 junction
+        let normal = root.join(format!("{}.pdf", uuid::Uuid::now_v7()));
+        std::fs::write(&normal, b"copy").unwrap();
+        let link = root.join(uuid::Uuid::now_v7().to_string());
+        let made = make_junction(&link, &outside);
+
+        let stored = vec![
+            "attachments/../outside/user.pdf".to_string(), // 越界，必须拒绝
+            format!(
+                "attachments/{}",
+                normal.file_name().unwrap().to_string_lossy()
+            ),
+            format!(
+                "attachments/{}",
+                link.file_name().unwrap().to_string_lossy()
+            ),
+        ];
+        let (removed, failed) = delete_copied_files(&data_dir, &stored);
+
+        assert!(!normal.exists(), "受控目录内的普通副本应被删除");
+        assert!(outside_file.exists(), "受控目录之外的文件绝不能被删");
+        assert_eq!(failed, 1, "越界那一条必须被记为失败/跳过");
+        assert_eq!(removed, if made { 2 } else { 1 });
+
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     /// 越界校验的语义：备份目录之外的路径必须被拒绝。
