@@ -688,31 +688,111 @@ pub async fn purge_task_impl(db: &Db, id: &str) -> AppResult<PurgeResult> {
     Ok(PurgeResult { purged: 1 })
 }
 
-/// 清空回收站。
+/// 按条件永久删除回收站里的任务。
 ///
-/// 与单个永久删除同样的附件处理顺序（整改任务书 §6.4）。
+/// ## 产品语义（第三轮明确，见任务书 §1.2 方案 B）
+///
+/// **按钮表示"删除当前筛选结果"**：确认范围 = 当前筛选条件下的集合，
+/// 实际删除 = 同一个集合。四者用同一套条件：
+///
+/// ```text
+/// task_count(query) ──┐
+/// task_list(query)  ──┼── 都走 apply_task_filters
+/// DELETE 的范围      ──┤
+/// 附件清理的范围      ──┘
+/// ```
+///
+/// 为什么不采用"永远清空整个回收站"（方案 A）：那个语义需要按钮上写
+/// "整个回收站 128 项"，而列表里只显示搜索结果 3 条——用户看到的和按钮说的
+/// 是两回事，更容易误操作。这里选"看到什么就删什么"，并用弹窗把两个数字
+/// 都写出来（"只删除筛选结果里的 N 项；回收站共 M 项，其余会保留"）。
+///
+/// ## 并发一致性（任务书 §1.4）
+///
+/// 即使范围相同，"用户看到 100 项 → 另一个窗口又移入 1 项 → 用户点确认"
+/// 也会变成删 101 项。因此调用方把**确认时的数量**一起传下来，
+/// 后端在同一事务里重新计数：对不上就整体取消并如实告知，
+/// 而不是静默多删。
+///
+/// 附件仍按第二轮 §6.4 的顺序处理：事务前取路径 → 删除并提交 → 再删文件。
 #[tauri::command]
-pub async fn task_purge_all_deleted(state: State<'_, AppState>) -> AppResult<PurgeResult> {
-    purge_all_deleted_impl(&state.db).await
+pub async fn task_purge_all_deleted(
+    state: State<'_, AppState>,
+    query: Option<TaskQuery>,
+    expected_count: Option<i64>,
+) -> AppResult<PurgeResult> {
+    purge_all_deleted_impl(&state.db, query, expected_count).await
 }
 
-/// 清空回收站的实现（与 Tauri 解耦，便于集成测试直接调用）。
-pub async fn purge_all_deleted_impl(db: &Db) -> AppResult<PurgeResult> {
-    // 1) 事务前取出所有回收站任务的副本路径
-    let copies = crate::attachments::copied_paths_in_trash(db).await?;
+/// 按条件永久删除的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn purge_all_deleted_impl(
+    db: &Db,
+    query: Option<TaskQuery>,
+    expected_count: Option<i64>,
+) -> AppResult<PurgeResult> {
+    // **强制**只看回收站：无论调用方传了什么条件，这条命令都绝不允许碰到
+    // 未删除的任务（`deleted_only` 在 `apply_task_filters` 里优先于
+    // `include_deleted`，覆盖调用方的值是安全的）。
+    let mut q = query.unwrap_or_default();
+    q.deleted_only = true;
+    // 删除是"整个集合"，分页参数一律忽略
+    q.limit = None;
+    q.offset = None;
 
-    // 2) 删除
-    let n = sqlx::query("DELETE FROM tasks WHERE deleted_at IS NOT NULL")
-        .execute(db.pool())
-        .await?
-        .rows_affected() as i64;
+    // 1) 事务前取出**符合条件**的那些任务的副本路径
+    let copies = copied_paths_of_matching_tasks(db, &q).await?;
 
-    // 3) 提交后清理文件
+    // 2) 同一事务内：重新计数 → 与确认值比对 → 删除
+    let mut tx = db.pool().begin().await?;
+
+    let mut count_b = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM tasks WHERE 1 = 1");
+    apply_task_filters(&mut count_b, &q)?;
+    let actual: i64 = count_b.build_query_scalar().fetch_one(&mut *tx).await?;
+
+    if let Some(expected) = expected_count {
+        if expected != actual {
+            tx.rollback().await?;
+            return Err(AppError::conflict(format!(
+                "回收站内容已发生变化：确认时是 {expected} 项，现在是 {actual} 项"
+            ))
+            .with_hint(
+                "为避免删掉你没有确认过的任务，这次操作已取消。请重新查看回收站后再确认。",
+            ));
+        }
+    }
+
+    let mut del_b = QueryBuilder::<Sqlite>::new(
+        "DELETE FROM tasks WHERE id IN (SELECT id FROM tasks WHERE 1 = 1",
+    );
+    apply_task_filters(&mut del_b, &q)?;
+    del_b.push(")");
+    let n = del_b.build().execute(&mut *tx).await?.rows_affected() as i64;
+    tx.commit().await?;
+
+    // 3) 提交后清理文件：失败只记日志，不回滚已经完成的永久删除
     let (removed, failed) = crate::attachments::delete_copied_files(db.data_dir(), &copies);
     if removed + failed > 0 {
-        log::info!("清空回收站后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
+        log::info!("永久删除后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
     }
     Ok(PurgeResult { purged: n })
+}
+
+/// 取"符合筛选条件的任务"的 copied 附件存储路径。
+///
+/// 与删除用**同一套条件**（同样走 `apply_task_filters`），否则会出现
+/// "文件清理范围与记录删除范围不一致"——要么漏删（留下孤儿），
+/// 要么多删（把还要保留的副本删了）。
+pub async fn copied_paths_of_matching_tasks(db: &Db, query: &TaskQuery) -> AppResult<Vec<String>> {
+    let mut b = QueryBuilder::<Sqlite>::new(
+        "SELECT a.stored_path FROM attachments a
+         JOIN tasks t ON t.id = a.task_id
+         WHERE a.storage_mode = 'copied' AND a.stored_path IS NOT NULL
+           AND t.id IN (SELECT id FROM tasks WHERE 1 = 1",
+    );
+    apply_task_filters(&mut b, query)?;
+    b.push(")");
+    let rows: Vec<(String,)> = b.build_query_as().fetch_all(db.pool()).await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
 }
 
 /// 按条件查询任务列表（§4.1 搜索 + 组合筛选 + 可切换排序）。

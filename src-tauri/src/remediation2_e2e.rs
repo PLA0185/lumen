@@ -433,7 +433,7 @@ async fn trash_count_drives_purge_confirmation_and_purge_result() {
         "已加载条数与真实总数必须不同——这正是原缺陷的现场"
     );
 
-    let r = purge_all_deleted_impl(db).await.unwrap();
+    let r = purge_all_deleted_impl(db, None, None).await.unwrap();
     assert_eq!(r.purged, 1200, "清空回收站必须返回真实删除数");
     assert_eq!(r.purged, trash_total, "返回数量必须与确认时显示的数量一致");
     assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
@@ -442,6 +442,121 @@ async fn trash_count_drives_purge_confirmation_and_purge_result() {
         30,
         "未删除的任务不能被误删"
     );
+
+    cleanup(dir);
+}
+
+/// 回收站删除必须**按同一套筛选条件**执行，且永远碰不到未删除的任务。
+///
+/// 复现的缺陷（第三轮任务书 §1）：界面上的按钮与二次确认用的是
+/// "当前筛选条件下的计数"（回收站里搜个词就显示「永久删除 5 项」），
+/// 而后端原先执行的是无条件的 `DELETE FROM tasks WHERE deleted_at IS NOT NULL`
+/// ——用户以为删 5 条、实际删掉整个回收站。
+///
+/// 第三轮把语义明确为"按钮 = 删除当前筛选结果"（任务书 §1.2 方案 B），
+/// 并让 count / list / DELETE / 附件清理四者共用 `apply_task_filters`。
+#[tokio::test]
+async fn purge_all_respects_filters_and_never_touches_live_tasks() {
+    let (state, dir) = setup("purgefiltered").await;
+    let db = &state.db;
+
+    // 回收站 100 条；另有 20 条未删除任务（一条都不能少）
+    seed_tasks(db, 100, "trash", "todo", true, 0.0, None).await;
+    seed_tasks(db, 20, "live", "todo", false, 0.0, None).await;
+
+    // 1) 带搜索条件：只应删掉匹配的那些
+    let filtered = TaskQuery {
+        search: Some("trash-1".into()),
+        ..Default::default()
+    };
+    let matched = count_tasks_impl(
+        db,
+        &TaskQuery {
+            deleted_only: true,
+            ..filtered.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        matched > 0 && matched < 100,
+        "构造的搜索条件应当只匹配一部分，实际匹配 {matched}"
+    );
+
+    let r = purge_all_deleted_impl(db, Some(filtered), Some(matched))
+        .await
+        .unwrap();
+    assert_eq!(r.purged, matched, "返回的删除数必须等于筛选条件下的计数");
+    assert_eq!(
+        count_tasks_impl(db, &q_trash()).await.unwrap(),
+        100 - matched,
+        "未匹配的回收站任务必须保留"
+    );
+    assert_eq!(
+        count_tasks_impl(db, &q_all()).await.unwrap(),
+        20,
+        "未删除的任务一条都不能少"
+    );
+
+    // 2) 调用方传一个"看起来不限删除状态"的条件，也绝不能删到未删除的任务
+    let dangerous = TaskQuery {
+        include_deleted: true,
+        statuses: vec![],
+        ..Default::default()
+    };
+    let r = purge_all_deleted_impl(db, Some(dangerous), None)
+        .await
+        .unwrap();
+    assert_eq!(r.purged, 100 - matched, "应删掉回收站里剩下的那些");
+    assert_eq!(
+        count_tasks_impl(db, &q_all()).await.unwrap(),
+        20,
+        "即使传了 include_deleted，也不能碰到未删除的任务"
+    );
+
+    // 3) 权限收紧：不传条件 = 清空回收站（向后兼容语义），此时回收站已空
+    let r = purge_all_deleted_impl(db, None, None).await.unwrap();
+    assert_eq!(r.purged, 0);
+    assert_eq!(count_tasks_impl(db, &q_all()).await.unwrap(), 20);
+
+    cleanup(dir);
+}
+
+/// 并发一致性：确认之后集合变了，必须**拒绝执行**而不是静默多删。
+///
+/// 对应任务书 §1.4 与验收用例 C：
+/// "用户看到 100 项 → 另一个窗口又移入 1 项 → 用户点确认"
+/// 绝不能静默删掉 101 项。
+#[tokio::test]
+async fn purge_all_refuses_when_the_set_changed_after_confirmation() {
+    let (state, dir) = setup("purgeconcurrent").await;
+    let db = &state.db;
+
+    seed_tasks(db, 10, "a", "todo", true, 0.0, None).await;
+    let confirmed = count_tasks_impl(db, &q_trash()).await.unwrap();
+    assert_eq!(confirmed, 10);
+
+    // 确认之后、执行之前，另一个窗口又移入 1 条
+    seed_tasks(db, 1, "b", "todo", true, 0.0, None).await;
+
+    let err = purge_all_deleted_impl(db, None, Some(confirmed))
+        .await
+        .unwrap_err();
+    assert!(
+        err.message.contains("已发生变化"),
+        "必须明确告知集合变了，实际：{}",
+        err.message
+    );
+    assert_eq!(
+        count_tasks_impl(db, &q_trash()).await.unwrap(),
+        11,
+        "被拒绝的操作不能删掉任何东西"
+    );
+
+    // 用新的数量重新确认后可以正常执行
+    let r = purge_all_deleted_impl(db, None, Some(11)).await.unwrap();
+    assert_eq!(r.purged, 11);
+    assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
 
     cleanup(dir);
 }
@@ -574,7 +689,7 @@ async fn purge_all_removes_every_copied_file() {
     let live = seed_tasks(db, 1, "live", "todo", false, 0.0, None).await;
     let (_a, live_file) = make_copied_attachment(db, &live[0], "y").await;
 
-    let r = purge_all_deleted_impl(db).await.unwrap();
+    let r = purge_all_deleted_impl(db, None, None).await.unwrap();
     assert_eq!(r.purged, 5);
     for f in &files {
         assert!(!f.exists(), "回收站任务的副本应被清理：{}", f.display());
@@ -911,7 +1026,7 @@ async fn regression_2000_rows_across_every_view() {
     );
 
     // 清空回收站的数量也要对得上（界面确认数量用的就是这个值）
-    let r = purge_all_deleted_impl(db).await.unwrap();
+    let r = purge_all_deleted_impl(db, None, None).await.unwrap();
     assert_eq!(r.purged, 500, "清空回收站应删除 500 条");
     assert_eq!(count_tasks_impl(db, &q_all()).await.unwrap(), 1000);
 
