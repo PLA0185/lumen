@@ -72,8 +72,9 @@ BASE=`d6e76feec660d8532e4ddfafe7e99a22daa4fa97`。本节先记录代码与本机
   `cargo fmt --check`、`cargo check --all-targets`、`cargo test --lib`（352 项）、
   `cargo clippy --all-targets --all-features -- -D warnings` 通过。
 - 隔离 profile 实机脚本：回收站与分页 42/42，残留 0；跨视图架构 24/24，残留 0。
-  规模链路脚本 10/10：1100 条当日任务下，Board 显示 200/1100 加载入口、Calendar
-  显示前 1000/1100 警示、Floating 显示前 100/1100 提示；残留 0。
+  规模链路脚本 16/16：2000 条当日任务下，Board 显示 200/2000 加载入口、Calendar
+  显示前 1000/2000 警示、Floating 显示前 100/2000 提示；依赖编辑器分页并经服务端
+  搜索命中末尾任务；残留 0。
 - 新增/扩展回归：mutation 成功与失败通知、request gate、`task_save` 回滚、旧系列 3000+
   次发生、分段边界、WholeSeries 规则/标题重建、v5 升级模板回填、历史确认、并发物化、
   恢复跳过发生、仅此次字段/标签的事务性、AI Apply 空父任务与重复任务改期。
