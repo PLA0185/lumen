@@ -430,3 +430,391 @@ test(window): 补 §16 专项回归：默认安全、四种显隐组合、越界
 style: 清理 clippy 全量告警，CI 的 clippy 门禁改为真正生效
 docs: 新增整改报告
 ```
+
+---
+---
+
+# 第二轮复审整改
+
+> 依据：《Lumen 第二轮整改任务书》
+> 复审基线提交：`1bbcc4623fe64137e0b721d863ef87d622356d91`
+> 本章是**追加**的，不修改上面第一轮的任何内容。
+
+## 0. 结论速览（第二轮）
+
+| 任务书条目 | 优先级 | 状态 |
+| --- | --- | --- |
+| §2 Provider 默认值前后端不一致 | P1 | ✅ 完成（默认值收敛到后端唯一来源） |
+| §3 OpenAI"空模型 → 不能存 Key"死锁 | P1 | ✅ 完成（保存校验与运行校验拆分） |
+| §4 普通列表硬截 500 条 | P1 | ✅ 完成（后端分页 + 前端加载更多 + 总数） |
+| §5 回收站确认数量与实际不一致 | P1 | ✅ 完成（用后端 count，实机验证 1218 条） |
+| §6 永久删除留下 copied 附件孤儿 | P2 | ✅ 完成（含孤儿扫描清理） |
+| §7 恰好 100000 条误报 truncated | P2 | ✅ 完成（多读一条判定），另修掉一个 35 倍的性能问题 |
+| §8 CI 与文档的 clippy 门禁不一致 | P2 | ✅ 完成（采用方案 A，无豁免） |
+| §9 updater 密码与私钥并排明文存放 | P2 | ✅ 完成（DPAPI，明文文件已删除） |
+| §10 任务总数接口 | P2 | ✅ 完成（`task_count`，与 list 共用筛选） |
+| §11 2000 条数据量专项回归 | P2 | ✅ 完成（Rust 2000 条 + 实机 1200 条） |
+| §12 列表虚拟化 | P3 | ❌ 未做（任务书允许先做"分页 + Load More"） |
+| §13 大文件拆分等 | 不强制 | ❌ 未做，见「尚未解决」 |
+| §14 必须新增/更新测试 | 强制 | ✅ 完成（Rust +13、前端 +16、实机 15 项） |
+
+## 1. §2 Provider 默认值只有一个来源（P1）
+
+### 问题
+
+后端 `Provider::default_model()` 里 OpenAI 已经刻意留空（未经验证不填），
+而前端 `src/lib/ai-ipc.ts` 同时维护着 `PROVIDER_DEFAULT_MODEL`，
+OpenAI 那格写的是 `gpt-6-astra` —— 一个 **Azure** 的模型 ID。
+
+`AiPanel.tsx` 切换 Provider 时直接读前端常量，于是用户切到 OpenAI 会被自动填入它，
+**而保存不会报错**。漂移是静默的，这正是它危险的地方。
+
+### 修改
+
+- 新增后端命令 **`ai_provider_defaults`**（`src-tauri/src/ai.rs`），
+  返回 `ProviderDefaults`：`provider / label / baseUrl / model / timeoutSeconds /
+  maxOutputTokens / dataPolicyNote / modelMustBeChosen / keyEntry`，
+  由 `ProviderConfig::with_defaults()` + `Provider::label()` + `data_policy_note()`
+  派生，**结构上不可能与后端行为不一致**。
+- 前端删除 `PROVIDER_DEFAULT_MODEL`、`PROVIDER_DEFAULT_BASE`、`PROVIDER_LABELS`
+  与 `providerPolicyNote()`（四份重复来源），只保留纯映射函数
+  `findDefaults` / `configFromDefaults` / `configForProvider`。
+- `AiPanel.tsx` 在挂载时同时取默认值表与已保存配置；切换 Provider 用
+  `configForProvider()`，取不到就提示更新而不是猜一个默认值。
+
+### 防漂移护栏
+
+新增测试 `frontend_has_no_duplicate_provider_defaults`：递归扫描 `src/**/*.ts(x)`
+（跳过 `*.test.*`），出现 `PROVIDER_DEFAULT_MODEL` / `PROVIDER_DEFAULT_BASE` /
+`gpt-6-astra` 任一即失败。
+
+> 这条护栏在本轮**当场抓到过一次**：它先拦下了写在注释里的同一个词。
+
+## 2. §3 空模型死锁（P1）
+
+### 问题
+
+一个 `validate()` 同时承担两件事：
+
+- 保存配置时要它 —— 于是模型为空就保存不了；
+- 而"获取模型列表"又要求 `hasApiKey === true`。
+
+结果：模型为空 → 不能存 Key → 拿不到模型列表 → 选不了模型。
+
+### 修改
+
+按任务书 §3.3 / §3.4 拆成三个方法，职责互不重叠：
+
+| 方法 | 用在哪 | 校验内容 |
+| --- | --- | --- |
+| `validate_endpoint()` | 所有场景的公共部分 | Base URL 非空、http(s)、非本机禁明文 http |
+| `validate_for_save()` | `ai_set_config` | = 端点校验，**允许 model 为空** |
+| `validate_for_run()` | `chat()`（真正发请求） | = 端点校验 + **model 必须已选** |
+
+`ai_list_models` 改为只校验端点（它的存在意义就是帮用户在"还没有模型"时把模型选出来）。
+界面同步：模型为空时给出说明；「测试连接」在没选模型时禁用并说明原因。
+
+### 对照 §3.5 的三个场景
+
+| 场景 | 结果 |
+| --- | --- |
+| A：OpenAI + model 为空 + 有效 Key | ✅ 可保存（`empty_model_is_savable_but_not_runnable`） |
+| B：Key 已存、model 为空时拉模型列表 | ✅ 可用（`ai_list_models` 不再要求模型） |
+| C：真正调用时空模型 | ✅ 拒绝，提示"请先在设置中获取模型列表或手动填写模型 ID" |
+
+## 3. §4 + §10 列表分页与总数（P1）
+
+### 问题
+
+`buildQuery()` 写死 `limit: 500`，而主列表没有分页、加载更多或无限滚动。
+501 条之后的任务**数据库里有、界面上永远看不到**——这是数据可见性问题，不是性能问题。
+
+### 修改
+
+**后端**（`src-tauri/src/commands.rs`）：
+
+- 把筛选条件抽成 `apply_task_filters(b, query)`；
+- 新增 `task_count(query) -> { total }`，**与 `task_list` 共用同一份 where 子句**；
+- 抽出 `run_task_query(db, query, limit, offset)` 与 `push_task_order(b, query)`，
+  让"列表分页"与"报告全量"走同一份筛选与排序。
+
+**前端**（`src/lib/store.ts`）：
+
+- `PAGE_SIZE = 200`；
+- 新增状态 `totalCount / hasMore / loadingMore / nextOffset`；
+- `reload()` 同时取列表与总数（`Promise.all`），`offset` 恒为 0；
+- `loadMore()` 按 `nextOffset` 追加、**按 id 去重**、以总数判断是否还有更多；
+  若这一页一条新的都没拿到（并发删除等）就停下，避免无限请求同一页。
+
+**界面**（`src/App.tsx` / `src/components/BoardView.tsx`）：
+
+- 底部常驻「已显示 X / 共 Y 条」+「加载更多（还有 N 条）」；
+- 滚动到底自动加载（IntersectionObserver，`rootMargin: 400px`）；
+- 看板视图同样分页并如实显示总数。
+
+### 实机验收发现并修掉的一个问题
+
+**搜索词只在按回车时才刷新**：`setSearch` 只改状态、不重新查询，
+输入过程中列表与 `totalCount` 都停留在旧条件上——分页之后这会直接导致
+"搜索框里写着 A、计数还是全量"。现改为输入即刷新（250ms 防抖），
+条件一变必然 `offset = 0` 且结果整体替换（任务书 §4.5）。
+
+## 4. §5 回收站确认数量（P1）
+
+### 问题
+
+```tsx
+确定永久删除回收站中的全部 ${tasks.length} 项任务吗？
+```
+
+`tasks.length` 只是**已加载**的条数；后端 `DELETE ... WHERE deleted_at IS NOT NULL`
+删的是全部。分页后这个差距会变得很大。
+
+### 修改
+
+- 按钮与弹窗文案改用后端 `task_count`（与列表同一套条件）；
+- 数量大于已加载条数时，弹窗**额外说明**范围：
+  "当前界面只加载了前 200 条，删除范围为回收站中的全部 1218 条"；
+- 成功提示使用后端返回的 `purged`（而不是本地猜测）。
+
+### 实机证据
+
+| 观察项 | 实测值 |
+| --- | --- |
+| 后端 `task_count(deletedOnly)` | 1218 |
+| 界面已加载卡片数 | 200 |
+| 按钮文案 | 「永久删除 1218 项」 |
+| 弹窗文案 | 「将永久删除回收站中的 1218 项任务。此操作不可撤销。…」 |
+
+## 5. §6 copied 附件孤儿文件（P2）
+
+### 问题
+
+`attachments.task_id` 是 `ON DELETE CASCADE`，记录会随任务消失，
+但 copied 模式的**实体文件**留在 `<数据目录>/attachments/` 里，
+于是产生"数据库无记录、磁盘上还占着"的孤儿。
+
+### 修改（`src-tauri/src/attachments.rs` + `commands.rs`）
+
+顺序严格按任务书 §6.4：
+
+```
+事务前：SELECT stored_path ... WHERE task_id = ? AND storage_mode = 'copied'
+   ↓
+删除任务并提交（附件记录随 CASCADE 消失）
+   ↓
+提交后再删文件；失败只记日志，**不回滚**已完成的删除
+```
+
+- `copied_paths_of_task()` / `copied_paths_in_trash()` 取待清理路径；
+- `delete_copied_files()` 执行删除，四重保护：
+  1. **词法归一化**后必须仍在受控目录内（不依赖文件存在，挡住 `../` 与目录外绝对路径）；
+  2. 文件不存在视为"已完成"（幂等）；
+  3. 存在的文件再 `canonicalize` 校验（挡住符号链接）；
+  4. 删除失败只计数，不影响调用方。
+- 新增 `attachment_cleanup_orphans()` 命令：扫描受控目录，删除
+  "命名是 Lumen 生成的 UUID 形式 + 数据库无引用"的文件；
+  用户自己放进去的文件与子目录跳过并计数；**数据库读取失败时直接报错、不删任何东西**。
+- 设置页「数据与备份」新增"扫描并清理孤儿副本"入口，并写明它只动什么。
+
+## 6. §7 报告截断边界（P2）与随之暴露的性能问题
+
+### 边界修正
+
+判断依据从"行数达到上限"改成"**真的多读到了一条**"：
+
+```rust
+let mut tasks = run_task_query(db, &query, REPORT_MAX_ROWS + 1, 0).await?;
+let truncated = tasks.len() as i64 > REPORT_MAX_ROWS;
+if truncated { tasks.truncate(REPORT_MAX_ROWS as usize); }
+```
+
+| 数据量 | 期望 | 实测 |
+| --- | --- | --- |
+| 99999 | `truncated = false`，total 99999 | ✅ |
+| 100000 | `truncated = false`，total 100000 | ✅（原实现误报 true） |
+| 100001 | `truncated = true`，total 100000 | ✅ |
+
+### 顺带修掉的性能问题
+
+实现过程中实测发现：上一轮的"按 500 条一页读到取完"在 10 万条时是 **O(n²)**——
+OFFSET 深分页每页都要重新排序整表再跳过前面的行。
+
+| 阶段 | 耗时 |
+| --- | --- |
+| 插入 99999 条（递归 CTE） | 0.80 s |
+| 导出 99999 条（**改前**） | **55.9 s** |
+| 导出 99999 条（**改后**） | **1.58 s** |
+| 导出 100000 条 | 2.75 s |
+| 导出 100001 条（截断） | 3.24 s |
+
+改法：报告本来就是"全都要"，不再分页，一次取 `REPORT_MAX_ROWS + 1` 条；
+`build_report_rows` 的标签查询按 500 个 id 分块（一次拼 10 万个 id 会超过
+SQLite 默认 999 个变量的上限）。
+
+> **注意**：列表分页仍然是 OFFSET。这是取舍——列表一次只取 200 条、用户手工翻页，
+> 深分页需要 keyset 分页才能根治，本轮没做（已记入"尚未解决"）。
+
+## 7. §8 CI 与文档的 clippy 门禁一致（P2）
+
+### 问题
+
+| 位置 | 命令 |
+| --- | --- |
+| 文档（AGENTS.md / work-log / 本报告） | `cargo clippy --all-targets --all-features -- -D warnings` |
+| CI 实际 | `cargo clippy --all-targets -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity` |
+
+两者不是同一套规则，属于**文档失真**。
+
+### 修改（采用任务书推荐的方案 A）
+
+先实测：`cargo clippy --all-targets --all-features -- -D warnings` 在本仓库**全绿**，
+说明那两条豁免早已不必要。于是 CI 改成与文档完全一致、且与本地相同的命令，
+不再有任何豁免。`AGENTS.md`、`docs/work-log.md`、本报告的描述已统一。
+
+## 8. §9 updater 密码存储（P2）
+
+### 修改
+
+新增 `tools/updater-secret.ps1`：
+
+| 动作 | 作用 |
+| --- | --- |
+| `-Status` | 报告私钥/密码文件是否存在、能否解密（**不打印密码**），并警告残留的明文文件 |
+| `-Set` | 交互式录入（不回显、二次确认），用 DPAPI 加密后写入 `.dpapi` |
+| `-Build` | 读取私钥与密码 → 设置环境变量 → `pnpm tauri build`，结束后清理环境变量 |
+| `-Clear` | 删除密码文件（不动私钥） |
+
+加密方式是 `ConvertFrom-SecureString`（未指定 `-Key` 即 **DPAPI 当前用户范围**）：
+换用户、换机器、拷走文件都无法解密。
+
+**本机迁移已执行**：明文 `lumen-updater-password.txt` 已删除；删除前做了
+DPAPI 往返校验（解密结果与原文逐字比对一致才删）。CI 侧不使用本脚本，
+仍走 GitHub Actions Secrets。
+
+### 如实说明边界
+
+DPAPI 挡的是"文件被拷走 / 被别的账户读到 / 误提交进仓库"；
+**挡不住**本机同一账户下的恶意进程。那种威胁模型需要硬件密钥，本轮没做。
+
+## 9. §11 + §14 回归测试
+
+### 新增 `src-tauri/src/remediation2_e2e.rs`（11 项）
+
+| 测试 | 覆盖 |
+| --- | --- |
+| `pagination_reads_all_1200_rows_without_gaps_or_duplicates` | 1200 条逐页读全，不重不漏 |
+| `pagination_order_is_stable_when_sort_keys_tie` | 排序键全并列时顺序稳定，页大小无关 |
+| `count_matches_list_under_every_filter` | **16 种筛选条件下 count 与列表条数逐一相等** |
+| `trash_count_drives_purge_confirmation_and_purge_result` | 回收站 1200 条：确认数 = count = `purged` |
+| `purge_single_task_refuses_live_task` | 未进回收站的任务不能被永久删除 |
+| `purge_task_removes_copied_copy_but_never_touches_original` | copied 删除 / reference 原文件保留 |
+| `purge_all_removes_every_copied_file` | 清空回收站清理多个副本，未删除任务不受影响 |
+| `orphan_cleanup_only_removes_managed_unreferenced_files` | 只删"受控目录 + UUID 命名 + 无引用" |
+| `delete_copied_files_refuses_paths_outside_the_controlled_dir` | 三种越界写法一律拒绝 |
+| `report_truncation_is_exact_at_the_export_limit` | 99999 / 100000 / 100001 三个边界 |
+| `regression_2000_rows_across_every_view` | **2000 条**（500 未完成 + 500 已完成 + 500 回收站 + 500 带归属）跨 13 个视图 |
+
+### 新增 `src-tauri/src/ai.rs` 测试
+
+- `provider_defaults_have_a_single_source` —— 默认值表与 `with_defaults()` 逐字段一致；
+- `frontend_has_no_duplicate_provider_defaults` —— 跨端防漂移护栏；
+- `empty_model_is_savable_but_not_runnable` —— §3.5 场景 A 与 C。
+
+### 新增前端测试
+
+| 文件 | 项数 | 覆盖 |
+| --- | --- | --- |
+| `src/lib/ai-ipc.test.ts` | 7 | 默认值映射、切换不残留旧模型、表里没有就返回 null、政策文案取自后端 |
+| `src/lib/store.pagination.test.ts` | 9 | 首屏一页、追加不重复、空页停下、条件变化 offset 归零、失败不破坏已加载内容、搜索自动刷新 |
+
+### 实机验收 `tools/verify_remediation2.py`（15/15）
+
+在真实实例上造 1200 条任务并逐项断言（含"用户原有数据未被改动"）：
+
+```
+✅ 首屏没有一次渲染全部（分页生效） —— DOM 里 200 张卡片，远小于 1200
+✅ 界面明确写出「已显示 X / 共 Y」 —— '已显示 200 / 1200 条'
+✅ 滚动到底部会自动加载下一页 —— 200 → 400 张卡片
+✅ 点「加载更多」能继续往下取 —— 400 → 600 张卡片
+✅ 重新加载后首屏顺序稳定
+✅ 回收站按钮显示的数量等于后端真实总数 —— '永久删除 1218 项'
+✅ 确认数量不是「已加载条数」 —— 已加载 200 条 vs 按钮 1218 项
+✅ 二次确认弹窗里也是真实总数
+✅ 附件孤儿清理命令可用且返回完整统计
+✅ 用户原有数据未被改动 —— 全部 22→22，回收站 18→18
+```
+
+脚本在 `finally` 中逐个按 id 永久删除自己造的数据（刻意**不用**"清空回收站"，
+那会连用户自己回收站里的任务一起删掉），并断言残留为 0。
+
+## 10. 数据库与用户数据影响（第二轮）
+
+**本轮没有新增任何数据库迁移**，schema 与第一轮结束时完全一致（`[1,2,3,4,5]`）。
+
+- 旧库直接可用，不需要删库、清空配置或重装；
+- 界面上唯一可见的行为变化：
+  1. 列表**按页加载**（首屏 200 条 + 底部加载更多），不再是"最多 500 条"；
+  2. 搜索输入即刷新（此前要按回车）；
+  3. 回收站按钮文案从"清空回收站（N）"改为"永久删除 N 项"，N 是真实总数；
+  4. 设置页新增「附件副本清理」入口。
+
+## 11. 测试结果（第二轮，本机实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm install --frozen-lockfile` | ✅ |
+| `pnpm typecheck` | ✅ 0 错误 |
+| `pnpm test` | ✅ **101 passed**（第一轮 85，新增 16） |
+| `pnpm build` | ✅ |
+| `pnpm lint` | ✅ 0 problems |
+| `cargo fmt --check` | ✅ 无差异 |
+| `cargo test --lib` | ✅ **323 passed; 0 failed**（第一轮 310，新增 13） |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅ 通过（**无豁免**，与 CI 同一条命令） |
+
+> 上一轮本表里也写着"`--all-features` 通过"，但当时 CI 实际带着两条豁免。
+> 本轮把 CI 改成同一命令后，这句话与 CI 行为**真正一致**了。
+
+## 12. 尚未解决的问题（第二轮）
+
+### 12.1 未完成
+
+1. **§12 列表虚拟化（P3）**：未做。任务书允许先做"分页 + Load More"，
+   本轮走的这条。1200 条时首屏渲染 200 张卡片可用，但**没有测量**滚动帧率。
+2. **大文件拆分**：`App.tsx` / `commands.rs` / `ai.rs` 仍未拆；
+   `commands.rs` 本轮又长了约 200 行。
+3. **DPAPI 密码轮换流程**：只做了"怎么存"，没验证"怎么换、换了之后旧版本还能不能升级"。
+
+### 12.2 已知限制（本轮未修）
+
+4. **列表分页仍是 OFFSET**：深分页是 O(n²)。1200 条无感，
+   几万条会变慢；根治需要 keyset 分页。
+5. **附件不随备份打包**：备份文件仍不含附件本体，搬机器要手工复制
+   `attachments` 目录。
+6. **前端没有组件级测试**：仓库无 jsdom / testing-library，
+   按钮文案这类断言只能靠实机脚本。
+7. 安装包仍未做代码签名（沿用第一轮结论）。
+
+### 12.3 验证缺口
+
+8. **AI 三家仍没有真实 API Key 的端到端调用证据**（沿用第一轮结论）。
+   本轮修的是"配置能不能存下去、模型能不能拉出来"这条链路，
+   它同样只到单元测试与实机界面为止。
+9. **10 万条时的界面表现**：性能数字全部来自 Rust 侧集成测试；
+   前端渲染 10 万张卡片的情况没测（分页就是为规避它而存在的）。
+
+## 13. 提交记录（第二轮，按整改类别分开）
+
+```
+fix(ai): Provider 默认值收敛到后端唯一来源，并补齐跨端防漂移护栏
+fix(ai): 拆分保存校验与运行校验，解除「空模型无法保存密钥」死锁
+fix(tasks): 列表改为分页加载并提供真实总数，不再硬截 500 条
+fix(search): 输入即刷新并重置分页偏移
+fix(trash): 清空回收站的确认数量改用后端真实总数
+fix(attachments): 永久删除后清理 copied 副本，并新增孤儿扫描清理
+fix(report): 修正 100000 条时的截断误报，并把全量导出从 56s 降到 1.6s
+ci: clippy 门禁去掉豁免，与文档和本地命令完全一致
+security(updater): 签名密码改用 DPAPI 存储，删除明文文件
+test(remediation2): 新增分页/回收站/附件/报告边界/2000 条数据量回归
+docs(work-log): 记录第二轮整改结果
+```
