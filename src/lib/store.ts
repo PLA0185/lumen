@@ -116,12 +116,19 @@ interface AppStore {
   restore: (id: string) => Promise<void>
   purge: (id: string) => Promise<void>
   /**
-   * 按当前筛选条件永久删除回收站里的任务。
+   * 永久删除**第一阶段**：取回"当前筛选命中的精确任务集合"给用户确认。
    *
-   * `expectedCount` 是**确认弹窗里显示给用户的数量**；后端对不上会拒绝执行，
-   * 避免确认之后数据变化导致多删（任务书 §1.4）。
+   * 返回的 `taskIds` 必须原样交给 `purgeAll()`——只传数量是不够的：
+   * 两个不同的集合可以数量相同（A 被恢复、B 被移入且同样命中，count 仍为 1）。
    */
-  purgeAll: (expectedCount?: number) => Promise<void>
+  preparePurge: () => Promise<{ query: TaskQuery; preview: ipc.PurgePreview }>
+  /**
+   * 永久删除**第二阶段**：只删确认过的那些 ID（第三轮收口任务书 §3）。
+   *
+   * 后端会在同一事务里核对"当前命中集合是否仍与 `taskIds` 逐个相同"，
+   * 不一致就整体取消（零任务、零附件被删）并报冲突。
+   */
+  purgeAll: (query: TaskQuery, taskIds: string[]) => Promise<void>
   /**
    * 取一页报告数据（任务 + 已解析的归属名称）。
    *
@@ -321,9 +328,16 @@ export const useApp = create<AppStore>((set, get) => ({
       // 不加这一层就会出现"旧请求比新请求更晚返回，把新结果覆盖掉"。
       if (get().queryGeneration !== generation) return
 
+      // 注意 `fetchProgress` 也是一次 await：**它之后必须再查一次代数**
+      // （第三轮收口任务书 §9）。只在它之前检查会留下窗口：
+      // 检查通过 → fetchProgress 挂起 → 用户切条件且新结果落地 →
+      // 旧 fetchProgress 返回 → 旧 set 覆盖新结果。
+      const progressMap = await fetchProgress(tasks)
+      if (get().queryGeneration !== generation) return
+
       set({
         tasks,
-        progressMap: await fetchProgress(tasks),
+        progressMap,
         totalCount: count.total,
         hasMore: tasks.length < count.total,
         nextOffset: tasks.length,
@@ -380,10 +394,16 @@ export const useApp = create<AppStore>((set, get) => ({
       }
       const seen = new Set(s.tasks.map((t) => t.id))
       const fresh = rows.filter((t) => !seen.has(t.id))
+      // fetchProgress 同样是一次 await：写回前必须**再查一次**代数（收口任务书 §10）
+      const freshProgress = await fetchProgress(fresh)
+      if (get().queryGeneration !== generation) {
+        set({ loadingMore: false })
+        return
+      }
       const tasks = [...s.tasks, ...fresh]
       set({
         tasks,
-        progressMap: { ...s.progressMap, ...(await fetchProgress(fresh)) },
+        progressMap: { ...s.progressMap, ...freshProgress },
         totalCount: total,
         nextOffset: tasks.length,
         // 这一页一条新的都没拿到（并发删除等）就停下，避免无限请求同一页
@@ -534,23 +554,23 @@ export const useApp = create<AppStore>((set, get) => ({
     }
   },
 
-  purgeAll: async (expectedCount) => {
+  preparePurge: async () => {
+    // 与列表同一套条件 + 锁死"只看回收站"：确认数量与删除范围才是同一个集合
+    const query: TaskQuery = { ...buildQuery(get()), deletedOnly: true }
+    const preview = await ipc.preparePurgeDeleted(query)
+    return { query, preview }
+  },
+
+  purgeAll: async (query, taskIds) => {
     try {
-      // 用**与列表同一套条件**删除，并把删除状态锁死为"只看回收站"：
-      // 界面上的确认数量就是这套条件算出来的 totalCount，
-      // 条件不一致就会出现"确认 5 项、实删 1200 项"（任务书 §5 / §1）。
-      // expectedCount 再把这层保护收紧到"确认那一刻的集合"。
-      const r = await ipc.purgeAllDeleted(
-        { ...buildQuery(get()), deletedOnly: true },
-        expectedCount,
-      )
+      const r = await ipc.commitPurgeDeleted(query, taskIds)
       await get().reload()
       void bus.notifyTasksChanged()
       get().pushToast('success', `已永久删除 ${r.purged} 项`)
     } catch (e) {
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
       get().pushToast('error', msg)
-      // 内容已变化的冲突也要刷新，否则界面还停在旧数字上
+      // 冲突意味着"内容已变化"：必须刷新，否则界面还停在旧数字上
       void get().reload()
     }
   },

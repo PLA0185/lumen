@@ -133,10 +133,33 @@ pub fn run() {
             // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.lumen），
             // 而不是安装目录：这样 NSIS 卸载程序的"删除应用数据"选项才能
             // 统一决定是否清除用户数据（§10 卸载后的数据保留/删除选项）。
-            let data_dir = app
+            let default_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|e| format!("无法获取应用数据目录：{e}"))?;
+
+            // ---------------- 隔离 profile（第三轮收口任务书 §24） ----------------
+            //
+            // 破坏性验收脚本必须跑在**隔离的数据目录**上，而不是用户真实的
+            // `%APPDATA%\com.pla0185.lumen`。本项目已经因为脚本在真实库上跑
+            // 误删过一次数据（回收站里 18 条任务被永久删除），所以这条不再是
+            // "建议"而是硬约束：脚本会读 `app_data_paths` 判断当前实例用的是
+            // 哪个目录，不是隔离目录就直接拒绝运行。
+            //
+            // 这里只认环境变量，不接受命令行参数：环境变量必须由启动方显式设置，
+            // 不存在"用户双击图标就意外把数据写到别处"的可能。
+            let data_dir = match std::env::var("LUMEN_TEST_DATA_DIR") {
+                Ok(v) if !v.trim().is_empty() => {
+                    let p = std::path::PathBuf::from(v.trim());
+                    log::warn!(
+                        "已启用隔离 profile（LUMEN_TEST_DATA_DIR）：{} —— 本次运行**不使用**用户真实数据目录 {}",
+                        p.display(),
+                        default_dir.display()
+                    );
+                    p
+                }
+                _ => default_dir,
+            };
 
             log::info!("Lumen 启动，数据目录：{}", data_dir.display());
 
@@ -273,6 +296,8 @@ pub fn run() {
             commands::task_soft_delete,
             commands::task_restore,
             commands::task_purge,
+            commands::task_prepare_purge_deleted,
+            commands::task_commit_purge_deleted,
             commands::task_purge_all_deleted,
             commands::task_bulk,
             commands::task_duplicate,

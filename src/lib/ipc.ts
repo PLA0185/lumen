@@ -17,6 +17,7 @@ import type {
   CreateTaskInput,
   DataPaths,
   ErrorCode,
+  PurgePreview,
   PurgeResult,
   SoftDeleteResult,
   Task,
@@ -25,6 +26,9 @@ import type {
   TodayOverview,
   UpdateTaskInput,
 } from './types'
+
+// 让调用方可以写 `ipc.PurgePreview`（与 `ipc.TaskReportRow` 等保持一致的用法）
+export type { PurgePreview }
 
 /** 命令名常量表。与 Rust `invoke_handler` 中注册的名称必须完全一致。 */
 export const CMD = {
@@ -40,6 +44,8 @@ export const CMD = {
   taskSoftDelete: 'task_soft_delete',
   taskRestore: 'task_restore',
   taskPurge: 'task_purge',
+  taskPreparePurgeDeleted: 'task_prepare_purge_deleted',
+  taskCommitPurgeDeleted: 'task_commit_purge_deleted',
   taskPurgeAllDeleted: 'task_purge_all_deleted',
   taskBulk: 'task_bulk',
   taskDuplicate: 'task_duplicate',
@@ -185,12 +191,31 @@ export const purgeTask = (id: string): Promise<PurgeResult> =>
   call<PurgeResult>(CMD.taskPurge, { id })
 
 /**
- * 按条件永久删除回收站里的任务。
+ * 永久删除**第一阶段**：把"当前筛选命中的精确任务集合"取出来给用户确认。
  *
- * - `query` 就是列表当前用的那套条件：只删符合条件的那部分（看到什么就删什么）；
- * - `expectedCount` 是**确认弹窗里显示给用户的数量**。后端会在同一事务里
- *   重新计数，对不上就整体取消并报冲突——避免"用户看到 100 项、
- *   期间别的窗口又移入 1 项、结果删了 101 项"（任务书 §1.4）。
+ * 第三轮收口任务书 §3 要求两阶段：确认之后必须按**这一份 ID 列表**删除，
+ * 而不是 commit 时重新按 query 查一遍"现在命中的任务"。
+ */
+export const preparePurgeDeleted = (query?: TaskQuery): Promise<PurgePreview> =>
+  call<PurgePreview>(CMD.taskPreparePurgeDeleted, { query: query ?? null })
+
+/**
+ * 永久删除**第二阶段**：只删除确认过的那些 ID。
+ *
+ * 后端会在同一事务里核对"当前命中集合是否仍与 `taskIds` 逐个相同"，
+ * 不一致就整体取消（零任务、零附件被删）。
+ */
+export const commitPurgeDeleted = (
+  query: TaskQuery | undefined,
+  taskIds: string[],
+): Promise<PurgeResult> =>
+  call<PurgeResult>(CMD.taskCommitPurgeDeleted, { query: query ?? null, taskIds })
+
+/**
+ * 按条件永久删除回收站里的任务（**已弃用**：只校验数量、不校验身份集合）。
+ *
+ * 前端一律走 `preparePurgeDeleted` → `commitPurgeDeleted` 两阶段；
+ * 这个封装只留给需要对照的旧调用方。
  */
 export const purgeAllDeleted = (
   query?: TaskQuery,

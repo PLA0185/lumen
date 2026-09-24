@@ -33,12 +33,16 @@ class FakeIpcError extends Error {
 const listTasks = vi.fn()
 const countTasks = vi.fn()
 const purgeAllDeleted = vi.fn()
+const preparePurgeDeleted = vi.fn()
+const commitPurgeDeleted = vi.fn()
 
 vi.mock('./ipc', () => ({
   IpcError: FakeIpcError,
   listTasks: (...args: unknown[]) => listTasks(...args),
   countTasks: (...args: unknown[]) => countTasks(...args),
   purgeAllDeleted: (...args: unknown[]) => purgeAllDeleted(...args),
+  preparePurgeDeleted: (...args: unknown[]) => preparePurgeDeleted(...args),
+  commitPurgeDeleted: (...args: unknown[]) => commitPurgeDeleted(...args),
 }))
 
 const { useApp, PAGE_SIZE, SEARCH_DEBOUNCE_MS } = await import('./store')
@@ -191,21 +195,47 @@ describe('列表分页', () => {
     expect(listTasks).toHaveBeenCalledTimes(1) // 只有 reload 那一次
   })
 
-  it('清空回收站会把当前筛选条件一起传下去（确认范围 = 执行范围）', async () => {
-    purgeAllDeleted.mockResolvedValue({ purged: 5 })
+  it('永久删除是两阶段的：先取精确快照，再按这份 ID 删除', async () => {
+    preparePurgeDeleted.mockResolvedValue({ taskIds: ['a', 'b'], count: 2 })
+    commitPurgeDeleted.mockResolvedValue({ purged: 2 })
     listTasks.mockResolvedValue([])
     countTasks.mockResolvedValue({ total: 0 })
 
     useApp.setState({ view: 'trash', search: '报告' })
-    await useApp.getState().purgeAll()
-
-    expect(purgeAllDeleted).toHaveBeenCalledTimes(1)
-    // 条件必须与界面上算 totalCount 用的那套一致，否则会出现
-    // "弹窗说删 5 项、实际删掉整个回收站"
-    expect(purgeAllDeleted.mock.calls[0]?.[0]).toMatchObject({
+    const { query, preview } = await useApp.getState().preparePurge()
+    expect(preparePurgeDeleted).toHaveBeenCalledTimes(1)
+    // 取快照用的条件必须与界面上算 totalCount 的那套一致，
+    // 否则会出现"弹窗说删 5 项、实际删掉整个回收站"
+    expect(preparePurgeDeleted.mock.calls[0]?.[0]).toMatchObject({
       deletedOnly: true,
       search: '报告',
     })
+    expect(preview.taskIds).toEqual(['a', 'b'])
+
+    await useApp.getState().purgeAll(query, preview.taskIds)
+    // commit 必须原样带上**确认时的那份 ID**——只传数量是不够的：
+    // A 被恢复、B 被移入且同样命中时数量仍然是 1（收口任务书 §3）
+    expect(commitPurgeDeleted).toHaveBeenCalledTimes(1)
+    expect(commitPurgeDeleted.mock.calls[0]?.[1]).toEqual(['a', 'b'])
+    expect(commitPurgeDeleted.mock.calls[0]?.[0]).toMatchObject({ deletedOnly: true })
+  })
+
+  it('commit 冲突时给出提示并刷新列表（不做乐观删除）', async () => {
+    const { IpcError } = await import('./ipc')
+    commitPurgeDeleted.mockRejectedValueOnce(
+      new (IpcError as unknown as new (c: string, m: string) => Error)(
+        'conflict',
+        '回收站内容已发生变化，请重新确认。',
+      ),
+    )
+    listTasks.mockResolvedValue([])
+    countTasks.mockResolvedValue({ total: 0 })
+
+    await useApp.getState().purgeAll({ deletedOnly: true }, ['a'])
+
+    const s = useApp.getState()
+    expect(s.toasts.at(-1)?.kind).toBe('error')
+    expect(s.tasks).toEqual([]) // 列表被刷新过（reload 拿到空结果）
   })
 
   it('筛选条件变化时 offset 归零、列表被整体替换', async () => {

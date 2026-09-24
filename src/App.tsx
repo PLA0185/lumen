@@ -79,6 +79,7 @@ export default function App() {
     remove,
     restore,
     purge,
+    preparePurge,
     purgeAll,
     loadMore,
     totalCount,
@@ -99,6 +100,14 @@ export default function App() {
   const [exportProgress, setExportProgress] = useState<{ loaded: number; total: number } | null>(
     null,
   )
+  /**
+   * 导出取消标志（收口任务书 §20 / §21）。
+   *
+   * 两种来源：用户点「取消导出」，或导出期间数据发生变化
+   * （`bus.onTasksChanged`）——后者继续读下去会得到一份"前半段是旧数据、
+   * 后半段是新数据"的报告，必须中止而不是交付一份自相矛盾的文档。
+   */
+  const cancelExportRef = useRef(false)
 
   // --------------------- 悬浮窗开关（顶栏一键） ---------------------
   /**
@@ -355,7 +364,12 @@ export default function App() {
   const doExportPdf = useCallback(async () => {
     setExporting(true)
     setExportProgress(null)
+    cancelExportRef.current = false
     let handle: Awaited<ReturnType<typeof buildPrintDocument>> | null = null
+    // 导出期间数据一变就取消：否则会交付一份"前半旧、后半新"的报告（收口任务书 §21）
+    const offTasksChanged = bus.onTasksChanged(() => {
+      cancelExportRef.current = true
+    })
     try {
       const { save } = await import('@tauri-apps/plugin-dialog')
       const stamp = new Date().toISOString().slice(0, 10)
@@ -373,10 +387,16 @@ export default function App() {
         scopeTitle: meta.title,
         filterNote: search.trim() ? `搜索「${search.trim()}」` : undefined,
         onProgress: (p) => setExportProgress(p),
+        // 真正的取消：每次取下一页、写下一行之前都会问一次
+        isCancelled: () => cancelExportRef.current,
       })
 
       if (handle.rows === 0) {
         pushToast('info', '当前范围内没有任务，未生成 PDF')
+        return
+      }
+      if (cancelExportRef.current) {
+        pushToast('info', `导出已取消（已生成 ${handle.rows} 条，未写出文件）`)
         return
       }
 
@@ -398,6 +418,7 @@ export default function App() {
     } catch (e) {
       pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     } finally {
+      offTasksChanged()
       // 无论成败都要恢复界面：留着 data-print 会让主界面一直不可见
       delete document.body.dataset.print
       handle?.dispose()
@@ -514,6 +535,24 @@ export default function App() {
               )}
             </button>
 
+            {/*
+              「取消导出」必须是**兄弟节点**而不是套在上面的按钮里：
+              button 里再放 button 是非法 HTML，浏览器会把它拆出来。
+              点了只置标志位，真正的停下发生在下一行/下一页之前（收口任务书 §20）。
+            */}
+            {exporting && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => {
+                  cancelExportRef.current = true
+                }}
+                title="停止继续读取数据；已经生成的部分会被丢弃，不会写出文件"
+              >
+                取消导出
+              </button>
+            )}
+
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -560,7 +599,22 @@ export default function App() {
                   // 是为了在有筛选时**明确告诉用户还有多少会保留**——
                   // 否则用户会以为"永久删除 5 项"就是把回收站清空了。
                   void (async () => {
-                    const n = totalCount
+                    // 两阶段（第三轮收口任务书 §3）：先取"确认那一刻命中的精确任务集合"，
+                    // 用户确认后**只删这一份 ID 列表**。只传数量是不够的——
+                    // A 被恢复、B 被移入且同样命中时数量仍然是 1，会造成"确认删 A、实际删 B"。
+                    let snapshot: Awaited<ReturnType<typeof preparePurge>>
+                    try {
+                      snapshot = await preparePurge()
+                    } catch (e) {
+                      pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
+                      return
+                    }
+                    const n = snapshot.preview.count
+                    if (n === 0) {
+                      pushToast('info', '当前筛选结果里没有可删除的任务')
+                      return
+                    }
+
                     let trashAll = n
                     try {
                       trashAll = (await ipc.countTasks({ deletedOnly: true })).total
@@ -580,9 +634,7 @@ export default function App() {
                         `将永久删除 ${n} 项任务。\n此操作不可撤销。${filteredNote}${loadedNote}`,
                       )
                     ) {
-                      // 把"确认时看到的数量"一起传下去：后端会在同一事务里重新计数，
-                      // 对不上就整体取消，避免期间别处改动造成多删（任务书 §1.4）。
-                      void purgeAll(n)
+                      await purgeAll(snapshot.query, snapshot.preview.taskIds)
                     }
                   })()
                 }}

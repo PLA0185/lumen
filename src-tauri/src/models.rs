@@ -360,6 +360,20 @@ pub struct SoftDeleteResult {
     pub movable_to_trash: bool,
 }
 
+/// 永久删除前的快照预览（第三轮收口任务书 §3）。
+///
+/// 为什么把它交给调用方持有、而不是在后端存一份 `operationId → IDs`：
+/// 进程重启、窗口刷新都不会让快照失效，也少一处可能泄漏的服务端状态。
+/// `commit` 时把 `task_ids` 原样传回，后端核对"当前命中集合是否仍是这一批"。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PurgePreview {
+    /// 当前筛选条件下命中的**精确**任务 ID（顺序即列表顺序）
+    pub task_ids: Vec<String>,
+    /// 数量（= task_ids.len()，单独给出是为了界面不必自己数）
+    pub count: i64,
+}
+
 /// 今日概览（托盘菜单与悬浮窗使用同一份数据，避免两处口径不一致）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -241,6 +241,18 @@ export interface PurgeResult {
 }
 
 /**
+ * 永久删除前的快照（第三轮收口任务书 §3）。
+ *
+ * `taskIds` 是"确认那一刻命中的**精确**任务集合"。用户点确认后必须把这份
+ * ID 列表原样交给 commit —— 只校验数量是不够的：两个不同的集合可以数量相同
+ * （A 被恢复、B 被移入且同样命中筛选，count 仍然是 1）。
+ */
+export interface PurgePreview {
+  taskIds: string[]
+  count: number
+}
+
+/**
  * 符合条件的任务总数（整改任务书 §10）。
  *
  * 与 `task_list` 共用同一套筛选条件，所以它就是"这个视图一共有多少条"。

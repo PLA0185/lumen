@@ -23,8 +23,8 @@ use std::collections::HashSet;
 
 use crate::attachments::{cleanup_orphans_impl, delete_copied_files};
 use crate::commands::{
-    count_tasks_impl, list_tasks_impl, purge_all_deleted_impl, purge_task_impl, report_all_impl,
-    AppState, REPORT_MAX_ROWS,
+    commit_purge_impl, count_tasks_impl, list_tasks_impl, prepare_purge_impl,
+    purge_all_deleted_impl, purge_task_impl, report_all_impl, AppState, REPORT_MAX_ROWS,
 };
 use crate::db::Db;
 use crate::models::TaskQuery;
@@ -556,6 +556,102 @@ async fn purge_all_refuses_when_the_set_changed_after_confirmation() {
     // 用新的数量重新确认后可以正常执行
     let r = purge_all_deleted_impl(db, None, Some(11)).await.unwrap();
     assert_eq!(r.purged, 11);
+    assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
+
+    cleanup(dir);
+}
+
+/// **强制回归（收口任务书 §7 / §8）**：数量相同但**身份集合不同**时，commit 必须拒绝。
+///
+/// 这是上一轮"只校验数量"方案的致命盲区：A 被恢复、B 被移入且同样命中筛选，
+/// count 前后都是 1（或都是 3），数量校验通过，用户确认删 A、后端却删掉 B。
+#[tokio::test]
+async fn commit_purge_refuses_when_count_is_same_but_identity_set_changed() {
+    let (state, dir) = setup("purgeidentity").await;
+    let db = &state.db;
+
+    // 回收站里 3 条：A、B、C
+    seed_tasks(db, 3, "old", "todo", true, 0.0, None).await;
+    let preview = prepare_purge_impl(db, None).await.unwrap();
+    assert_eq!(preview.count, 3);
+    assert_eq!(preview.task_ids.len(), 3);
+
+    // 确认之后：把 A 恢复出去，再换一条同样命中筛选的新任务进来 —— **数量仍是 3**
+    let restored = preview.task_ids[0].clone();
+    sqlx::query("UPDATE tasks SET deleted_at = NULL WHERE id = ?1")
+        .bind(&restored)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    seed_tasks(db, 1, "swap", "todo", true, 0.0, None).await;
+
+    let now = count_tasks_impl(db, &q_trash()).await.unwrap();
+    assert_eq!(now, 3, "前置条件：数量必须没变，否则测不到身份校验这一层");
+
+    let err = commit_purge_impl(db, None, preview.task_ids.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        err.message.contains("已发生变化"),
+        "必须报冲突，实际：{}",
+        err.message
+    );
+    assert_eq!(
+        count_tasks_impl(db, &q_trash()).await.unwrap(),
+        3,
+        "被拒绝的操作不能删掉任何任务（零删除）"
+    );
+    // 用户确认要删的那一条也必须还在（它是恢复出去的那条，现在不在回收站里）
+    let still: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id = ?1")
+        .bind(&restored)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(still, 1, "确认集合里的任务不能被删");
+
+    // 重新 prepare（拿到新的精确集合）之后可以正常执行
+    let fresh = prepare_purge_impl(db, None).await.unwrap();
+    assert_eq!(fresh.count, 3);
+    let r = commit_purge_impl(db, None, fresh.task_ids).await.unwrap();
+    assert_eq!(r.purged, 3);
+    assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
+
+    cleanup(dir);
+}
+
+/// **强制回归（收口任务书 §5 / §7）**：只删确认过的那批 ID，
+/// 且附件文件与任务记录来自同一批 ID —— 集合被换掉时**连附件也不能删**。
+#[tokio::test]
+async fn commit_purge_deletes_exactly_the_confirmed_ids_and_their_copies() {
+    let (state, dir) = setup("purgeexact").await;
+    let db = &state.db;
+
+    seed_tasks(db, 2, "keep", "todo", true, 0.0, None).await;
+    let preview = prepare_purge_impl(db, None).await.unwrap();
+    assert_eq!(preview.count, 2);
+
+    // 给其中一条挂一个 copied 附件（受控目录里的真实文件）
+    let target = preview.task_ids[0].clone();
+    let (_, copied) = make_copied_attachment(db, &target, "report.pdf").await;
+    assert!(copied.exists(), "前置条件：副本文件必须真的存在");
+
+    // 确认之后又有新任务进回收站 → 集合变了 → 连附件都不能碰
+    seed_tasks(db, 1, "late", "todo", true, 0.0, None).await;
+    let err = commit_purge_impl(db, None, preview.task_ids.clone())
+        .await
+        .unwrap_err();
+    assert!(err.message.contains("已发生变化"), "实际：{}", err.message);
+    assert!(
+        copied.exists(),
+        "集合变化被拒绝时，附件文件必须原封不动（收口任务书 §5）"
+    );
+    assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 3);
+
+    // 重新确认后执行：这批 ID 与它们的副本一起被清掉
+    let fresh = prepare_purge_impl(db, None).await.unwrap();
+    let r = commit_purge_impl(db, None, fresh.task_ids).await.unwrap();
+    assert_eq!(r.purged, 3);
+    assert!(!copied.exists(), "确认过的任务的副本应随记录一起清理");
     assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
 
     cleanup(dir);

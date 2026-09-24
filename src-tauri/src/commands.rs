@@ -12,8 +12,8 @@ use tauri::State;
 use crate::db::{to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    BulkActionInput, CreateTaskInput, PurgeResult, SoftDeleteResult, Task, TaskCount, TaskQuery,
-    TodayOverview, UpdateTaskInput,
+    BulkActionInput, CreateTaskInput, PurgePreview, PurgeResult, SoftDeleteResult, Task, TaskCount,
+    TaskQuery, TodayOverview, UpdateTaskInput,
 };
 
 /// 标题长度上限（§10 校验所有输入）
@@ -688,33 +688,183 @@ pub async fn purge_task_impl(db: &Db, id: &str) -> AppResult<PurgeResult> {
     Ok(PurgeResult { purged: 1 })
 }
 
-/// 按条件永久删除回收站里的任务。
+/// 永久删除回收站的**第一阶段**：把"当前筛选命中的精确任务集合"取出来给用户确认。
 ///
-/// ## 产品语义（第三轮明确，见任务书 §1.2 方案 B）
+/// ## 为什么需要两阶段（第三轮收口任务书 §2 / §3）
 ///
-/// **按钮表示"删除当前筛选结果"**：确认范围 = 当前筛选条件下的集合，
-/// 实际删除 = 同一个集合。四者用同一套条件：
+/// 上一轮用的是"确认时数量 == 执行时数量"来防止并发多删。但**数量相等不代表集合相同**：
 ///
 /// ```text
-/// task_count(query) ──┐
-/// task_list(query)  ──┼── 都走 apply_task_filters
-/// DELETE 的范围      ──┤
-/// 附件清理的范围      ──┘
+/// 确认时集合 = {A}，count = 1
+/// 执行前：A 被恢复、B 被移入回收站，且 B 同样命中筛选
+/// 执行时集合 = {B}，count 仍然是 1
 /// ```
 ///
-/// 为什么不采用"永远清空整个回收站"（方案 A）：那个语义需要按钮上写
-/// "整个回收站 128 项"，而列表里只显示搜索结果 3 条——用户看到的和按钮说的
-/// 是两回事，更容易误操作。这里选"看到什么就删什么"，并用弹窗把两个数字
-/// 都写出来（"只删除筛选结果里的 N 项；回收站共 M 项，其余会保留"）。
+/// 数量校验通过，用户确认删 A、后端却删掉 B。所以必须把**身份集合**带下去。
 ///
-/// ## 并发一致性（任务书 §1.4）
+/// 这里不做服务端会话状态（不存 operationId → IDs 的映射），而是把 IDs 交给调用方持有、
+/// commit 时原样传回：这样进程重启、窗口刷新都不会让快照失效，也少一处可能泄漏的状态。
+#[tauri::command]
+pub async fn task_prepare_purge_deleted(
+    state: State<'_, AppState>,
+    query: Option<TaskQuery>,
+) -> AppResult<PurgePreview> {
+    prepare_purge_impl(&state.db, query).await
+}
+
+/// 收集"当前条件下命中的精确任务集合"。
+pub async fn prepare_purge_impl(db: &Db, query: Option<TaskQuery>) -> AppResult<PurgePreview> {
+    let q = purge_query(query);
+    let task_ids = matching_task_ids(db, &q, PURGE_SNAPSHOT_MAX).await?;
+    Ok(PurgePreview {
+        count: task_ids.len() as i64,
+        task_ids,
+    })
+}
+
+/// 永久删除回收站的**第二阶段**：只删除第一阶段确认过的那些任务。
 ///
-/// 即使范围相同，"用户看到 100 项 → 另一个窗口又移入 1 项 → 用户点确认"
-/// 也会变成删 101 项。因此调用方把**确认时的数量**一起传下来，
-/// 后端在同一事务里重新计数：对不上就整体取消并如实告知，
-/// 而不是静默多删。
+/// 顺序严格按收口任务书 §5 / §6：
 ///
-/// 附件仍按第二轮 §6.4 的顺序处理：事务前取路径 → 删除并提交 → 再删文件。
+/// ```text
+/// BEGIN
+///   1. 重新取"当前命中集合"，与确认时的 IDs 比对 —— 不一致就整体回滚（零删除）
+///   2. 基于**同一批 task_ids** 查 copied 附件路径（同一事务快照）
+///   3. 只 DELETE 这批 task_ids
+/// COMMIT
+///   4. 提交之后才删文件（失败只记日志，不回滚已提交的删除）
+/// ```
+///
+/// 注意第 3 步：删除用的一定是**确认时的 IDs**，而不是"commit 时重新按 query 查出来的 IDs"——
+/// 后者正是 §3 明令禁止的写法。
+#[tauri::command]
+pub async fn task_commit_purge_deleted(
+    state: State<'_, AppState>,
+    query: Option<TaskQuery>,
+    task_ids: Vec<String>,
+) -> AppResult<PurgeResult> {
+    commit_purge_impl(&state.db, query, task_ids).await
+}
+
+/// 把调用方传的条件规范成"回收站 + 不分页"。
+fn purge_query(query: Option<TaskQuery>) -> TaskQuery {
+    let mut q = query.unwrap_or_default();
+    // **强制**只看回收站：无论调用方传了什么条件，这条路径都绝不允许碰到未删除的任务
+    // （`deleted_only` 在 `apply_task_filters` 里优先于 `include_deleted`）。
+    q.deleted_only = true;
+    q.limit = None;
+    q.offset = None;
+    q.sort_by = q.sort_by.or_else(|| Some("manual".into()));
+    q
+}
+
+/// 一次 purge 快照最多容纳多少条（防止有人对着几十万条点确认把内存打满）。
+pub const PURGE_SNAPSHOT_MAX: i64 = 200_000;
+
+/// 单批 SQL 里绑多少个 id。SQLite 默认变量上限是 999，
+/// 而一次删除可能涉及成千上万个 id，所以读写都要分批，且**在同一事务内**。
+const PURGE_ID_BATCH: usize = 500;
+
+/// 取当前条件命中的精确任务 ID 集合（顺序由排序决定，稳定）。
+async fn matching_task_ids(db: &Db, query: &TaskQuery, limit: i64) -> AppResult<Vec<String>> {
+    let mut b = QueryBuilder::<Sqlite>::new("SELECT id FROM tasks WHERE 1 = 1");
+    apply_task_filters(&mut b, query)?;
+    push_task_order(&mut b, query)?;
+    b.push(" LIMIT ").push_bind(limit);
+    let rows: Vec<(String,)> = b.build_query_as().fetch_all(db.pool()).await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+/// 在事务里按同一批 id 取 copied 附件路径（分批查询，避免超变量上限）。
+async fn copied_paths_of_ids_tx(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    ids: &[String],
+) -> AppResult<Vec<String>> {
+    let mut out = Vec::new();
+    for chunk in ids.chunks(PURGE_ID_BATCH) {
+        let mut b = QueryBuilder::<Sqlite>::new(
+            "SELECT stored_path FROM attachments
+             WHERE storage_mode = 'copied' AND stored_path IS NOT NULL AND task_id IN (",
+        );
+        let mut sep = b.separated(", ");
+        for id in chunk {
+            sep.push_bind(id.clone());
+        }
+        sep.push_unseparated(")");
+        let rows: Vec<(String,)> = b.build_query_as().fetch_all(&mut **tx).await?;
+        out.extend(rows.into_iter().map(|(p,)| p));
+    }
+    Ok(out)
+}
+
+/// 永久删除的第二阶段实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn commit_purge_impl(
+    db: &Db,
+    query: Option<TaskQuery>,
+    task_ids: Vec<String>,
+) -> AppResult<PurgeResult> {
+    let q = purge_query(query);
+
+    // 事务外先做一次便宜的快速失败：集合里已经有不存在的 id 就直接拒绝，
+    // 免得白白开事务。
+    let mut tx = db.pool().begin().await?;
+
+    // 1) 当前命中集合必须与确认时**逐个 id 相同**
+    let current = {
+        let mut b = QueryBuilder::<Sqlite>::new("SELECT id FROM tasks WHERE 1 = 1");
+        apply_task_filters(&mut b, &q)?;
+        push_task_order(&mut b, &q)?;
+        b.push(" LIMIT ").push_bind(PURGE_SNAPSHOT_MAX);
+        let rows: Vec<(String,)> = b.build_query_as().fetch_all(&mut *tx).await?;
+        rows.into_iter().map(|(id,)| id).collect::<Vec<String>>()
+    };
+
+    if current != task_ids {
+        tx.rollback().await?;
+        // 刻意把两边的数量与差异说清楚：这类冲突几乎都是"别处刚动过回收站"
+        let missing = task_ids.iter().filter(|id| !current.contains(id)).count();
+        let added = current.iter().filter(|id| !task_ids.contains(id)).count();
+        return Err(AppError::conflict(format!(
+            "回收站内容已发生变化，请重新确认。（确认时 {} 项，现在 {} 项；其中 {} 项已不在待删集合里，另有 {} 项新命中）",
+            task_ids.len(),
+            current.len(),
+            missing,
+            added
+        ))
+        .with_hint(
+            "为避免删掉你没有确认过的任务，这次操作已取消，未删除任何任务与附件。请重新查看回收站后再确认。",
+        ));
+    }
+
+    // 2) 基于**同一批 id**、在**同一事务**里取附件路径（收口任务书 §5）
+    let copies = copied_paths_of_ids_tx(&mut tx, &task_ids).await?;
+
+    // 3) 只删这批 id（分批，仍在同一事务里）
+    let mut n = 0i64;
+    for chunk in task_ids.chunks(PURGE_ID_BATCH) {
+        let mut b = QueryBuilder::<Sqlite>::new("DELETE FROM tasks WHERE id IN (");
+        let mut sep = b.separated(", ");
+        for id in chunk {
+            sep.push_bind(id.clone());
+        }
+        sep.push_unseparated(")");
+        n += b.build().execute(&mut *tx).await?.rows_affected() as i64;
+    }
+
+    tx.commit().await?;
+
+    // 4) 提交之后才动文件（收口任务书 §6）：失败只记日志，绝不回滚已提交的删除
+    let (removed, failed) = crate::attachments::delete_copied_files(db.data_dir(), &copies);
+    if removed + failed > 0 {
+        log::info!("永久删除后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
+    }
+    Ok(PurgeResult { purged: n })
+}
+
+/// 按条件永久删除回收站里的任务（**已弃用**：只校验数量、不校验身份集合）。
+///
+/// 保留它只是因为集成测试还在用它做对照；前端一律走
+/// `task_prepare_purge_deleted` → `task_commit_purge_deleted` 两阶段。
 #[tauri::command]
 pub async fn task_purge_all_deleted(
     state: State<'_, AppState>,
@@ -730,14 +880,7 @@ pub async fn purge_all_deleted_impl(
     query: Option<TaskQuery>,
     expected_count: Option<i64>,
 ) -> AppResult<PurgeResult> {
-    // **强制**只看回收站：无论调用方传了什么条件，这条命令都绝不允许碰到
-    // 未删除的任务（`deleted_only` 在 `apply_task_filters` 里优先于
-    // `include_deleted`，覆盖调用方的值是安全的）。
-    let mut q = query.unwrap_or_default();
-    q.deleted_only = true;
-    // 删除是"整个集合"，分页参数一律忽略
-    q.limit = None;
-    q.offset = None;
+    let q = purge_query(query);
 
     // 1) 事务前取出**符合条件**的那些任务的副本路径
     let copies = copied_paths_of_matching_tasks(db, &q).await?;
