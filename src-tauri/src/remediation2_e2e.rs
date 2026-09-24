@@ -21,7 +21,7 @@
 
 use std::collections::HashSet;
 
-use crate::attachments::{cleanup_orphans_impl, delete_copied_files};
+use crate::attachments::{attachment_remove_impl, cleanup_orphans_impl, delete_copied_files};
 use crate::commands::{
     commit_purge_impl, count_tasks_impl, list_tasks_impl, prepare_purge_impl,
     purge_all_deleted_impl, purge_task_impl, report_all_impl, AppState, REPORT_MAX_ROWS,
@@ -653,6 +653,206 @@ async fn commit_purge_deletes_exactly_the_confirmed_ids_and_their_copies() {
     assert_eq!(r.purged, 3);
     assert!(!copied.exists(), "确认过的任务的副本应随记录一起清理");
     assert_eq!(count_tasks_impl(db, &q_trash()).await.unwrap(), 0);
+
+    cleanup(dir);
+}
+
+/// **强制回归（最终收口任务书 §4）**：单条永久删除的"检查 → 删除"之间存在恢复竞态。
+///
+/// 旧实现是 `SELECT` 看 deleted_at 再 `DELETE WHERE id = ?`，两步之间有人恢复任务时，
+/// 任务明明已经回到正常列表却仍被永久删除。
+///
+/// 这里直接验证"条件删除"这条不变量：**只要恢复发生在检查之后，
+/// `DELETE ... AND deleted_at IS NOT NULL` 就必须一行都不匹配**。
+#[tokio::test]
+async fn single_purge_refuses_task_restored_after_initial_check() {
+    let (state, dir) = setup("singlepurgerace").await;
+    let db = &state.db;
+
+    let id = "race-task";
+    seed_tasks_single(db, id, "todo", true).await;
+    let (_, copied) = make_copied_attachment(db, id, "race.pdf").await;
+    assert!(copied.exists());
+
+    // 第一步：检查（此时它确实在回收站）
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT deleted_at FROM tasks WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(db.pool())
+            .await
+            .unwrap();
+    assert!(
+        matches!(row, Some((Some(_),))),
+        "前置条件：任务此刻必须在回收站里"
+    );
+
+    // 第二步：另一个窗口把它恢复成正常任务（这一步正好插在检查与删除之间）
+    sqlx::query("UPDATE tasks SET deleted_at = NULL WHERE id = ?1")
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    // 第三步：条件删除 —— 必须一行都不匹配，这就是挡住竞态的那道闸
+    let n = sqlx::query("DELETE FROM tasks WHERE id = ?1 AND deleted_at IS NOT NULL")
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .unwrap()
+        .rows_affected();
+    assert_eq!(n, 0, "已恢复的任务绝不能被条件删除命中");
+
+    // 任务本身、它的状态、它的附件文件都必须完好
+    let still: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id = ?1")
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(still, 1, "任务必须还在");
+    let deleted_at: Option<String> =
+        sqlx::query_scalar("SELECT deleted_at FROM tasks WHERE id = ?1")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert!(deleted_at.is_none(), "任务必须仍是已恢复状态");
+    assert!(copied.exists(), "被拒绝的操作不能删掉附件副本");
+
+    // 再走一遍真实入口：已恢复的任务调用 purge 必须直接报冲突
+    let err = purge_task_impl(db, id).await.unwrap_err();
+    assert!(
+        err.message.contains("回收站") || err.message.contains("已恢复"),
+        "必须明确拒绝，实际：{}",
+        err.message
+    );
+    assert!(copied.exists(), "冲突路径同样不能碰文件");
+
+    cleanup(dir);
+}
+
+/// **强制回归（最终收口任务书 §7）**：旧的危险批量删除不得再作为 IPC 暴露。
+///
+/// 上一轮只是把它标注成"已弃用"，但它仍注册在 `generate_handler` 里、
+/// 前端也还留着命令常量 —— 任何代码依旧能 invoke 到那条旧路径。
+/// 行为测试覆盖不到"接口还在不在"，所以这里直接对源码文本断言。
+#[test]
+fn dangerous_bulk_purge_command_is_not_exposed_anymore() {
+    let lib_src = include_str!("lib.rs");
+    assert!(
+        !lib_src.contains("task_purge_all_deleted"),
+        "task_purge_all_deleted 必须从 generate_handler 中移除"
+    );
+    let ipc_src = include_str!("../../src/lib/ipc.ts");
+    assert!(
+        !ipc_src.contains("task_purge_all_deleted"),
+        "前端 CMD 常量与 wrapper 不得再暴露旧命令"
+    );
+    // 相反方向也要守住：安全的两阶段命令必须在
+    assert!(
+        lib_src.contains("task_prepare_purge_deleted")
+            && lib_src.contains("task_commit_purge_deleted"),
+        "两阶段的安全路径必须仍然注册着"
+    );
+}
+
+/// **强制回归（最终收口任务书 §23~§25）**：附件删除必须"先删记录、后删文件"。
+///
+/// 反过来做的话，一旦删文件成功而 DB 删除失败，就会留下
+/// **"活记录指向一个不存在的文件"**：用户看到附件还在、点开却打不开，
+/// 而且没有任何机制能自愈。三条用例分别覆盖：
+/// 正常路径 / DB 删除失败 / 引用模式绝不能碰用户原件。
+#[tokio::test]
+async fn attachment_remove_deletes_the_record_before_the_copied_file() {
+    let (state, dir) = setup("attachremove").await;
+    let db = &state.db;
+
+    seed_tasks_single(db, "ar-1", "todo", false).await;
+    let (aid, copied) = make_copied_attachment(db, "ar-1", "x.pdf").await;
+    assert!(copied.exists(), "前置条件：副本文件存在");
+
+    let removed = attachment_remove_impl(db, &aid).await.unwrap();
+    assert!(removed, "copied 模式应当报告已删除副本");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE id = ?1")
+            .bind(&aid)
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        0,
+        "记录必须已删除"
+    );
+    assert!(!copied.exists(), "记录删掉之后副本也应清理");
+
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn attachment_remove_keeps_the_file_when_the_db_delete_fails() {
+    let (state, dir) = setup("attachdbfail").await;
+    let db = &state.db;
+
+    seed_tasks_single(db, "ar-2", "todo", false).await;
+    let (aid, copied) = make_copied_attachment(db, "ar-2", "y.pdf").await;
+    assert!(copied.exists());
+
+    // 用触发器让 DELETE 必然失败 —— 精确模拟"读得到记录、但删除失败"这一步，
+    // 而不是"读都读不到"（那测不到顺序这条不变量）。
+    sqlx::query(
+        "CREATE TRIGGER zz_block_attachment_delete BEFORE DELETE ON attachments
+         BEGIN SELECT RAISE(ABORT, 'blocked by test'); END;",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let err = attachment_remove_impl(db, &aid).await;
+    assert!(err.is_err(), "DB 删除失败时必须向上返回错误，不能静默成功");
+
+    assert!(
+        copied.exists(),
+        "DB 删除失败时绝不能删文件——旧实现（先删文件）正是在这里留下「活记录指向不存在的文件」"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE id = ?1")
+            .bind(&aid)
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        1,
+        "记录仍在（失败被如实上报，没有半途改状态）"
+    );
+
+    sqlx::query("DROP TRIGGER zz_block_attachment_delete")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    cleanup(dir);
+}
+
+#[tokio::test]
+async fn attachment_remove_never_touches_the_referenced_original() {
+    let (state, dir) = setup("attachref").await;
+    let db = &state.db;
+
+    seed_tasks_single(db, "ar-3", "todo", false).await;
+    // 用户自己的文件，放在数据目录之外
+    let outside = db.data_dir().join("..").join("zz-user-original.txt");
+    std::fs::write(&outside, b"user data").unwrap();
+    let aid = make_reference_attachment(db, "ar-3", &outside).await;
+
+    let removed = attachment_remove_impl(db, &aid).await.unwrap();
+    assert!(!removed, "引用模式不涉及受控副本，应报告 false");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE id = ?1")
+            .bind(&aid)
+            .fetch_one(db.pool())
+            .await
+            .unwrap(),
+        0,
+        "记录必须删除"
+    );
+    assert!(outside.exists(), "引用模式绝不能删除用户的原文件");
+    let _ = std::fs::remove_file(&outside);
 
     cleanup(dir);
 }

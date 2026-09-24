@@ -656,31 +656,75 @@ pub async fn task_restore(state: State<'_, AppState>, id: String) -> AppResult<T
 ///
 /// 附件（整改任务书 §6）：`attachments.task_id` 是 `ON DELETE CASCADE`，
 /// 记录会随任务一起消失；但 copied 模式的**实体文件**不会自己走，
-/// 所以这里在事务前取出路径、提交后再删文件（顺序理由见 `attachments` 模块注释）。
+/// 所以先在同一事务里取出路径、提交后再删文件（顺序理由见 `purge_task_impl`）。
 #[tauri::command]
 pub async fn task_purge(state: State<'_, AppState>, id: String) -> AppResult<PurgeResult> {
     purge_task_impl(&state.db, &id).await
 }
 
 /// 单个永久删除的实现（与 Tauri 解耦，便于集成测试直接调用）。
+///
+/// ## 为什么"检查"和"删除"必须在同一个原子条件里（最终收口任务书 §2/§3）
+///
+/// 旧写法是：先 `SELECT` 看 `deleted_at` 是不是 NULL，再 `DELETE FROM tasks WHERE id = ?`。
+/// 两步之间有一个**真实的竞态窗口**：
+///
+/// ```text
+/// 窗口 1：查到 A 在回收站
+/// 窗口 2：把 A 恢复成正常任务
+/// 窗口 1：继续 DELETE id = A     ← A 明明已经被恢复，却仍被永久删除
+/// ```
+///
+/// 现在把"仍在回收站"写进 DELETE 的 WHERE 里（条件删除），并检查 `rows_affected`：
+/// 只要期间有人恢复过它，`rows_affected` 就是 0，操作整体取消。
+/// 副本路径改在**同一事务内、同一批 ID** 上取，避免"文件集合 ≠ 记录集合"。
 pub async fn purge_task_impl(db: &Db, id: &str) -> AppResult<PurgeResult> {
-    let t = get_task_row(db, id).await?;
-    if t.deleted_at.is_none() {
+    let mut tx = db.pool().begin().await?;
+
+    // 1) 事务内确认任务存在且确实在回收站（这一条读到的状态后面会被 WHERE 再验一次）
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT deleted_at FROM tasks WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match row {
+        None => {
+            tx.rollback().await?;
+            return Err(AppError::not_found("任务", id).with_hint("它可能已经被永久删除"));
+        }
+        Some((None,)) => {
+            tx.rollback().await?;
+            return Err(
+                AppError::conflict("只能永久删除回收站中的任务").with_hint("请先将其移入回收站")
+            );
+        }
+        Some((Some(_),)) => {}
+    }
+
+    // 2) 同一事务里取副本路径（同一批 id）
+    let copies = crate::attachments::copied_paths_of_task_tx(&mut tx, id).await?;
+
+    // 3) **条件删除**：把"仍在回收站"作为原子条件。
+    //    期间若有人恢复了这个任务，rows_affected 会是 0 —— 此时必须整体取消，
+    //    绝不删文件，也绝不返回成功。
+    let n = sqlx::query("DELETE FROM tasks WHERE id = ?1 AND deleted_at IS NOT NULL")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+    if n != 1 {
+        tx.rollback().await?;
         return Err(
-            AppError::conflict("只能永久删除回收站中的任务").with_hint("请先将其移入回收站")
+            AppError::conflict("这个任务刚刚被恢复或已不存在，永久删除已取消").with_hint(
+                "为避免删掉你已经恢复的任务，本次操作没有删除任何任务与附件。请刷新后重试。",
+            ),
         );
     }
 
-    // 1) 事务前取出要清理的副本路径
-    let copies = crate::attachments::copied_paths_of_task(db, id).await?;
+    tx.commit().await?;
 
-    // 2) 删除任务（附件记录随 CASCADE 一起删除）
-    sqlx::query("DELETE FROM tasks WHERE id = ?1")
-        .bind(id)
-        .execute(db.pool())
-        .await?;
-
-    // 3) 提交之后再删文件：失败只记日志，不回滚已经完成的永久删除
+    // 4) 提交之后再删文件：失败只记日志，不回滚已经完成的永久删除
     let (removed, failed) = crate::attachments::delete_copied_files(db.data_dir(), &copies);
     if removed + failed > 0 {
         log::info!("永久删除任务后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
@@ -861,20 +905,19 @@ pub async fn commit_purge_impl(
     Ok(PurgeResult { purged: n })
 }
 
-/// 按条件永久删除回收站里的任务（**已弃用**：只校验数量、不校验身份集合）。
+/// 按条件永久删除回收站里的任务（**只校验数量的旧实现，仅用于测试对照**）。
 ///
-/// 保留它只是因为集成测试还在用它做对照；前端一律走
-/// `task_prepare_purge_deleted` → `task_commit_purge_deleted` 两阶段。
-#[tauri::command]
-pub async fn task_purge_all_deleted(
-    state: State<'_, AppState>,
-    query: Option<TaskQuery>,
-    expected_count: Option<i64>,
-) -> AppResult<PurgeResult> {
-    purge_all_deleted_impl(&state.db, query, expected_count).await
-}
-
-/// 按条件永久删除的实现（与 Tauri 解耦，便于集成测试直接调用）。
+/// ## 为什么它不再是 IPC 命令（最终收口任务书 §5~§7）
+///
+/// 它采用的旧模型是"事务外查 copied paths + 校验数量 + 按动态 query 删除"，
+/// 不满足现在对破坏性删除的要求（精确 ID 快照、同事务取文件集合）。
+/// 上一轮只是把它标注成"已弃用"，但它**仍然注册在 `generate_handler` 里**，
+/// 前端也还留着 CMD 常量与 wrapper —— 也就是说任何代码（甚至一个被注入的脚本）
+/// 仍然可以 `invoke("task_purge_all_deleted")` 走到这条旧路径。
+///
+/// 现在把它从 IPC 层**彻底移除**：去掉 `#[tauri::command]` 与注册，
+/// 只留这个内部函数给集成测试当反例（`purge_all_respects_filters_...` 等）。
+/// 生产路径只剩 `task_prepare_purge_deleted` → `task_commit_purge_deleted` 两阶段。
 pub async fn purge_all_deleted_impl(
     db: &Db,
     query: Option<TaskQuery>,
