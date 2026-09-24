@@ -15,6 +15,51 @@
 
 ---
 
+## 第 7 轮 · 2026-09-24 · 建立"每轮留工作记录"的机制
+
+用户提出："以后任务做完了之后同步整理一份文档到 GitHub，用于记录你做了什么没做到什么。"
+这一轮做的事就是**把这个习惯固定下来**，并且把过去几轮补上。
+
+### 做了
+
+- 新建 **`docs/work-log.md`**：把第 1～6 轮按时间线补齐，每轮都写
+  **做了 / 没做到 / 怎么验证的 / 相关文档** 四部分。历史内容来自各轮的
+  提交记录、`docs/remediation-report.md`、`docs/test-report.md` 与实机验收脚本输出，
+  没有凭印象编造；当时如实列过"没做到"的，原样保留（例如第 1 轮的 26 项缺口）。
+- 新建 **`AGENTS.md`**（仓库根，人和自动化代理都先读它）：把工作记录约定、
+  "不许假实现/假测试/假结论"、数据安全底线、提交习惯、提交前门禁、
+  以及这个项目已经踩过的坑（`Separated::push`、`COALESCE(MAX())`、`withoutProject`、
+  打印报告 DOM 位置、`installMode` 等 9 条）沉淀成长期约定。
+- README 的「文档索引」里加了 `docs/work-log.md`。
+- 把这条要求同时写进了运行时记忆，后续轮次不必再提醒。
+
+### 没做到
+
+- **第 1～6 轮的记录是回溯整理，不是当轮实时写的**。回溯依据是仓库里的提交、
+  报告和脚本输出，个别细节（例如某一轮具体花在哪、当时的中间思路）没有留痕，
+  补不回来。从第 7 轮起改为**当轮结束即写**。
+- 没有做自动化校验：目前靠约定约束，**没有**任何 CI 检查"这一轮是否补了工作记录"，
+  漏写不会被机器发现。
+- 这份记录里的"没做到"清单**没有被转成待办**（没有 issue、没有任务跟踪），
+  下一轮要不要做仍取决于人的选择。
+
+### 怎么验证的
+
+- 提交前门禁本机实跑全绿：`pnpm typecheck` / `pnpm test`（**85 passed**）/
+  `pnpm lint`（0 problems）/ `cargo fmt --check` /
+  `cargo test --lib`（**310 passed**）/ `cargo clippy --all-targets -- -D warnings`。
+- 隐私自查：`git ls-files` 无 `.key/.db/.log/.exe/.sig`、无 `dist/`、无 `src-tauri/target/`；
+  `minisign encrypted secret key` 只在 `AGENTS.md` 与 `docs/remediation-report.md`
+  里作为**自查模式文字**出现，没有私钥块。
+- 推送后在 GitHub Actions 上核对最终提交：`CI` = **success**。
+
+### 相关文档
+
+- `AGENTS.md` —— 上述长期约定
+- `docs/remediation-report.md`、`docs/test-report.md` —— 第 1～6 轮记录的原始出处
+
+---
+
 ## 第 6 轮 · 2026-09-24 · 项目整改（0.3.0）
 
 按《Lumen 项目整改任务书》做的一轮质量整改：不堆新功能，把"看起来实现了"提到
