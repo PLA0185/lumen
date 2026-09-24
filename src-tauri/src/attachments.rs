@@ -697,8 +697,32 @@ pub async fn cleanup_orphans_impl(db: &Db) -> AppResult<OrphanCleanupResult> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        // 只处理顶层**文件**：子目录、符号链接等一律跳过
-        if !path.is_file() {
+        // 顶层条目分三类处理（第三轮任务书 §2.3）：
+        //
+        // - 符号链接 / junction：**保守地跳过，但必须显式告警**。
+        //   它们是 reparse point，`is_file()` 会跟随链接去判断目标类型，
+        //   直接用它把链接一概记成"普通跳过"是**静默的**——真出现异常链接时
+        //   运维看不到任何信号。这里先看 `symlink_metadata`（不跟随），
+        //   是链接就记一条 warn 说明"未跟随目标"，绝不删除。
+        // - 普通文件：继续走下面的候选判定与安全删除。
+        // - 其它（目录等）：跳过。
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(e) => {
+                skipped += 1;
+                log::warn!("附件目录条目不可读，已跳过：{} —— {e}", path.display());
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            skipped += 1;
+            log::warn!(
+                "附件目录里存在符号链接/junction，已跳过且**未跟随目标**：{}",
+                path.display()
+            );
+            continue;
+        }
+        if !meta.is_file() {
             skipped += 1;
             continue;
         }
