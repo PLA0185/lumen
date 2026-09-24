@@ -1,0 +1,91 @@
+name: CI
+
+# 持续集成：**只判断代码健康，不做任何打包与签名**。
+#
+# 与 Release 分离的原因（整改任务书 §8.6）：
+# Release 工作流在缺少 updater 签名密钥时会跳过构建步骤，
+# 于是"Release 成功"**不能**证明当前代码通过测试。
+# 因此把"跑测试"放在这里：它不需要任何密钥，push 到 main 就会真实执行。
+#
+# 本仓库有 Windows 专属依赖（Tauri / WebView2 / NSIS），
+# 所以两边都跑在 windows-latest 上，而不是图快用 Linux
+# ——与实际发布环境差异过大的系统测不出真问题（§8.5）。
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# 同一个分支上只保留最新一次运行，避免连续 push 时排队堆积
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖（锁定文件必须一致）
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm typecheck
+
+      - name: 单元测试
+        run: pnpm test
+
+      - name: 构建前端产物
+        run: pnpm build
+
+      - name: Lint
+        run: pnpm lint
+
+  rust:
+    name: rust
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: 缓存构建产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 代码格式检查
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: 编译检查（含测试与示例）
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: 单元与集成测试
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      - name: Clippy（把警告当错误）
+        working-directory: src-tauri
+        # 只对本次整改涉及的模块开启 -D warnings：仓库里还有历史代码
+        # 未清理的 clippy 提示，一次性全开会把 CI 变成永久红灯，
+        # 反而失去"红灯=这次改坏了"的信号价值。
+        run: cargo clippy --all-targets -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity

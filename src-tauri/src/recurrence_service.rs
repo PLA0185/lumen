@@ -181,7 +181,12 @@ fn build_rule_timeline(
         .date()
         .format("%Y-%m-%d")
         .to_string();
-    out.push((base.rule_version.min(1).max(1), base_anchor, base_rule, FieldOverride::default()));
+    out.push((
+        base.rule_version.min(1).max(1),
+        base_anchor,
+        base_rule,
+        FieldOverride::default(),
+    ));
 
     for seg in segments {
         let anchor = segment_anchor_local(seg, &base.dtstart_local)?;
@@ -222,14 +227,19 @@ fn segment_anchor_local(seg: &Segment, dtstart_local: &str) -> AppResult<String>
     // effective_from_occurrence 存的是 UTC 时刻；转成本地日期需要 tzid，
     // 但这里只需要"哪个分段的起点更早"这一相对顺序，用 UTC 日期比较同样正确，
     // 因此直接取其日期部分作为排序键，避免引入时区换算的额外失败点。
-    let dt = chrono::DateTime::parse_from_rfc3339(&seg.effective_from_occurrence).map_err(|_| {
-        AppError::validation(format!(
-            "分段生效时间格式不正确：{}",
-            seg.effective_from_occurrence
-        ))
-    })?;
+    let dt =
+        chrono::DateTime::parse_from_rfc3339(&seg.effective_from_occurrence).map_err(|_| {
+            AppError::validation(format!(
+                "分段生效时间格式不正确：{}",
+                seg.effective_from_occurrence
+            ))
+        })?;
     let _ = dtstart_local;
-    Ok(dt.with_timezone(&chrono::Utc).date_naive().format("%Y-%m-%d").to_string())
+    Ok(dt
+        .with_timezone(&chrono::Utc)
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string())
 }
 
 /// 分段携带的字段覆盖
@@ -284,15 +294,17 @@ async fn materialize_range(
             .bind(series_id)
             .fetch_all(state.db.pool())
             .await?;
-    let skip_keys: std::collections::HashSet<String> =
-        skips.into_iter().map(|(k,)| k).collect();
+    let skip_keys: std::collections::HashSet<String> = skips.into_iter().map(|(k,)| k).collect();
 
     // 展开足够多的发生，再用 UTC 范围过滤
     let mut created = 0usize;
     let to_utc = |local: &str| -> AppResult<String> {
         let dt = parse_local_datetime(local)?;
         let pair = occurrences_to_utc(
-            &[Occurrence { local: dt, index: 0 }],
+            &[Occurrence {
+                local: dt,
+                index: 0,
+            }],
             &series.tzid,
         );
         Ok(to_db_time(pair[0].1))
@@ -344,8 +356,14 @@ async fn materialize_range(
             .clone()
             .or_else(|| template.as_ref().map(|t| t.title.clone()))
             .unwrap_or_else(|| "重复任务".to_string());
-        let description = template.as_ref().map(|t| t.description.clone()).unwrap_or_default();
-        let note_md = template.as_ref().map(|t| t.note_md.clone()).unwrap_or_default();
+        let description = template
+            .as_ref()
+            .map(|t| t.description.clone())
+            .unwrap_or_default();
+        let note_md = template
+            .as_ref()
+            .map(|t| t.note_md.clone())
+            .unwrap_or_default();
         let priority = ov
             .priority
             .or_else(|| template.as_ref().map(|t| t.priority))
@@ -467,7 +485,10 @@ pub async fn create_recurring_impl(
         return Err(AppError::validation("标题不能超过 500 个字符"));
     }
 
-    let tzid = input.tzid.clone().unwrap_or_else(|| "Asia/Shanghai".to_string());
+    let tzid = input
+        .tzid
+        .clone()
+        .unwrap_or_else(|| "Asia/Shanghai".to_string());
     let has_start_time = input.has_start_time.unwrap_or(true);
 
     // 规则必须能解析，且 dtstart 合法
@@ -510,12 +531,10 @@ pub async fn create_recurring_impl(
     .await?;
 
     // 首个实例：其 occurrence_key 就是首次发生时刻
-    let first_occ = rule
-        .expand(1)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::validation("该重复规则不会产生任何发生，请检查规则")
-            .with_hint("例如「每年 2 月 30 日」这样的规则永远不会发生"))?;
+    let first_occ = rule.expand(1)?.into_iter().next().ok_or_else(|| {
+        AppError::validation("该重复规则不会产生任何发生，请检查规则")
+            .with_hint("例如「每年 2 月 30 日」这样的规则永远不会发生")
+    })?;
 
     let pair = occurrences_to_utc(&[first_occ.clone()], &tzid);
     let first_utc = to_db_time(pair[0].1);
@@ -614,8 +633,12 @@ pub async fn recurring_preview(
     count: Option<usize>,
 ) -> AppResult<Vec<String>> {
     let tz = tzid.unwrap_or_else(|| "Asia/Shanghai".to_string());
-    let rule =
-        RecurrenceRule::from_rrule_string(&rrule, &tz, &dtstart_local, has_start_time.unwrap_or(true))?;
+    let rule = RecurrenceRule::from_rrule_string(
+        &rrule,
+        &tz,
+        &dtstart_local,
+        has_start_time.unwrap_or(true),
+    )?;
     let n = count.unwrap_or(10).clamp(1, 50);
     let occ = rule.expand(n)?;
     let utc = occurrences_to_utc(&occ, &tz);
@@ -760,10 +783,7 @@ async fn purge_future_generated(
 }
 
 /// 供其它模块引用：给定系列在指定范围内的实例
-pub async fn list_instances(
-    state: &AppState,
-    series_id: &str,
-) -> AppResult<Vec<Task>> {
+pub async fn list_instances(state: &AppState, series_id: &str) -> AppResult<Vec<Task>> {
     let rows = sqlx::query_as::<_, Task>(
         "SELECT * FROM tasks WHERE series_id = ?1 AND deleted_at IS NULL
          ORDER BY occurrence_key ASC",
@@ -775,11 +795,7 @@ pub async fn list_instances(
 }
 
 /// 把一批标签复制给新实例（物化时用）
-pub async fn copy_tags(
-    state: &AppState,
-    from_task: &str,
-    to_task: &str,
-) -> AppResult<usize> {
+pub async fn copy_tags(state: &AppState, from_task: &str, to_task: &str) -> AppResult<usize> {
     let n = sqlx::query(
         "INSERT OR IGNORE INTO task_tags (task_id, tag_id)
          SELECT ?1, tag_id FROM task_tags WHERE task_id = ?2",
@@ -838,12 +854,15 @@ pub fn build_simple_rrule(
     by_weekday: &[u8],
     weekdays_only: bool,
 ) -> String {
-    let mut s = format!("FREQ={}", match freq {
-        Freq::Daily => "DAILY",
-        Freq::Weekly => "WEEKLY",
-        Freq::Monthly => "MONTHLY",
-        Freq::Yearly => "YEARLY",
-    });
+    let mut s = format!(
+        "FREQ={}",
+        match freq {
+            Freq::Daily => "DAILY",
+            Freq::Weekly => "WEEKLY",
+            Freq::Monthly => "MONTHLY",
+            Freq::Yearly => "YEARLY",
+        }
+    );
     if interval > 1 {
         s.push_str(&format!(";INTERVAL={interval}"));
     }
@@ -852,7 +871,11 @@ pub fn build_simple_rrule(
     } else if !by_weekday.is_empty() {
         let names: Vec<&str> = by_weekday
             .iter()
-            .filter_map(|w| ["MO", "TU", "WE", "TH", "FR", "SA", "SU"].get((*w as usize).saturating_sub(1)).copied())
+            .filter_map(|w| {
+                ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+                    .get((*w as usize).saturating_sub(1))
+                    .copied()
+            })
             .collect();
         s.push_str(&format!(";BYDAY={}", names.join(",")));
     }
@@ -982,10 +1005,10 @@ async fn history_guard(
     .try_get("n")?;
 
     if n > 0 && !confirm {
-        return Err(AppError::conflict(format!(
-            "此操作会影响 {n} 个已完成的历史任务"
-        ))
-        .with_hint("请先在界面上查看影响范围，确认后再执行（避免已完成记录被追改）"));
+        return Err(
+            AppError::conflict(format!("此操作会影响 {n} 个已完成的历史任务"))
+                .with_hint("请先在界面上查看影响范围，确认后再执行（避免已完成记录被追改）"),
+        );
     }
     Ok(n)
 }
@@ -1027,8 +1050,10 @@ pub async fn edit_instance_impl(
             .with_hint("请直接编辑这个任务（它本身不重复）"));
     };
     let Some(occ_key) = task.occurrence_key.clone() else {
-        return Err(AppError::conflict("重复实例缺少 occurrence_key，无法确定是哪一次")
-            .with_hint("数据可能已损坏，请导出一份备份后联系支持"));
+        return Err(
+            AppError::conflict("重复实例缺少 occurrence_key，无法确定是哪一次")
+                .with_hint("数据可能已损坏，请导出一份备份后联系支持"),
+        );
     };
 
     let series = get_series(&state, &series_id).await?;
@@ -1170,7 +1195,10 @@ pub async fn edit_instance_impl(
             .fetch_one(&mut *tx)
             .await?
             .try_get("v")?;
-            let next_ver = max_ver.unwrap_or(series.rule_version).max(series.rule_version) + 1;
+            let next_ver = max_ver
+                .unwrap_or(series.rule_version)
+                .max(series.rule_version)
+                + 1;
 
             let seg_id = uuid::Uuid::now_v7().to_string();
             sqlx::query(
@@ -1185,7 +1213,13 @@ pub async fn edit_instance_impl(
             .bind(next_ver)
             .bind(&occ_key)
             .bind(&effective_rrule)
-            .bind(patch.title.as_ref().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
+            .bind(
+                patch
+                    .title
+                    .as_ref()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty()),
+            )
             .bind(patch.priority)
             .bind(patch.estimated_minutes)
             .bind(&now)
@@ -1208,15 +1242,10 @@ pub async fn edit_instance_impl(
 
             // 用新规则重新物化未来实例
             let end_range = to_db_time(utc_now() + chrono::Duration::days(365));
-            let regenerated = materialize_range(
-                state,
-                &series_id,
-                &occ_key,
-                &end_range,
-                MAX_MATERIALIZE,
-            )
-            .await
-            .unwrap_or(0);
+            let regenerated =
+                materialize_range(state, &series_id, &occ_key, &end_range, MAX_MATERIALIZE)
+                    .await
+                    .unwrap_or(0);
 
             log::info!(
                 "系列 {series_id} 从 {occ_key} 起改用新规则（版本 {next_ver}）：\
@@ -1290,7 +1319,12 @@ pub async fn edit_instance_impl(
                 .await?
                 .rows_affected() as i64;
             }
-            if let Some(t) = patch.title.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if let Some(t) = patch
+                .title
+                .as_ref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
                 // 标题是例外最常定制的字段，因此只同步到非例外实例
                 affected += sqlx::query(
                     "UPDATE tasks SET title = ?1, updated_at = ?2
@@ -1367,7 +1401,9 @@ pub async fn skip_occurrence_impl(
         return Err(AppError::validation("该任务不属于重复系列，请直接删除它"));
     };
     let Some(occ_key) = task.occurrence_key.clone() else {
-        return Err(AppError::conflict("重复实例缺少 occurrence_key，无法定位要跳过的那一次"));
+        return Err(AppError::conflict(
+            "重复实例缺少 occurrence_key，无法定位要跳过的那一次",
+        ));
     };
     if task.status == "done" {
         return Err(AppError::conflict("已完成的发生不能跳过")
@@ -1450,7 +1486,9 @@ pub async fn delete_recurring_impl(
         return Err(AppError::validation("该任务不属于重复系列，请用普通删除"));
     };
     let Some(occ_key) = task.occurrence_key.clone() else {
-        return Err(AppError::conflict("重复实例缺少 occurrence_key，无法按范围删除"));
+        return Err(AppError::conflict(
+            "重复实例缺少 occurrence_key，无法按范围删除",
+        ));
     };
 
     let now = to_db_time(utc_now());
@@ -1541,10 +1579,12 @@ pub async fn delete_recurring_impl(
             .rows_affected() as i64;
 
             // 分段与跳过记录随系列级联删除；实例的 series_id 置空以免悬挂
-            sqlx::query("UPDATE tasks SET series_id = NULL, occurrence_key = NULL WHERE series_id = ?1")
-                .bind(&series_id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE tasks SET series_id = NULL, occurrence_key = NULL WHERE series_id = ?1",
+            )
+            .bind(&series_id)
+            .execute(&mut *tx)
+            .await?;
             sqlx::query("DELETE FROM task_series WHERE id = ?1")
                 .bind(&series_id)
                 .execute(&mut *tx)
@@ -1613,18 +1653,16 @@ pub async fn recurring_scope_info_inner(
 
     // 该次之前有多少已完成历史（决定"整个系列"是否会影响历史）
     let history_before = match &occ {
-        Some(k) => {
-            sqlx::query(
-                "SELECT COUNT(*) AS n FROM tasks
+        Some(k) => sqlx::query(
+            "SELECT COUNT(*) AS n FROM tasks
                  WHERE series_id = ?1 AND occurrence_key < ?2
                    AND (status = 'done' OR completed_at IS NOT NULL)",
-            )
-            .bind(&sid)
-            .bind(k)
-            .fetch_one(state.db.pool())
-            .await?
-            .try_get::<i64, _>("n")?
-        }
+        )
+        .bind(&sid)
+        .bind(k)
+        .fetch_one(state.db.pool())
+        .await?
+        .try_get::<i64, _>("n")?,
         None => 0,
     };
 
@@ -1656,7 +1694,6 @@ pub async fn recurring_scope_info_inner(
         },
     }))
 }
-
 
 // =============================================================================
 // IPC 包装（薄层：只把 Tauri 的 State 转成 &AppState 后转调业务实现）
@@ -1740,10 +1777,16 @@ mod tests {
             "FREQ=MONTHLY;BYDAY=FR;BYSETPOS=3"
         );
         assert_eq!(
-            build_setpos_rrule(SetPos { nth: -1, weekday: 5 }),
+            build_setpos_rrule(SetPos {
+                nth: -1,
+                weekday: 5
+            }),
             "FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1"
         );
-        assert_eq!(build_monthday_rrule(&[1, 15, 31]), "FREQ=MONTHLY;BYMONTHDAY=1,15,31");
+        assert_eq!(
+            build_monthday_rrule(&[1, 15, 31]),
+            "FREQ=MONTHLY;BYMONTHDAY=1,15,31"
+        );
     }
 
     /// 构造出的 RRULE 必须能被解析回来（否则界面构造的规则存不下去）
@@ -1755,15 +1798,25 @@ mod tests {
             build_simple_rrule(Freq::Weekly, 2, &[1, 5], false),
             build_simple_rrule(Freq::Weekly, 1, &[], true),
             build_setpos_rrule(SetPos { nth: 2, weekday: 2 }),
-            build_setpos_rrule(SetPos { nth: -1, weekday: 7 }),
+            build_setpos_rrule(SetPos {
+                nth: -1,
+                weekday: 7,
+            }),
             build_monthday_rrule(&[1, 31]),
         ] {
-            let r = RecurrenceRule::from_rrule_string(&s, "Asia/Shanghai", "2026-01-05T09:00:00", true)
-                .unwrap_or_else(|e| panic!("{s} 应可解析：{e}"));
+            let r =
+                RecurrenceRule::from_rrule_string(&s, "Asia/Shanghai", "2026-01-05T09:00:00", true)
+                    .unwrap_or_else(|e| panic!("{s} 应可解析：{e}"));
             // 再序列化一次，保证往返稳定
             let back = rule_to_string(&r).unwrap();
             assert!(
-                RecurrenceRule::from_rrule_string(&back, "Asia/Shanghai", "2026-01-05T09:00:00", true).is_ok(),
+                RecurrenceRule::from_rrule_string(
+                    &back,
+                    "Asia/Shanghai",
+                    "2026-01-05T09:00:00",
+                    true
+                )
+                .is_ok(),
                 "{s} → {back} 应可再次解析"
             );
         }
@@ -1790,9 +1843,18 @@ mod tests {
     #[test]
     fn is_before_compares_utc_strings() {
         // 固定宽度 UTC 字符串的字典序即时间序
-        assert!(is_before("2026-09-21T01:00:00.000Z", "2026-09-22T00:00:00.000Z"));
-        assert!(!is_before("2026-09-23T01:00:00.000Z", "2026-09-22T00:00:00.000Z"));
-        assert!(!is_before("2026-09-22T00:00:00.000Z", "2026-09-22T00:00:00.000Z"));
+        assert!(is_before(
+            "2026-09-21T01:00:00.000Z",
+            "2026-09-22T00:00:00.000Z"
+        ));
+        assert!(!is_before(
+            "2026-09-23T01:00:00.000Z",
+            "2026-09-22T00:00:00.000Z"
+        ));
+        assert!(!is_before(
+            "2026-09-22T00:00:00.000Z",
+            "2026-09-22T00:00:00.000Z"
+        ));
     }
 
     /// 分段列表必须按生效起点排序，否则"哪一段对某次生效"会判错。

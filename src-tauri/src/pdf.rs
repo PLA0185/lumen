@@ -154,11 +154,10 @@ mod windows_impl {
             }
             Ok(Err(msg)) => Err(AppError::new(crate::error::ErrorCode::Internal, msg)
                 .with_hint("请确认目标文件没有被其它程序占用后重试")),
-            Err(_) => Err(AppError::new(
-                crate::error::ErrorCode::Internal,
-                "PDF 导出没有返回结果",
-            )
-            .with_hint("请重试一次；若持续失败，可先用「数据备份」导出 JSON")),
+            Err(_) => Err(
+                AppError::new(crate::error::ErrorCode::Internal, "PDF 导出没有返回结果")
+                    .with_hint("请重试一次；若持续失败，可先用「数据备份」导出 JSON"),
+            ),
         }
     }
 }

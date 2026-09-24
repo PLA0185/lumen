@@ -416,7 +416,12 @@ pub async fn update_project_impl(
         sep.push("color = ").push_bind_unseparated(color.clone());
     }
     if let Some(i) = input.icon.as_deref() {
-        sep.push("icon = ").push_bind_unseparated(if i.trim().is_empty() { None } else { Some(i.to_string()) });
+        sep.push("icon = ")
+            .push_bind_unseparated(if i.trim().is_empty() {
+                None
+            } else {
+                Some(i.to_string())
+            });
     }
     if let Some(o) = input.sort_order {
         sep.push("sort_order = ").push_bind_unseparated(o);
@@ -427,7 +432,8 @@ pub async fn update_project_impl(
     if let Some(a) = input.is_archived {
         sep.push("is_archived = ").push_bind_unseparated(a as i64);
         // 归档时间与归档标志必须同时维护，否则"归档于何时"会丢失
-        sep.push("archived_at = ").push_bind_unseparated(if a { Some(now.clone()) } else { None });
+        sep.push("archived_at = ")
+            .push_bind_unseparated(if a { Some(now.clone()) } else { None });
     }
     sep.push("updated_at = ").push_bind_unseparated(now);
     b.push(" WHERE id = ").push_bind(id);
@@ -689,7 +695,12 @@ pub async fn update_category_impl(
         sep.push("color = ").push_bind_unseparated(color.clone());
     }
     if let Some(i) = input.icon.as_deref() {
-        sep.push("icon = ").push_bind_unseparated(if i.trim().is_empty() { None } else { Some(i.to_string()) });
+        sep.push("icon = ")
+            .push_bind_unseparated(if i.trim().is_empty() {
+                None
+            } else {
+                Some(i.to_string())
+            });
     }
     if let Some(o) = input.sort_order {
         sep.push("sort_order = ").push_bind_unseparated(o);
@@ -1095,9 +1106,14 @@ mod tests {
 
     #[test]
     fn color_only_accepts_hex_forms() {
-        assert_eq!(validate_color(Some(&"#fff".to_string())).unwrap().unwrap(), "#fff");
         assert_eq!(
-            validate_color(Some(&"#4F46E5".to_string())).unwrap().unwrap(),
+            validate_color(Some(&"#fff".to_string())).unwrap().unwrap(),
+            "#fff"
+        );
+        assert_eq!(
+            validate_color(Some(&"#4F46E5".to_string()))
+                .unwrap()
+                .unwrap(),
             "#4f46e5",
             "应统一为小写，避免同一颜色出现两种写法"
         );

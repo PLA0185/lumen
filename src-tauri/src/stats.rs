@@ -160,8 +160,9 @@ fn recent_range(days: i64) -> AppResult<(String, String, String, String)> {
     use chrono::TimeZone;
 
     if !(1..=366).contains(&days) {
-        return Err(AppError::validation(format!("统计天数超出范围：{days}"))
-            .with_hint("允许 1–366 天"));
+        return Err(
+            AppError::validation(format!("统计天数超出范围：{days}")).with_hint("允许 1–366 天")
+        );
     }
 
     let today = chrono::Local::now().date_naive();
@@ -173,10 +174,8 @@ fn recent_range(days: i64) -> AppResult<(String, String, String, String)> {
             .and_then(|ndt| chrono::Local.from_local_datetime(&ndt).single())
     };
 
-    let s = local_dt(start_date)
-        .ok_or_else(|| AppError::internal("无法构造统计起始时间"))?;
-    let e = local_dt(end_date)
-        .ok_or_else(|| AppError::internal("无法构造统计结束时间"))?;
+    let s = local_dt(start_date).ok_or_else(|| AppError::internal("无法构造统计起始时间"))?;
+    let e = local_dt(end_date).ok_or_else(|| AppError::internal("无法构造统计结束时间"))?;
 
     Ok((
         to_db_time(s.with_timezone(&chrono::Utc)),
@@ -808,10 +807,7 @@ async fn load_growth_config(db: &Db) -> AppResult<GrowthConfig> {
 
 /// 周期统计（供统计页）
 #[tauri::command]
-pub async fn stats_period(
-    state: State<'_, AppState>,
-    days: i64,
-) -> AppResult<PeriodStats> {
+pub async fn stats_period(state: State<'_, AppState>, days: i64) -> AppResult<PeriodStats> {
     period_stats(&state.db, days).await
 }
 
@@ -823,9 +819,7 @@ pub async fn stats_growth(state: State<'_, AppState>) -> AppResult<GrowthOvervie
 
 /// 读取成长配置
 #[tauri::command]
-pub async fn growth_get_config(
-    state: State<'_, AppState>,
-) -> AppResult<GrowthConfig> {
+pub async fn growth_get_config(state: State<'_, AppState>) -> AppResult<GrowthConfig> {
     let mut cfg = load_growth_config(&state.db).await?;
     cfg.normalize();
     Ok(cfg)
@@ -1022,7 +1016,12 @@ mod tests {
         let a = level_of(10);
         let b = level_of(40);
         assert_eq!(a.level, b.level, "两点应仍在同一级");
-        assert!(b.progress > a.progress, "{} 应大于 {}", b.progress, a.progress);
+        assert!(
+            b.progress > a.progress,
+            "{} 应大于 {}",
+            b.progress,
+            a.progress
+        );
     }
 
     #[test]
@@ -1095,7 +1094,10 @@ mod tests {
         let (s, e, sd, _ed) = recent_range(1).unwrap();
         assert!(s < e);
         // 起始日期就是今天（1 天区间 = 今天）
-        let today = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let today = chrono::Local::now()
+            .date_naive()
+            .format("%Y-%m-%d")
+            .to_string();
         assert_eq!(sd, today);
     }
 

@@ -218,19 +218,20 @@ pub fn ensure_floating(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<()>
 
     let floating_w = cfg.floating_width.clamp(FLOATING_W_MIN, FLOATING_W_MAX);
     let floating_h = cfg.floating_height.clamp(FLOATING_H_MIN, FLOATING_H_MAX);
-    let mut builder = WebviewWindowBuilder::new(app, FLOATING, WebviewUrl::App("index.html".into()))
-        .title("Lumen 今日")
-        .inner_size(floating_w, floating_h)
-        // 最小尺寸与后端校验边界保持一致，避免"拖到很小后内容挤成一团"
-        .min_inner_size(FLOATING_W_MIN, FLOATING_H_MIN)
-        .resizable(true)
-        .decorations(false)
-        // 悬浮窗必须是透明的，否则桌面组件会带一块不透明底色（§8.4）
-        .transparent(true)
-        .skip_taskbar(!cfg.floating_show_in_taskbar)
-        .always_on_top(cfg.floating_always_on_top)
-        .shadow(false)
-        .visible(false); // 先隐藏，等定位与状态应用完再显示，避免位置跳变
+    let mut builder =
+        WebviewWindowBuilder::new(app, FLOATING, WebviewUrl::App("index.html".into()))
+            .title("Lumen 今日")
+            .inner_size(floating_w, floating_h)
+            // 最小尺寸与后端校验边界保持一致，避免"拖到很小后内容挤成一团"
+            .min_inner_size(FLOATING_W_MIN, FLOATING_H_MIN)
+            .resizable(true)
+            .decorations(false)
+            // 悬浮窗必须是透明的，否则桌面组件会带一块不透明底色（§8.4）
+            .transparent(true)
+            .skip_taskbar(!cfg.floating_show_in_taskbar)
+            .always_on_top(cfg.floating_always_on_top)
+            .shadow(false)
+            .visible(false); // 先隐藏，等定位与状态应用完再显示，避免位置跳变
 
     // 默认放右下角；有保存的位置则沿用
     if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
@@ -282,14 +283,15 @@ pub fn ensure_quick_add(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    let mut builder = WebviewWindowBuilder::new(app, QUICK_ADD, WebviewUrl::App("index.html".into()))
-        .title("快速添加")
-        .inner_size(QUICK_W, QUICK_H)
-        .resizable(false)
-        .decorations(true)
-        .always_on_top(true)
-        .center()
-        .skip_taskbar(true);
+    let mut builder =
+        WebviewWindowBuilder::new(app, QUICK_ADD, WebviewUrl::App("index.html".into()))
+            .title("快速添加")
+            .inner_size(QUICK_W, QUICK_H)
+            .resizable(false)
+            .decorations(true)
+            .always_on_top(true)
+            .center()
+            .skip_taskbar(true);
 
     if let Ok(Some(mon)) = app.primary_monitor() {
         let scale = mon.scale_factor();
@@ -426,13 +428,12 @@ pub async fn window_set_config(
 
     // ---- 安全校验 2：不允许同时关闭所有可见入口（§8.6）----
     if !cfg.tray_enabled && !cfg.main_show_in_taskbar && cfg.close_action == "tray" {
-        return Err(crate::error::AppError::conflict(
-            "无法同时隐藏任务栏图标并关闭托盘",
-        )
-        .with_hint(
-            "关闭主窗口会缩到托盘，但托盘已被关闭，你将无法重新打开它。\
+        return Err(
+            crate::error::AppError::conflict("无法同时隐藏任务栏图标并关闭托盘").with_hint(
+                "关闭主窗口会缩到托盘，但托盘已被关闭，你将无法重新打开它。\
              请二选一：保留托盘，或把「关闭主窗口」改为「退出程序」。",
-        ));
+            ),
+        );
     }
 
     // ---- 应用主窗口设置 ----
@@ -629,7 +630,11 @@ pub async fn window_set_floating_size(
 ) -> crate::error::AppResult<serde_json::Value> {
     let mut cfg = load_config(&state).await?;
     cfg.floating_width = if width.is_finite() { width } else { FLOATING_W };
-    cfg.floating_height = if height.is_finite() { height } else { FLOATING_H };
+    cfg.floating_height = if height.is_finite() {
+        height
+    } else {
+        FLOATING_H
+    };
     cfg.normalize();
     save_config(&state, &cfg).await?;
 
@@ -665,9 +670,7 @@ pub async fn window_floating_reset_position(app: AppHandle) -> crate::error::App
         let x = (size.width as f64 / scale) - w_now - 24.0;
         let y = (size.height as f64 / scale) - h_now - 80.0;
         w.set_position(LogicalPosition::new(x.max(0.0), y.max(0.0)))
-            .map_err(|e| {
-                crate::error::AppError::internal(format!("移动悬浮窗失败：{e}"))
-            })?;
+            .map_err(|e| crate::error::AppError::internal(format!("移动悬浮窗失败：{e}")))?;
         w.set_size(LogicalSize::new(w_now, h_now))
             .map_err(|e| crate::error::AppError::internal(format!("调整悬浮窗尺寸失败：{e}")))?;
         let _ = w.show();

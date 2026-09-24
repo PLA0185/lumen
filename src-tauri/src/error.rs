@@ -58,7 +58,11 @@ impl std::error::Error for AppError {}
 impl AppError {
     /// 构造一个错误
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), hint: None }
+        Self {
+            code,
+            message: message.into(),
+            hint: None,
+        }
     }
 
     /// 追加恢复建议
@@ -118,9 +122,7 @@ impl From<crate::db::DbError> for AppError {
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         match e {
-            sqlx::Error::RowNotFound => {
-                Self::new(ErrorCode::NotFound, "记录不存在或已被删除")
-            }
+            sqlx::Error::RowNotFound => Self::new(ErrorCode::NotFound, "记录不存在或已被删除"),
             sqlx::Error::Database(db) => {
                 let raw = db.message().to_string();
                 // 把数据库约束错误翻译成用户能理解的话，并保留原始提示便于排查

@@ -42,8 +42,9 @@ async fn find_by_occurrence(state: &AppState, series_id: &str, key: &str) -> Opt
 /// 某个本地日期对应的 UTC key（测试固定用 Asia/Shanghai，+08:00）
 fn shanghai_key(date: &str, time: &str) -> String {
     // 北京时间 → UTC 需减 8 小时
-    let local = chrono::NaiveDateTime::parse_from_str(&format!("{date}T{time}"), "%Y-%m-%dT%H:%M:%S")
-        .expect("构造本地时间");
+    let local =
+        chrono::NaiveDateTime::parse_from_str(&format!("{date}T{time}"), "%Y-%m-%dT%H:%M:%S")
+            .expect("构造本地时间");
     let utc = local - chrono::Duration::hours(8);
     format!("{}.000Z", utc.format("%Y-%m-%dT%H:%M:%S"))
 }
@@ -83,7 +84,11 @@ async fn acceptance_weekly_mon_wed_fri_full_lifecycle() {
         "30 天内应物化多次发生，实际 {}",
         created.created_count
     );
-    assert!(created.description.contains("周一"), "{}", created.description);
+    assert!(
+        created.description.contains("周一"),
+        "{}",
+        created.description
+    );
 
     let series_id = created.series_id.clone();
     let instances = list_instances(&state, &series_id).await.unwrap();
@@ -111,13 +116,17 @@ async fn acceptance_weekly_mon_wed_fri_full_lifecycle() {
         .await
         .unwrap();
 
-    let mon_after = find_by_occurrence(&state, &series_id, &mon_key).await.unwrap();
+    let mon_after = find_by_occurrence(&state, &series_id, &mon_key)
+        .await
+        .unwrap();
     assert_eq!(mon_after.status, "done");
     assert!(mon_after.completed_at.is_some(), "完成时间必须真实记录");
 
     // 其它发生不受影响
     let wed_key = shanghai_key("2026-09-23", "09:00:00");
-    let wed = find_by_occurrence(&state, &series_id, &wed_key).await.unwrap();
+    let wed = find_by_occurrence(&state, &series_id, &wed_key)
+        .await
+        .unwrap();
     assert_eq!(wed.status, "todo", "完成一次不应影响其它发生");
 
     // ------------------------------------------------------------------
@@ -140,7 +149,9 @@ async fn acceptance_weekly_mon_wed_fri_full_lifecycle() {
     assert_eq!(r.affected, 1);
     assert_eq!(r.affected_history, 0);
 
-    let wed_after = find_by_occurrence(&state, &series_id, &wed_key).await.unwrap();
+    let wed_after = find_by_occurrence(&state, &series_id, &wed_key)
+        .await
+        .unwrap();
     assert_eq!(wed_after.title, "写月报（本周特例）");
     assert_eq!(
         wed_after.occurrence_kind.as_deref(),
@@ -200,12 +211,16 @@ async fn acceptance_weekly_mon_wed_fri_full_lifecycle() {
     // ------------------------------------------------------------------
     // 5. 历史保护：过去已完成的那次必须完好无损
     // ------------------------------------------------------------------
-    let mon_final = find_by_occurrence(&state, &series_id, &mon_key).await.unwrap();
+    let mon_final = find_by_occurrence(&state, &series_id, &mon_key)
+        .await
+        .unwrap();
     assert_eq!(mon_final.status, "done", "历史完成状态不能因改规则而丢失");
     assert!(mon_final.completed_at.is_some(), "历史完成时间必须保留");
 
     // 例外也必须在重算后保留
-    let wed_final = find_by_occurrence(&state, &series_id, &wed_key).await.unwrap();
+    let wed_final = find_by_occurrence(&state, &series_id, &wed_key)
+        .await
+        .unwrap();
     assert_eq!(
         wed_final.title, "写月报（本周特例）",
         "用户单独改过的实例不能在改规则时被冲掉"
@@ -285,7 +300,9 @@ async fn acceptance_weekly_mon_wed_fri_full_lifecycle() {
     }
 
     // 已完成的历史实例字段**不变**（§5 保护历史）
-    let mon_check = find_by_occurrence(&state, &series_id, &mon_key).await.unwrap();
+    let mon_check = find_by_occurrence(&state, &series_id, &mon_key)
+        .await
+        .unwrap();
     assert_eq!(mon_check.status, "done");
     assert_eq!(mon_check.priority, 1, "已完成历史不应被追改字段");
 
@@ -468,20 +485,21 @@ async fn skip_one_occurrence_keeps_series_alive() {
     let before = list_instances(&state, &sid).await.unwrap().len();
 
     let target = list_instances(&state, &sid).await.unwrap()[2].clone();
-    skip_occurrence_impl(&state, target.id.clone()).await.unwrap();
+    skip_occurrence_impl(&state, target.id.clone())
+        .await
+        .unwrap();
 
     let after = list_instances(&state, &sid).await.unwrap().len();
     assert_eq!(after, before - 1, "只应少这一次");
 
     // 系列本身仍存在，且仍能继续物化未来的发生
-    let series_exists: i64 =
-        sqlx::query("SELECT COUNT(*) AS n FROM task_series WHERE id = ?1")
-            .bind(&sid)
-            .fetch_one(state.db.pool())
-            .await
-            .unwrap()
-            .try_get("n")
-            .unwrap();
+    let series_exists: i64 = sqlx::query("SELECT COUNT(*) AS n FROM task_series WHERE id = ?1")
+        .bind(&sid)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap()
+        .try_get("n")
+        .unwrap();
     assert_eq!(series_exists, 1, "系列必须仍然存在");
 
     // 再物化一次不应把跳过的那次重新生成出来
@@ -504,10 +522,7 @@ async fn skip_one_occurrence_keeps_series_alive() {
     .fetch_all(state.db.pool())
     .await
     .unwrap();
-    assert!(
-        regenerated.is_empty(),
-        "被跳过的那一次不应被重新物化出来"
-    );
+    assert!(regenerated.is_empty(), "被跳过的那一次不应被重新物化出来");
 
     // 而其它未来的发生应该新生成了
     let total_after = list_instances(&state, &sid).await.unwrap().len();
@@ -592,7 +607,9 @@ async fn scope_info_reports_recurrence_and_history() {
     .await
     .unwrap();
 
-    let info = recurring_scope_info_inner(&state, "plain".to_string()).await.unwrap();
+    let info = recurring_scope_info_inner(&state, "plain".to_string())
+        .await
+        .unwrap();
     assert_eq!(info["isRecurring"], false);
     assert!(info["reason"].as_str().unwrap().contains("不重复"));
 
@@ -619,7 +636,9 @@ async fn scope_info_reports_recurrence_and_history() {
     .unwrap();
 
     let all = list_instances(&state, &created.series_id).await.unwrap();
-    let info2 = recurring_scope_info_inner(&state, all[2].id.clone()).await.unwrap();
+    let info2 = recurring_scope_info_inner(&state, all[2].id.clone())
+        .await
+        .unwrap();
     assert_eq!(info2["isRecurring"], true);
     assert!(info2["seriesId"].as_str().is_some());
     assert!(info2["occurrenceKey"].as_str().is_some());

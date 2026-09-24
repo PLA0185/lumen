@@ -153,9 +153,8 @@ fn validate_period(v: &str) -> AppResult<&'static str> {
         "quarter" => "quarter",
         "year" => "year",
         other => {
-            return Err(AppError::validation(format!("周期跨度非法：{other}")).with_hint(
-                "允许值：none（不限）/ day / week / month / quarter / year",
-            ))
+            return Err(AppError::validation(format!("周期跨度非法：{other}"))
+                .with_hint("允许值：none（不限）/ day / week / month / quarter / year"))
         }
     })
 }
@@ -191,12 +190,7 @@ fn validate_opt_time(field: &str, raw: Option<&String>) -> AppResult<Option<Stri
 }
 
 /// 校验非空外键：要求目标存在且未被软删除，避免指向已删除的项目/分类。
-async fn ensure_exists(
-    db: &Db,
-    table: &str,
-    id: &str,
-    label: &str,
-) -> AppResult<()> {
+async fn ensure_exists(db: &Db, table: &str, id: &str, label: &str) -> AppResult<()> {
     // table 只可能来自本文件内的字面量，不存在拼接注入风险
     let sql = match table {
         "projects" => "SELECT COUNT(*) AS c FROM projects WHERE id = ?1 AND deleted_at IS NULL",
@@ -207,8 +201,7 @@ async fn ensure_exists(
     let row = sqlx::query(sql).bind(id).fetch_one(db.pool()).await?;
     let c: i64 = row.try_get("c")?;
     if c == 0 {
-        return Err(AppError::not_found(label, id)
-            .with_hint("该记录可能已被删除，请刷新后重试"));
+        return Err(AppError::not_found(label, id).with_hint("该记录可能已被删除，请刷新后重试"));
     }
     Ok(())
 }
@@ -244,10 +237,7 @@ pub(crate) async fn get_task_row(db: &Db, id: &str) -> AppResult<Task> {
 /// 任务书 §4.4/§6：AI 或自然语言解析的结果必须先经用户确认，
 /// 因此本命令不做任何隐式字段推断，传入什么就存什么。
 #[tauri::command]
-pub async fn task_create(
-    state: State<'_, AppState>,
-    input: CreateTaskInput,
-) -> AppResult<Task> {
+pub async fn task_create(state: State<'_, AppState>, input: CreateTaskInput) -> AppResult<Task> {
     create_task_impl(&state.db, input).await
 }
 
@@ -320,7 +310,11 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
     .bind(input.has_due_time.unwrap_or(false) as i64)
     .bind(input.estimated_minutes)
     // 若创建时就标记为已完成，必须同时写入真实完成时间（§4.1）
-    .bind(if status == "done" { Some(now.clone()) } else { None })
+    .bind(if status == "done" {
+        Some(now.clone())
+    } else {
+        None
+    })
     .bind(&now)
     .bind(sort_order)
     .bind(input.is_pinned.unwrap_or(false) as i64)
@@ -427,28 +421,35 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
 
     // 项目/分类：支持显式清空
     if input.clear_project {
-        sep.push("project_id = ").push_bind_unseparated(None::<String>);
+        sep.push("project_id = ")
+            .push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.project_id.as_deref().filter(|s| !s.is_empty()) {
-        sep.push("project_id = ").push_bind_unseparated(v.to_string());
+        sep.push("project_id = ")
+            .push_bind_unseparated(v.to_string());
     }
     if input.clear_category {
-        sep.push("category_id = ").push_bind_unseparated(None::<String>);
+        sep.push("category_id = ")
+            .push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.category_id.as_deref().filter(|s| !s.is_empty()) {
-        sep.push("category_id = ").push_bind_unseparated(v.to_string());
+        sep.push("category_id = ")
+            .push_bind_unseparated(v.to_string());
     }
 
     // 计划时间：清空优先于赋值，避免两者同时传时行为歧义
     if input.clear_planned_at {
-        sep.push("planned_at = ").push_bind_unseparated(None::<String>);
+        sep.push("planned_at = ")
+            .push_bind_unseparated(None::<String>);
         sep.push("has_planned_time = ").push_bind_unseparated(0i64);
     } else if let Some(v) = &planned {
         sep.push("planned_at = ").push_bind_unseparated(v.clone());
         if let Some(h) = input.has_planned_time {
-            sep.push("has_planned_time = ").push_bind_unseparated(h as i64);
+            sep.push("has_planned_time = ")
+                .push_bind_unseparated(h as i64);
         }
     } else if let Some(h) = input.has_planned_time {
         // 只切换"是否含具体时刻"，保留原日期
-        sep.push("has_planned_time = ").push_bind_unseparated(h as i64);
+        sep.push("has_planned_time = ")
+            .push_bind_unseparated(h as i64);
     }
 
     // 截止时间：同上
@@ -465,7 +466,8 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
     }
 
     if input.clear_link {
-        sep.push("link_url = ").push_bind_unseparated(None::<String>);
+        sep.push("link_url = ")
+            .push_bind_unseparated(None::<String>);
     } else if let Some(v) = input.link_url.as_deref().filter(|s| !s.trim().is_empty()) {
         sep.push("link_url = ").push_bind_unseparated(v.to_string());
     }
@@ -484,7 +486,8 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
     }
     // 周期跨度：传空串视为"取消周期"，与前端"不限"选项一致
     if let Some(v) = input.period_type.as_deref() {
-        sep.push("period_type = ").push_bind_unseparated(validate_period(v)?.to_string());
+        sep.push("period_type = ")
+            .push_bind_unseparated(validate_period(v)?.to_string());
     }
 
     sep.push("updated_at = ").push_bind_unseparated(now);
@@ -562,7 +565,11 @@ pub async fn task_soft_delete(
         .bind(&id)
         .execute(db.pool())
         .await?;
-    Ok(SoftDeleteResult { id, deleted_at: now, movable_to_trash: true })
+    Ok(SoftDeleteResult {
+        id,
+        deleted_at: now,
+        movable_to_trash: true,
+    })
 }
 
 /// 从回收站恢复。
@@ -596,8 +603,9 @@ pub async fn task_purge(state: State<'_, AppState>, id: String) -> AppResult<Pur
     let db = &state.db;
     let t = get_task_row(db, &id).await?;
     if t.deleted_at.is_none() {
-        return Err(AppError::conflict("只能永久删除回收站中的任务")
-            .with_hint("请先将其移入回收站"));
+        return Err(
+            AppError::conflict("只能永久删除回收站中的任务").with_hint("请先将其移入回收站")
+        );
     }
     sqlx::query("DELETE FROM tasks WHERE id = ?1")
         .bind(&id)
@@ -687,9 +695,11 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
 
     // 标签过滤：要求任务拥有全部指定标签（AND 语义，便于组合筛选）
     for tid in query.tag_ids.iter().filter(|s| !s.is_empty()) {
-        b.push(" AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag_id = ")
-            .push_bind(tid.clone())
-            .push(")");
+        b.push(
+            " AND EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = tasks.id AND tt.tag_id = ",
+        )
+        .push_bind(tid.clone())
+        .push(")");
     }
 
     if let Some(from) = validate_opt_time("计划起始", query.planned_from.as_ref())? {
@@ -706,15 +716,30 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
     }
 
     // 搜索：标题/描述/备注/链接（§4.1 要求可搜索项目与标签，此处额外用 EXISTS 覆盖）
-    if let Some(kw) = query.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(kw) = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         let like = format!("%{}%", kw.replace('%', "\\%").replace('_', "\\_"));
-        b.push(" AND (title LIKE ").push_bind(like.clone()).push(" ESCAPE '\\'");
-        b.push(" OR description LIKE ").push_bind(like.clone()).push(" ESCAPE '\\'");
-        b.push(" OR note_md LIKE ").push_bind(like.clone()).push(" ESCAPE '\\'");
-        b.push(" OR COALESCE(link_url, '') LIKE ").push_bind(like.clone()).push(" ESCAPE '\\'");
-        b.push(" OR EXISTS (SELECT 1 FROM projects p WHERE p.id = tasks.project_id AND p.name LIKE ")
+        b.push(" AND (title LIKE ")
             .push_bind(like.clone())
-            .push(" ESCAPE '\\')");
+            .push(" ESCAPE '\\'");
+        b.push(" OR description LIKE ")
+            .push_bind(like.clone())
+            .push(" ESCAPE '\\'");
+        b.push(" OR note_md LIKE ")
+            .push_bind(like.clone())
+            .push(" ESCAPE '\\'");
+        b.push(" OR COALESCE(link_url, '') LIKE ")
+            .push_bind(like.clone())
+            .push(" ESCAPE '\\'");
+        b.push(
+            " OR EXISTS (SELECT 1 FROM projects p WHERE p.id = tasks.project_id AND p.name LIKE ",
+        )
+        .push_bind(like.clone())
+        .push(" ESCAPE '\\')");
         b.push(" OR EXISTS (SELECT 1 FROM tags tg JOIN task_tags tt2 ON tt2.tag_id = tg.id WHERE tt2.task_id = tasks.id AND tg.name LIKE ")
             .push_bind(like)
             .push(" ESCAPE '\\'))");
@@ -782,9 +807,8 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
             }
         }
         other => {
-            return Err(AppError::validation(format!("不支持的排序方式：{other}")).with_hint(
-                "允许值：manual / due / priority / created / planned / title",
-            ))
+            return Err(AppError::validation(format!("不支持的排序方式：{other}"))
+                .with_hint("允许值：manual / due / priority / created / planned / title"))
         }
     };
     b.push(" ORDER BY ").push(order);
@@ -949,7 +973,8 @@ async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskRepor
     b.push(" ORDER BY t.sort_order ASC, t.name ASC");
 
     let tag_rows = b.build().fetch_all(db.pool()).await?;
-    let mut tag_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut tag_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for r in tag_rows {
         let task_id: String = r.try_get("task_id")?;
         let name: String = r.try_get("name")?;
@@ -959,8 +984,14 @@ async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskRepor
     Ok(tasks
         .into_iter()
         .map(|t| TaskReportRow {
-            project_name: t.project_id.as_ref().and_then(|id| project_map.get(id).cloned()),
-            category_name: t.category_id.as_ref().and_then(|id| category_map.get(id).cloned()),
+            project_name: t
+                .project_id
+                .as_ref()
+                .and_then(|id| project_map.get(id).cloned()),
+            category_name: t
+                .category_id
+                .as_ref()
+                .and_then(|id| category_map.get(id).cloned()),
             tag_names: tag_map.get(&t.id).cloned().unwrap_or_default(),
             task: t,
         })
@@ -971,10 +1002,7 @@ async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskRepor
 ///
 /// 全部在一个事务内完成，避免"部分成功"导致 UI 与数据库不一致。
 #[tauri::command]
-pub async fn task_bulk(
-    state: State<'_, AppState>,
-    input: BulkActionInput,
-) -> AppResult<i64> {
+pub async fn task_bulk(state: State<'_, AppState>, input: BulkActionInput) -> AppResult<i64> {
     let db = &state.db;
     if input.ids.is_empty() {
         return Err(AppError::validation("请至少选择一项任务"));
@@ -1257,8 +1285,11 @@ pub async fn task_reschedule(
         })?
         .with_timezone(&chrono::Utc);
 
-    let (new_at, has_time) =
-        compute_rescheduled_at(existing.planned_at.as_deref(), existing.has_planned_time, target);
+    let (new_at, has_time) = compute_rescheduled_at(
+        existing.planned_at.as_deref(),
+        existing.has_planned_time,
+        target,
+    );
 
     let now = to_db_time(utc_now());
     // 改期同样要保证"任务时间与提醒时刻一起落库"（整改任务书 §5）：
@@ -1314,13 +1345,12 @@ pub async fn duplicate_task_impl(db: &Db, id: &str) -> AppResult<serde_json::Val
     let mut title = base.clone();
     let mut n = 2;
     loop {
-        let exists: i64 = sqlx::query(
-            "SELECT COUNT(*) AS n FROM tasks WHERE title = ?1 AND deleted_at IS NULL",
-        )
-        .bind(&title)
-        .fetch_one(db.pool())
-        .await?
-        .try_get("n")?;
+        let exists: i64 =
+            sqlx::query("SELECT COUNT(*) AS n FROM tasks WHERE title = ?1 AND deleted_at IS NULL")
+                .bind(&title)
+                .fetch_one(db.pool())
+                .await?
+                .try_get("n")?;
         if exists == 0 {
             break;
         }
@@ -1438,9 +1468,7 @@ pub async fn duplicate_task_impl(db: &Db, id: &str) -> AppResult<serde_json::Val
 
     tx.commit().await?;
 
-    log::info!(
-        "已复制任务 {id} → {new_id}（标签 {tags}、子任务 {subtasks}、提醒 {reminders}）"
-    );
+    log::info!("已复制任务 {id} → {new_id}（标签 {tags}、子任务 {subtasks}、提醒 {reminders}）");
 
     Ok(serde_json::json!({
         "newTaskId": new_id,
@@ -1479,10 +1507,7 @@ pub struct ReorderInput {
 /// 中点法会让相邻差不断减半，约 50 次同位置插入后 REAL 精度可能不足。
 /// 因此在差值过小时**自动重新编号**（间隔 1000），这只在极端情况下发生。
 #[tauri::command]
-pub async fn task_reorder(
-    state: State<'_, AppState>,
-    input: ReorderInput,
-) -> AppResult<f64> {
+pub async fn task_reorder(state: State<'_, AppState>, input: ReorderInput) -> AppResult<f64> {
     reorder_task_impl(&state.db, &input).await
 }
 
@@ -1508,10 +1533,8 @@ pub async fn reorder_task_impl(db: &Db, input: &ReorderInput) -> AppResult<f64> 
             (Some(p), Some(n)) if (n - p).abs() < 1e-6 => {
                 if renumbered {
                     // 重新编号后依然分不开，说明数据已被外部改坏，明确报错而不是乱插
-                    return Err(AppError::conflict(
-                        "排序值精度不足，无法在两者之间插入",
-                    )
-                    .with_hint("请在设置中执行一次「数据维护」，或把该任务拖到列表末尾"));
+                    return Err(AppError::conflict("排序值精度不足，无法在两者之间插入")
+                        .with_hint("请在设置中执行一次「数据维护」，或把该任务拖到列表末尾"));
                 }
                 renumbered = true;
                 renumber_sort_orders(db).await?;
@@ -1680,10 +1703,7 @@ pub async fn app_info(state: State<'_, AppState>) -> AppResult<AppInfo> {
 
 /// 切换提醒暂停状态（§8.6 托盘「暂停提醒」）。
 #[tauri::command]
-pub async fn set_reminders_paused(
-    state: State<'_, AppState>,
-    paused: bool,
-) -> AppResult<bool> {
+pub async fn set_reminders_paused(state: State<'_, AppState>, paused: bool) -> AppResult<bool> {
     state
         .reminders_paused
         .store(paused, std::sync::atomic::Ordering::Relaxed);
@@ -1694,7 +1714,9 @@ pub async fn set_reminders_paused(
 #[tauri::command]
 pub async fn ping(state: State<'_, AppState>) -> AppResult<String> {
     // 真正打一次数据库，确认连接池可用而不只是进程活着
-    let row = sqlx::query("SELECT 1 AS one").fetch_one(state.db.pool()).await?;
+    let row = sqlx::query("SELECT 1 AS one")
+        .fetch_one(state.db.pool())
+        .await?;
     let one: i64 = row.try_get("one")?;
     if one == 1 {
         Ok("pong".to_string())
@@ -1787,7 +1809,11 @@ mod tests {
                 continue; // 这是合法的
             }
             let e = validate_period(bad).unwrap_err();
-            assert!(e.message.contains(bad.trim()), "错误应包含非法值：{}", e.message);
+            assert!(
+                e.message.contains(bad.trim()),
+                "错误应包含非法值：{}",
+                e.message
+            );
             let hint = e.hint.unwrap_or_default();
             assert!(hint.contains("week"), "提示应列出允许值：{hint}");
             assert!(hint.contains("year"), "提示应包含 year：{hint}");
@@ -1873,8 +1899,7 @@ mod tests {
         // 注意时区：北京 10-05 00:00 == UTC 10-04 16:00，
         // 所以"保留 01:00 时刻"后落在 UTC 的 10-04 01:00
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (got, has_time) =
-            compute_rescheduled_at(Some("2026-09-25T01:00:00.000Z"), 1, target);
+        let (got, has_time) = compute_rescheduled_at(Some("2026-09-25T01:00:00.000Z"), 1, target);
         assert!(has_time, "原任务含具体时刻，改期后仍应含时刻");
         assert_eq!(got, "2026-10-04T01:00:00.000Z");
     }
@@ -1883,10 +1908,12 @@ mod tests {
     #[test]
     fn reschedule_keeps_date_only_unchanged() {
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (got, has_time) =
-            compute_rescheduled_at(Some("2026-09-25T00:00:00.000Z"), 0, target);
+        let (got, has_time) = compute_rescheduled_at(Some("2026-09-25T00:00:00.000Z"), 0, target);
         assert!(!has_time, "原任务是仅日期，改期后仍应是仅日期");
-        assert_eq!(got, "2026-10-04T16:00:00.000Z", "应为目标日期的本地零点所对应的 UTC");
+        assert_eq!(
+            got, "2026-10-04T16:00:00.000Z",
+            "应为目标日期的本地零点所对应的 UTC"
+        );
     }
 
     /// 原本没有计划时间的任务，拖到某天后仍标记为"仅日期"。

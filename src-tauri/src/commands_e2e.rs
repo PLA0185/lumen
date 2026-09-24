@@ -21,9 +21,7 @@ use crate::commands::{
 };
 use crate::db::Db;
 use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
-use crate::organize::{
-    merge_category_impl, merge_project_impl, merge_tag_impl, MergeInput,
-};
+use crate::organize::{merge_category_impl, merge_project_impl, merge_tag_impl, MergeInput};
 use sqlx::Row;
 
 /// 建临时库；调用方负责删除目录
@@ -97,7 +95,8 @@ async fn titles_in_order(db: &Db) -> Vec<String> {
 }
 
 /// 取某任务的某个列（用于断言归属是否真的改了）
-async fn col_str(db: &Db, id: &str, column: &str) -> Option<String> {    let sql = format!("SELECT {column} AS v FROM tasks WHERE id = ?1");
+async fn col_str(db: &Db, id: &str, column: &str) -> Option<String> {
+    let sql = format!("SELECT {column} AS v FROM tasks WHERE id = ?1");
     let row = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .fetch_one(db.pool())
@@ -179,7 +178,10 @@ async fn update_many_fields_generates_valid_sql() {
     assert_eq!(updated.priority, 2);
     assert_eq!(updated.project_id.as_deref(), Some(project.as_str()));
     assert_eq!(updated.category_id.as_deref(), Some(category.as_str()));
-    assert_eq!(updated.planned_at.as_deref(), Some("2026-10-01T01:00:00.000Z"));
+    assert_eq!(
+        updated.planned_at.as_deref(),
+        Some("2026-10-01T01:00:00.000Z")
+    );
     assert_eq!(updated.has_planned_time, 1);
     assert_eq!(updated.due_at.as_deref(), Some("2026-10-02T09:00:00.000Z"));
     assert_eq!(updated.estimated_minutes, Some(45));
@@ -389,11 +391,13 @@ async fn inbox_shows_only_tasks_without_project() {
     .unwrap();
     // C：未归属项目、已完成
     let c = create_task_impl(db, task("C-无项目已完成")).await.unwrap();
-    sqlx::query("UPDATE tasks SET status = 'done', completed_at = '2026-09-23T02:00:00.000Z' WHERE id = ?1")
-        .bind(&c.id)
-        .execute(db.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE tasks SET status = 'done', completed_at = '2026-09-23T02:00:00.000Z' WHERE id = ?1",
+    )
+    .bind(&c.id)
+    .execute(db.pool())
+    .await
+    .unwrap();
 
     // 收件箱：只有 A
     let inbox = titles_of(
@@ -415,12 +419,20 @@ async fn inbox_shows_only_tasks_without_project() {
     let all = titles_of(
         db,
         TaskQuery {
-            statuses: vec!["todo".into(), "doing".into(), "waiting".into(), "done".into()],
+            statuses: vec![
+                "todo".into(),
+                "doing".into(),
+                "waiting".into(),
+                "done".into(),
+            ],
             ..Default::default()
         },
     )
     .await;
-    assert!(all.contains(&"B-有项目待办".to_string()), "全部任务应包含 B");
+    assert!(
+        all.contains(&"B-有项目待办".to_string()),
+        "全部任务应包含 B"
+    );
     assert_eq!(all.len(), 3, "全部任务应有 3 条，实际：{all:?}");
 
     // 按指定项目筛选不受 without_project 影响
@@ -483,7 +495,11 @@ async fn none_project_id_alone_means_unlimited() {
         },
     )
     .await;
-    assert_eq!(unlimited.len(), 2, "不传条件时应返回全部，实际：{unlimited:?}");
+    assert_eq!(
+        unlimited.len(),
+        2,
+        "不传条件时应返回全部，实际：{unlimited:?}"
+    );
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -611,7 +627,10 @@ async fn failed_reminder_recompute_rolls_back_task_update() {
     )
     .await;
 
-    assert!(result.is_err(), "重算失败时整个更新必须失败，而不是静默成功");
+    assert!(
+        result.is_err(),
+        "重算失败时整个更新必须失败，而不是静默成功"
+    );
 
     // 关键断言：任务时间**没有被改**
     sqlx::query("ALTER TABLE reminders_hidden RENAME TO reminders")
@@ -775,11 +794,13 @@ async fn duplicate_resets_status_and_copies_relations() {
     .expect("创建源任务");
 
     // 源任务先完成，并加两个子任务（其中一个已完成）
-    sqlx::query("UPDATE tasks SET status = 'done', completed_at = '2026-09-23T02:00:00.000Z' WHERE id = ?1")
-        .bind(&src.id)
-        .execute(db.pool())
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE tasks SET status = 'done', completed_at = '2026-09-23T02:00:00.000Z' WHERE id = ?1",
+    )
+    .bind(&src.id)
+    .execute(db.pool())
+    .await
+    .unwrap();
     for (t, done) in [("收集数据", 1), ("画图", 0)] {
         sqlx::query(
             "INSERT INTO subtasks (id, task_id, title, is_done, sort_order, completed_at, created_at, updated_at)
@@ -822,13 +843,14 @@ async fn duplicate_resets_status_and_copies_relations() {
     assert_eq!(copy.estimated_minutes, Some(90));
 
     // 子任务进度重置：副本的两个子任务都必须是未完成
-    let done_sub: i64 = sqlx::query("SELECT COUNT(*) AS n FROM subtasks WHERE task_id = ?1 AND is_done = 1")
-        .bind(&new_id)
-        .fetch_one(db.pool())
-        .await
-        .unwrap()
-        .try_get("n")
-        .unwrap();
+    let done_sub: i64 =
+        sqlx::query("SELECT COUNT(*) AS n FROM subtasks WHERE task_id = ?1 AND is_done = 1")
+            .bind(&new_id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("n")
+            .unwrap();
     assert_eq!(done_sub, 0, "副本的子任务进度应重置");
 
     // 提醒的 fired_at 必须清空
@@ -942,7 +964,10 @@ async fn reorder_survives_repeated_inserts_at_same_spot() {
     let a = create_task_impl(db, task("头")).await.unwrap().id;
     let b = create_task_impl(db, task("尾")).await.unwrap().id;
     for i in 0..60 {
-        let mid = create_task_impl(db, task(&format!("中间{i}"))).await.unwrap().id;
+        let mid = create_task_impl(db, task(&format!("中间{i}")))
+            .await
+            .unwrap()
+            .id;
         reorder_task_impl(
             db,
             &ReorderInput {
@@ -954,10 +979,11 @@ async fn reorder_survives_repeated_inserts_at_same_spot() {
         .expect("反复插入同一位置");
     }
 
-    let rows = sqlx::query("SELECT title FROM tasks WHERE deleted_at IS NULL ORDER BY sort_order ASC")
-        .fetch_all(db.pool())
-        .await
-        .unwrap();
+    let rows =
+        sqlx::query("SELECT title FROM tasks WHERE deleted_at IS NULL ORDER BY sort_order ASC")
+            .fetch_all(db.pool())
+            .await
+            .unwrap();
     let titles: Vec<String> = rows
         .iter()
         .map(|r| r.try_get::<String, _>("title").unwrap())
@@ -968,16 +994,22 @@ async fn reorder_survives_repeated_inserts_at_same_spot() {
     assert_eq!(titles.len(), 62, "不应丢任务");
 
     // 差值必须仍然互不相等（否则说明重编号没生效，顺序会退化成不确定）
-    let orders: Vec<f64> = sqlx::query("SELECT sort_order FROM tasks WHERE deleted_at IS NULL ORDER BY sort_order ASC")
-        .fetch_all(db.pool())
-        .await
-        .unwrap()
-        .iter()
-        .map(|r| r.try_get::<f64, _>("sort_order").unwrap())
-        .collect();
+    let orders: Vec<f64> = sqlx::query(
+        "SELECT sort_order FROM tasks WHERE deleted_at IS NULL ORDER BY sort_order ASC",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap()
+    .iter()
+    .map(|r| r.try_get::<f64, _>("sort_order").unwrap())
+    .collect();
     let mut sorted = orders.clone();
     sorted.dedup();
-    assert_eq!(sorted.len(), orders.len(), "sort_order 出现重复值：{orders:?}");
+    assert_eq!(
+        sorted.len(),
+        orders.len(),
+        "sort_order 出现重复值：{orders:?}"
+    );
     assert!(a != b);
 
     let _ = std::fs::remove_dir_all(dir);
@@ -1027,17 +1059,24 @@ async fn merge_category_moves_open_tasks_and_soft_deletes_source() {
     .expect("合并分类");
     assert_eq!(moved, 2);
 
-    assert_eq!(col_str(db, &t1.id, "category_id").await.as_deref(), Some(keep.as_str()));
-    assert_eq!(col_str(db, &t2.id, "category_id").await.as_deref(), Some(keep.as_str()));
+    assert_eq!(
+        col_str(db, &t1.id, "category_id").await.as_deref(),
+        Some(keep.as_str())
+    );
+    assert_eq!(
+        col_str(db, &t2.id, "category_id").await.as_deref(),
+        Some(keep.as_str())
+    );
 
     // 源分类被软删除：列表查不到，但记录仍在（可审计）
-    let alive: i64 = sqlx::query("SELECT COUNT(*) AS n FROM categories WHERE id = ?1 AND deleted_at IS NULL")
-        .bind(&gone)
-        .fetch_one(db.pool())
-        .await
-        .unwrap()
-        .try_get("n")
-        .unwrap();
+    let alive: i64 =
+        sqlx::query("SELECT COUNT(*) AS n FROM categories WHERE id = ?1 AND deleted_at IS NULL")
+            .bind(&gone)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("n")
+            .unwrap();
     assert_eq!(alive, 0, "源分类应已从可见列表移除");
     let still_there: i64 = sqlx::query("SELECT COUNT(*) AS n FROM categories WHERE id = ?1")
         .bind(&gone)
@@ -1125,7 +1164,10 @@ async fn merge_project_and_tag_behave_same_way() {
         .unwrap(),
         1
     );
-    assert_eq!(col_str(db, &t.id, "project_id").await.as_deref(), Some(p_keep.as_str()));
+    assert_eq!(
+        col_str(db, &t.id, "project_id").await.as_deref(),
+        Some(p_keep.as_str())
+    );
 
     // 标签：任务同时拥有两个标签时，合并后不能出现重复关联
     let g_keep = insert_org(db, "tags", "紧急").await;
@@ -1148,14 +1190,15 @@ async fn merge_project_and_tag_behave_same_way() {
     .await
     .expect("合并标签");
 
-    let links: i64 = sqlx::query("SELECT COUNT(*) AS n FROM task_tags WHERE task_id = ?1 AND tag_id = ?2")
-        .bind(&t.id)
-        .bind(&g_keep)
-        .fetch_one(db.pool())
-        .await
-        .unwrap()
-        .try_get("n")
-        .unwrap();
+    let links: i64 =
+        sqlx::query("SELECT COUNT(*) AS n FROM task_tags WHERE task_id = ?1 AND tag_id = ?2")
+            .bind(&t.id)
+            .bind(&g_keep)
+            .fetch_one(db.pool())
+            .await
+            .unwrap()
+            .try_get("n")
+            .unwrap();
     assert_eq!(links, 1, "合并后不应产生重复的标签关联");
 
     let _ = std::fs::remove_dir_all(dir);

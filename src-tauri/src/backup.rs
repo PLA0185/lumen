@@ -241,9 +241,9 @@ fn sqlite_value_to_json(
 ) -> AppResult<serde_json::Value> {
     use sqlx::{TypeInfo, ValueRef};
 
-    let raw = row.try_get_raw(index).map_err(|e| {
-        AppError::internal(format!("读取备份字段失败（列 {index}）：{e}"))
-    })?;
+    let raw = row
+        .try_get_raw(index)
+        .map_err(|e| AppError::internal(format!("读取备份字段失败（列 {index}）：{e}")))?;
 
     if raw.is_null() {
         return Ok(serde_json::Value::Null);
@@ -305,11 +305,10 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
 
 /// 组装完整备份数据
 async fn build_backup_data(db: &Db) -> AppResult<BackupData> {
-    let attachment_count: i64 =
-        sqlx::query("SELECT COUNT(*) AS n FROM attachments")
-            .fetch_one(db.pool())
-            .await?
-            .try_get("n")?;
+    let attachment_count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM attachments")
+        .fetch_one(db.pool())
+        .await?
+        .try_get("n")?;
 
     Ok(BackupData {
         projects: dump_table(db, "projects").await?,
@@ -428,10 +427,7 @@ fn read_backup(path: &Path) -> AppResult<BackupFile> {
 
 /// 预览导入内容（不改动任何数据）
 #[tauri::command]
-pub async fn backup_preview(
-    state: State<'_, AppState>,
-    path: String,
-) -> AppResult<ImportPreview> {
+pub async fn backup_preview(state: State<'_, AppState>, path: String) -> AppResult<ImportPreview> {
     let p = PathBuf::from(&path);
     let file = read_backup(&p)?;
     let current = current_stats(&state.db).await?;
@@ -598,10 +594,7 @@ async fn table_columns(db: &Db, table: &str) -> AppResult<Vec<String>> {
 /// 步骤：校验 → 备份当前库 → 事务内清空并导入 → 提交。
 /// 任何一步失败都不会留下"清空了但没导入"的状态，因为清空与导入在同一事务内。
 #[tauri::command]
-pub async fn backup_restore(
-    state: State<'_, AppState>,
-    path: String,
-) -> AppResult<RestoreResult> {
+pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResult<RestoreResult> {
     let db = &state.db;
     let p = PathBuf::from(&path);
 
@@ -796,9 +789,9 @@ pub async fn backup_delete(state: State<'_, AppState>, path: String) -> AppResul
         .unwrap_or_else(|_| state.db.data_dir().join("backups"));
 
     let target = PathBuf::from(&path);
-    let target_abs = target.canonicalize().map_err(|_| {
-        AppError::not_found("备份文件", &path)
-    })?;
+    let target_abs = target
+        .canonicalize()
+        .map_err(|_| AppError::not_found("备份文件", &path))?;
 
     if !target_abs.starts_with(&dir) {
         return Err(AppError::conflict("只能删除备份目录内的文件")
@@ -976,16 +969,38 @@ pub async fn export_csv(state: State<'_, AppState>, path: String) -> AppResult<S
             csv_escape(&r.try_get::<String, _>("note_md")?),
             csv_escape(&r.try_get::<String, _>("status")?),
             r.try_get::<i64, _>("priority")?.to_string(),
-            csv_escape(r.try_get::<Option<String>, _>("project_name")?.as_deref().unwrap_or("")),
-            csv_escape(r.try_get::<Option<String>, _>("category_name")?.as_deref().unwrap_or("")),
+            csv_escape(
+                r.try_get::<Option<String>, _>("project_name")?
+                    .as_deref()
+                    .unwrap_or(""),
+            ),
+            csv_escape(
+                r.try_get::<Option<String>, _>("category_name")?
+                    .as_deref()
+                    .unwrap_or(""),
+            ),
             csv_escape(&tags),
-            csv_escape(r.try_get::<Option<String>, _>("planned_at")?.as_deref().unwrap_or("")),
+            csv_escape(
+                r.try_get::<Option<String>, _>("planned_at")?
+                    .as_deref()
+                    .unwrap_or(""),
+            ),
             r.try_get::<i64, _>("has_planned_time")?.to_string(),
-            csv_escape(r.try_get::<Option<String>, _>("due_at")?.as_deref().unwrap_or("")),
+            csv_escape(
+                r.try_get::<Option<String>, _>("due_at")?
+                    .as_deref()
+                    .unwrap_or(""),
+            ),
             r.try_get::<i64, _>("has_due_time")?.to_string(),
-            r.try_get::<Option<i64>, _>("estimated_minutes")?.map(|v| v.to_string()).unwrap_or_default(),
+            r.try_get::<Option<i64>, _>("estimated_minutes")?
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             r.try_get::<i64, _>("actual_minutes")?.to_string(),
-            csv_escape(r.try_get::<Option<String>, _>("completed_at")?.as_deref().unwrap_or("")),
+            csv_escape(
+                r.try_get::<Option<String>, _>("completed_at")?
+                    .as_deref()
+                    .unwrap_or(""),
+            ),
             csv_escape(&r.try_get::<String, _>("created_at")?),
             csv_escape(&r.try_get::<String, _>("updated_at")?),
             r.try_get::<i64, _>("is_pinned")?.to_string(),
@@ -1029,7 +1044,10 @@ pub async fn export_markdown(state: State<'_, AppState>, path: String) -> AppRes
 
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
     let mut md = String::new();
-    md.push_str(&format!("# Lumen 任务导出\n\n> 导出时间：{now}\n>\n> 共 {} 项任务。\n\n", rows.len()));
+    md.push_str(&format!(
+        "# Lumen 任务导出\n\n> 导出时间：{now}\n>\n> 共 {} 项任务。\n\n",
+        rows.len()
+    ));
 
     for r in rows {
         let title: String = r.try_get("title")?;

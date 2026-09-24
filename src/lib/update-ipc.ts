@@ -110,7 +110,8 @@ export async function checkUpdate(): Promise<{ info: UpdateInfo | null; handle: 
       handle: update,
     }
   } catch (e) {
-    throw new Error(readable(e))
+    // 保留原始异常作为 cause：排查时能看到底层错误，又不把英文原文丢给用户
+    throw new Error(readable(e), { cause: e })
   }
 }
 
@@ -143,7 +144,8 @@ export async function downloadAndInstall(
       }
     })
   } catch (e) {
-    throw new Error(readable(e))
+    // 保留原始异常作为 cause：排查时能看到底层错误，又不把英文原文丢给用户
+    throw new Error(readable(e), { cause: e })
   }
 }
 

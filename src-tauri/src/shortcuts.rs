@@ -24,10 +24,9 @@ use crate::window_mgr::WindowConfig;
 /// 解析失败时给出针对性的提示而不是抛一个底层错误。
 fn parse(accel: &str) -> AppResult<Shortcut> {
     accel.parse::<Shortcut>().map_err(|e| {
-        AppError::validation(format!("快捷键格式不正确：{accel}"))
-            .with_hint(format!(
-                "请使用「修饰键+按键」的写法，例如 Ctrl+Alt+A（底层错误：{e}）"
-            ))
+        AppError::validation(format!("快捷键格式不正确：{accel}")).with_hint(format!(
+            "请使用「修饰键+按键」的写法，例如 Ctrl+Alt+A（底层错误：{e}）"
+        ))
     })
 }
 
@@ -111,15 +110,15 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
         for f in &failures {
             log::warn!("{f}");
         }
-        Err(AppError::conflict(format!(
-            "有 {} 个全局快捷键未能注册",
-            failures.len()
-        ))
-        .with_hint(format!(
-            "{}\n\n多数情况是该快捷键已被其它程序占用。请换一个组合，\
+        Err(
+            AppError::conflict(format!("有 {} 个全局快捷键未能注册", failures.len())).with_hint(
+                format!(
+                    "{}\n\n多数情况是该快捷键已被其它程序占用。请换一个组合，\
              或在设置中关闭全局快捷键（注意：关闭后请确保托盘可用，否则将失去恢复入口）。",
-            failures.join("\n")
-        )))
+                    failures.join("\n")
+                ),
+            ),
+        )
     }
 }
 
@@ -130,12 +129,7 @@ mod tests {
     /// 合法的加速键写法应当能解析
     #[test]
     fn valid_accelerators_parse() {
-        for s in [
-            "CmdOrCtrl+Alt+A",
-            "Ctrl+Shift+N",
-            "Alt+F1",
-            "Super+T",
-        ] {
+        for s in ["CmdOrCtrl+Alt+A", "Ctrl+Shift+N", "Alt+F1", "Super+T"] {
             assert!(parse(s).is_ok(), "应能解析：{s}");
         }
     }
@@ -175,7 +169,11 @@ mod tests {
     fn default_config_shortcuts_are_parseable() {
         let c = WindowConfig::default();
         assert!(parse(&c.shortcut_toggle).is_ok(), "{}", c.shortcut_toggle);
-        assert!(parse(&c.shortcut_quick_add).is_ok(), "{}", c.shortcut_quick_add);
+        assert!(
+            parse(&c.shortcut_quick_add).is_ok(),
+            "{}",
+            c.shortcut_quick_add
+        );
         assert!(parse(&c.shortcut_today).is_ok(), "{}", c.shortcut_today);
     }
 }

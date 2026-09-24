@@ -74,11 +74,12 @@ pub async fn create_subtask_impl(db: &Db, task_id: &str, title: &str) -> AppResu
         )));
     }
 
-    let exists: i64 = sqlx::query("SELECT COUNT(*) AS n FROM tasks WHERE id = ?1 AND deleted_at IS NULL")
-        .bind(task_id)
-        .fetch_one(db.pool())
-        .await?
-        .try_get("n")?;
+    let exists: i64 =
+        sqlx::query("SELECT COUNT(*) AS n FROM tasks WHERE id = ?1 AND deleted_at IS NULL")
+            .bind(task_id)
+            .fetch_one(db.pool())
+            .await?
+            .try_get("n")?;
     if exists == 0 {
         return Err(AppError::not_found("任务", task_id));
     }
@@ -116,10 +117,7 @@ async fn get_subtask(db: &Db, id: &str) -> AppResult<Subtask> {
 
 /// 列出某任务的子任务
 #[tauri::command]
-pub async fn subtask_list(
-    state: State<'_, AppState>,
-    task_id: String,
-) -> AppResult<Vec<Subtask>> {
+pub async fn subtask_list(state: State<'_, AppState>, task_id: String) -> AppResult<Vec<Subtask>> {
     let rows = sqlx::query_as::<_, Subtask>(
         "SELECT * FROM subtasks WHERE task_id = ?1 ORDER BY sort_order ASC, created_at ASC",
     )
@@ -329,9 +327,8 @@ pub async fn dependency_add(
     // 循环检测：若 depends_on_id 已经（直接或间接）依赖 task_id，
     // 那么再加入 task_id → depends_on_id 就会成环。
     if would_create_cycle(&state, &task_id, &depends_on_id).await? {
-        return Err(AppError::conflict("该依赖会造成循环依赖，已阻止").with_hint(
-            "例如 A 依赖 B，同时 B 又依赖 A。请先解除其中一条依赖关系再试",
-        ));
+        return Err(AppError::conflict("该依赖会造成循环依赖，已阻止")
+            .with_hint("例如 A 依赖 B，同时 B 又依赖 A。请先解除其中一条依赖关系再试"));
     }
 
     let now = to_db_time(utc_now());
@@ -486,10 +483,7 @@ pub async fn dependency_remove(
 
 /// 检查某任务是否被未完成的前置任务阻塞
 #[tauri::command]
-pub async fn dependency_is_blocked(
-    state: State<'_, AppState>,
-    task_id: String,
-) -> AppResult<bool> {
+pub async fn dependency_is_blocked(state: State<'_, AppState>, task_id: String) -> AppResult<bool> {
     let row = sqlx::query(
         "SELECT COUNT(*) AS n
          FROM task_dependencies d
@@ -579,7 +573,9 @@ mod tests {
         // 长链也必须能正常结束（验证 visited 去重有效）
         let mut g: std::collections::HashMap<String, Vec<String>> = Default::default();
         for i in 0..500 {
-            g.entry(format!("n{i}")).or_default().push(format!("n{}", i + 1));
+            g.entry(format!("n{i}"))
+                .or_default()
+                .push(format!("n{}", i + 1));
         }
         assert!(has_path(&g, "n0", "n500"));
         assert!(!has_path(&g, "n500", "n0"));

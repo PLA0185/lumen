@@ -190,9 +190,8 @@ fn compute_remind_at(
     };
 
     let offset = |m: Option<i64>| -> AppResult<chrono::Duration> {
-        let m = m.ok_or_else(|| {
-            AppError::validation("该提醒类型必须指定提前分钟数 offsetMinutes")
-        })?;
+        let m =
+            m.ok_or_else(|| AppError::validation("该提醒类型必须指定提前分钟数 offsetMinutes"))?;
         if !(OFFSET_MIN..=OFFSET_MAX).contains(&m) {
             return Err(AppError::validation(format!("提前分钟数超出范围：{m}"))
                 .with_hint(format!("允许 {OFFSET_MIN}–{OFFSET_MAX} 分钟")));
@@ -238,12 +237,10 @@ pub async fn reminder_create(
     let db = &state.db;
 
     // 读取任务的时间字段，用于推导绝对触发时刻
-    let row = sqlx::query(
-        "SELECT planned_at, due_at, status, deleted_at FROM tasks WHERE id = ?1",
-    )
-    .bind(&input.task_id)
-    .fetch_optional(db.pool())
-    .await?;
+    let row = sqlx::query("SELECT planned_at, due_at, status, deleted_at FROM tasks WHERE id = ?1")
+        .bind(&input.task_id)
+        .fetch_optional(db.pool())
+        .await?;
 
     let Some(row) = row else {
         return Err(AppError::not_found("任务", &input.task_id));
@@ -271,8 +268,10 @@ pub async fn reminder_create(
             ReminderKind::AtPlanned | ReminderKind::BeforePlanned => "计划时间",
             ReminderKind::Custom => "提醒时间",
         };
-        return Err(AppError::validation(format!("该任务尚未设置{missing}，无法创建此提醒"))
-            .with_hint(format!("请先为任务填写{missing}，或改用「自定义时间」提醒")));
+        return Err(
+            AppError::validation(format!("该任务尚未设置{missing}，无法创建此提醒"))
+                .with_hint(format!("请先为任务填写{missing}，或改用「自定义时间」提醒")),
+        );
     };
 
     let id = uuid::Uuid::now_v7().to_string();
@@ -335,7 +334,11 @@ pub async fn reminder_set_enabled(
     // - 用户关闭 → 记成 `user`，这样将来任务时间变了，
     //   重算逻辑也不会"好心"把它自动打开。
     // 如果这里不写原因，重算逻辑就无法区分"用户关的"和"系统关的"。
-    let reason: Option<&str> = if enabled { None } else { Some(DISABLED_BY_USER) };
+    let reason: Option<&str> = if enabled {
+        None
+    } else {
+        Some(DISABLED_BY_USER)
+    };
     sqlx::query(
         "UPDATE reminders SET is_enabled = ?1, disabled_reason = ?2, updated_at = ?3 WHERE id = ?4",
     )
@@ -370,8 +373,10 @@ pub async fn reminder_snooze(
     minutes: i64,
 ) -> AppResult<Reminder> {
     if !(1..=OFFSET_MAX).contains(&minutes) {
-        return Err(AppError::validation(format!("稍后提醒的分钟数超出范围：{minutes}"))
-            .with_hint(format!("允许 1–{OFFSET_MAX} 分钟")));
+        return Err(
+            AppError::validation(format!("稍后提醒的分钟数超出范围：{minutes}"))
+                .with_hint(format!("允许 1–{OFFSET_MAX} 分钟")),
+        );
     }
     let r = get_reminder(&state, &id).await?;
     let base = chrono::DateTime::parse_from_rfc3339(&r.remind_at)
@@ -398,9 +403,7 @@ pub async fn reminder_snooze(
 
 /// 读取调度器状态（设置页展示用）
 #[tauri::command]
-pub async fn reminder_scheduler_status(
-    state: State<'_, AppState>,
-) -> AppResult<SchedulerStatus> {
+pub async fn reminder_scheduler_status(state: State<'_, AppState>) -> AppResult<SchedulerStatus> {
     let db = &state.db;
     let pending: i64 = sqlx::query(
         "SELECT COUNT(*) AS n FROM reminders WHERE is_enabled = 1 AND fired_at IS NULL",
@@ -409,10 +412,11 @@ pub async fn reminder_scheduler_status(
     .await?
     .try_get("n")?;
 
-    let expired: i64 = sqlx::query("SELECT COUNT(*) AS n FROM reminders WHERE fired_at = 'expired'")
-        .fetch_one(db.pool())
-        .await?
-        .try_get("n")?;
+    let expired: i64 =
+        sqlx::query("SELECT COUNT(*) AS n FROM reminders WHERE fired_at = 'expired'")
+            .fetch_one(db.pool())
+            .await?
+            .try_get("n")?;
 
     Ok(SchedulerStatus {
         running: !state.scheduler_stopped.load(Ordering::Relaxed),
@@ -425,14 +429,13 @@ pub async fn reminder_scheduler_status(
 
 /// 设置补发窗口（分钟）。0 表示不补发程序关闭期间到期的提醒。
 #[tauri::command]
-pub async fn reminder_set_grace(
-    state: State<'_, AppState>,
-    minutes: i64,
-) -> AppResult<i64> {
+pub async fn reminder_set_grace(state: State<'_, AppState>, minutes: i64) -> AppResult<i64> {
     if !(GRACE_MIN..=GRACE_MAX).contains(&minutes) {
-        return Err(AppError::validation(format!("补发窗口超出范围：{minutes} 分钟")).with_hint(
-            format!("允许 {GRACE_MIN}–{GRACE_MAX} 分钟（0 表示不补发关闭期间错过的提醒）"),
-        ));
+        return Err(
+            AppError::validation(format!("补发窗口超出范围：{minutes} 分钟")).with_hint(format!(
+                "允许 {GRACE_MIN}–{GRACE_MAX} 分钟（0 表示不补发关闭期间错过的提醒）"
+            )),
+        );
     }
     state.missed_grace_minutes.store(minutes, Ordering::Relaxed);
     Ok(minutes)
@@ -610,11 +613,14 @@ async fn fire(app: &AppHandle, d: &DueReminder) {
         log::info!("通知已提交给 Windows 通知中心（提醒 {}）", d.id);
     }
 
-    let _ = app.emit("reminder-fired", serde_json::json!({
-        "id": d.id,
-        "taskId": d.task_id,
-        "title": d.title,
-    }));
+    let _ = app.emit(
+        "reminder-fired",
+        serde_json::json!({
+            "id": d.id,
+            "taskId": d.task_id,
+            "title": d.title,
+        }),
+    );
 }
 
 /// 通过系统通知中心发送提醒。
@@ -632,18 +638,19 @@ async fn send_notification(app: &AppHandle, title: &str, remind_at: &str) -> App
         .title("Lumen 提醒")
         .body(format!("{title}\n计划时间：{body_time}"));
 
-    notification
-        .show()
-        .map_err(|e| AppError::new(crate::error::ErrorCode::Internal, format!("系统通知发送失败：{e}"))
-            .with_hint("请检查 Windows 通知设置是否允许 Lumen 发送通知"))?;
+    notification.show().map_err(|e| {
+        AppError::new(
+            crate::error::ErrorCode::Internal,
+            format!("系统通知发送失败：{e}"),
+        )
+        .with_hint("请检查 Windows 通知设置是否允许 Lumen 发送通知")
+    })?;
     Ok(())
 }
 
 /// 手动触发一次补发整理（设置页的"立即检查错过的提醒"按钮）
 #[tauri::command]
-pub async fn reminder_check_missed(
-    state: State<'_, AppState>,
-) -> AppResult<i64> {
+pub async fn reminder_check_missed(state: State<'_, AppState>) -> AppResult<i64> {
     let grace = state.missed_grace_minutes.load(Ordering::Relaxed);
     let now = utc_now();
     let cutoff = to_db_time(now - chrono::Duration::minutes(grace));
@@ -865,11 +872,13 @@ mod disable_reason_tests {
     }
 
     async fn reminder_row(db: &Db, id: &str) -> (i64, Option<String>, String) {
-        let row = sqlx::query("SELECT is_enabled, disabled_reason, remind_at FROM reminders WHERE id = ?1")
-            .bind(id)
-            .fetch_one(db.pool())
-            .await
-            .unwrap();
+        let row = sqlx::query(
+            "SELECT is_enabled, disabled_reason, remind_at FROM reminders WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
         (
             row.try_get("is_enabled").unwrap(),
             row.try_get("disabled_reason").unwrap(),
@@ -920,7 +929,10 @@ mod disable_reason_tests {
         recompute_task_reminders(&db, &task_id).await.unwrap();
 
         let (enabled, reason, at) = reminder_row(&db, &reminder_id).await;
-        assert_eq!(enabled, 1, "依赖时间恢复后应自动重新启用（§6.2 的产品规则）");
+        assert_eq!(
+            enabled, 1,
+            "依赖时间恢复后应自动重新启用（§6.2 的产品规则）"
+        );
         assert!(reason.is_none(), "恢复后不应再带停用原因");
         assert_eq!(at, "2026-10-02T11:30:00.000Z", "提醒时刻要跟着新截止时间走");
 
@@ -1023,7 +1035,8 @@ mod disable_reason_tests {
     #[tokio::test]
     async fn migration_marks_legacy_disabled_as_user_disabled() {
         let (db, dir) = setup("legacy").await;
-        let (_, reminder_id) = task_with_relative_reminder(&db, Some("2026-10-01T10:00:00.000Z")).await;
+        let (_, reminder_id) =
+            task_with_relative_reminder(&db, Some("2026-10-01T10:00:00.000Z")).await;
 
         // 模拟"升级前就是停用状态"的老数据
         sqlx::query("UPDATE reminders SET is_enabled = 0, disabled_reason = NULL WHERE id = ?1")
@@ -1040,7 +1053,11 @@ mod disable_reason_tests {
 
         let (enabled, reason, _) = reminder_row(&db, &reminder_id).await;
         assert_eq!(enabled, 0);
-        assert_eq!(reason.as_deref(), Some(DISABLED_BY_USER), "老数据应保守地视为用户关闭");
+        assert_eq!(
+            reason.as_deref(),
+            Some(DISABLED_BY_USER),
+            "老数据应保守地视为用户关闭"
+        );
 
         let _ = db.pool().close().await;
         let _ = std::fs::remove_dir_all(dir);
@@ -1064,29 +1081,39 @@ mod tests {
 
     #[test]
     fn at_planned_uses_planned_time_exactly() {
-        let got = compute_remind_at(ReminderKind::AtPlanned, None, None, Some(PLANNED), Some(DUE))
-            .unwrap()
-            .unwrap();
+        let got = compute_remind_at(
+            ReminderKind::AtPlanned,
+            None,
+            None,
+            Some(PLANNED),
+            Some(DUE),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(got, PLANNED);
     }
 
     #[test]
     fn before_due_subtracts_offset() {
         // 提前 30 分钟：09:30 → 09:00
-        let got =
-            compute_remind_at(ReminderKind::BeforeDue, Some(30), None, None, Some(DUE))
-                .unwrap()
-                .unwrap();
+        let got = compute_remind_at(ReminderKind::BeforeDue, Some(30), None, None, Some(DUE))
+            .unwrap()
+            .unwrap();
         assert_eq!(got, "2026-09-24T09:00:00.000Z");
     }
 
     #[test]
     fn before_planned_subtracts_offset_across_day() {
         // 提前 120 分钟：UTC 01:00 → 前一天 23:00，跨日必须正确
-        let got =
-            compute_remind_at(ReminderKind::BeforePlanned, Some(120), None, Some(PLANNED), None)
-                .unwrap()
-                .unwrap();
+        let got = compute_remind_at(
+            ReminderKind::BeforePlanned,
+            Some(120),
+            None,
+            Some(PLANNED),
+            None,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(got, "2026-09-22T23:00:00.000Z");
     }
 
@@ -1108,18 +1135,22 @@ mod tests {
     /// 用户可能先建提醒再填时间，这是合法的操作顺序。
     #[test]
     fn missing_base_time_yields_none_not_error() {
-        assert!(compute_remind_at(ReminderKind::AtDue, None, None, None, None)
-            .unwrap()
-            .is_none());
+        assert!(
+            compute_remind_at(ReminderKind::AtDue, None, None, None, None)
+                .unwrap()
+                .is_none()
+        );
         assert!(
             compute_remind_at(ReminderKind::BeforeDue, Some(30), None, None, None)
                 .unwrap()
                 .is_none()
         );
         // 计划时间缺失但截止时间存在时，AtDue 仍可正常推导
-        assert!(compute_remind_at(ReminderKind::AtDue, None, None, None, Some(DUE))
-            .unwrap()
-            .is_some());
+        assert!(
+            compute_remind_at(ReminderKind::AtDue, None, None, None, Some(DUE))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -1130,7 +1161,9 @@ mod tests {
 
     #[test]
     fn offset_range_is_enforced() {
-        assert!(compute_remind_at(ReminderKind::BeforeDue, Some(0), None, None, Some(DUE)).is_err());
+        assert!(
+            compute_remind_at(ReminderKind::BeforeDue, Some(0), None, None, Some(DUE)).is_err()
+        );
         assert!(
             compute_remind_at(ReminderKind::BeforeDue, Some(-5), None, None, Some(DUE)).is_err()
         );
@@ -1143,10 +1176,14 @@ mod tests {
         )
         .is_err());
         // 边界值应当可用
-        assert!(
-            compute_remind_at(ReminderKind::BeforeDue, Some(OFFSET_MIN), None, None, Some(DUE))
-                .is_ok()
-        );
+        assert!(compute_remind_at(
+            ReminderKind::BeforeDue,
+            Some(OFFSET_MIN),
+            None,
+            None,
+            Some(DUE)
+        )
+        .is_ok());
         assert!(compute_remind_at(
             ReminderKind::BeforeDue,
             Some(OFFSET_MAX),
@@ -1161,18 +1198,18 @@ mod tests {
     fn custom_requires_time() {
         assert!(compute_remind_at(ReminderKind::Custom, None, None, None, None).is_err());
         let empty = String::new();
-        assert!(
-            compute_remind_at(ReminderKind::Custom, None, Some(&empty), None, None).is_err()
-        );
+        assert!(compute_remind_at(ReminderKind::Custom, None, Some(&empty), None, None).is_err());
     }
 
     #[test]
     fn invalid_time_string_is_rejected() {
-        assert!(compute_remind_at(ReminderKind::AtDue, None, None, None, Some("not-a-time"))
-            .is_err());
+        assert!(
+            compute_remind_at(ReminderKind::AtDue, None, None, None, Some("not-a-time")).is_err()
+        );
         // 只有日期没有时区，语义不明确，必须拒绝
-        assert!(compute_remind_at(ReminderKind::AtDue, None, None, None, Some("2026-09-24"))
-            .is_err());
+        assert!(
+            compute_remind_at(ReminderKind::AtDue, None, None, None, Some("2026-09-24")).is_err()
+        );
     }
 
     /// 产出必须是固定 24 字符宽度，与全库时间格式一致

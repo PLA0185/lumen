@@ -85,7 +85,9 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .targets([
                     Target::new(TargetKind::Stdout),
-                    Target::new(TargetKind::LogDir { file_name: Some("lumen".into()) }),
+                    Target::new(TargetKind::LogDir {
+                        file_name: Some("lumen".into()),
+                    }),
                 ])
                 .level(if cfg!(debug_assertions) {
                     log::LevelFilter::Debug
@@ -236,7 +238,11 @@ pub fn run() {
                         let _ = window.hide();
                         log::info!(
                             "主窗口已隐藏到托盘（恢复方式：{}）",
-                            if has_tray { "托盘菜单" } else { "全局快捷键" }
+                            if has_tray {
+                                "托盘菜单"
+                            } else {
+                                "全局快捷键"
+                            }
                         );
                     } else {
                         // 没有恢复路径时**允许真正关闭**，而不是把用户困住
@@ -490,7 +496,10 @@ fn current_config(app: &AppHandle) -> WindowConfig {
 fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<tauri::Wry>> {
     let paused = app
         .try_state::<AppState>()
-        .map(|s| s.reminders_paused.load(std::sync::atomic::Ordering::Relaxed))
+        .map(|s| {
+            s.reminders_paused
+                .load(std::sync::atomic::Ordering::Relaxed)
+        })
         .unwrap_or(false);
 
     // 今日未完成数：从内存缓存读取。
@@ -498,7 +507,10 @@ fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<ta
     // 在同步上下文里查库会导致 tokio 运行时嵌套崩溃。
     let cached = app
         .try_state::<AppState>()
-        .map(|s| s.today_open_count.load(std::sync::atomic::Ordering::Relaxed))
+        .map(|s| {
+            s.today_open_count
+                .load(std::sync::atomic::Ordering::Relaxed)
+        })
         .unwrap_or(-1);
 
     let today_text = match cached {
@@ -507,8 +519,20 @@ fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<ta
         n => format!("今日未完成：{n} 项"),
     };
 
-    let toggle = MenuItem::with_id(app, tray_ids::TOGGLE, "打开 / 隐藏主窗口", true, None::<&str>)?;
-    let quick = MenuItem::with_id(app, tray_ids::QUICK_ADD, "快速添加任务…", true, None::<&str>)?;
+    let toggle = MenuItem::with_id(
+        app,
+        tray_ids::TOGGLE,
+        "打开 / 隐藏主窗口",
+        true,
+        None::<&str>,
+    )?;
+    let quick = MenuItem::with_id(
+        app,
+        tray_ids::QUICK_ADD,
+        "快速添加任务…",
+        true,
+        None::<&str>,
+    )?;
     let today = MenuItem::with_id(app, tray_ids::TODAY, today_text, true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
 
@@ -553,7 +577,11 @@ fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<ta
     let pause = CheckMenuItem::with_id(
         app,
         tray_ids::PAUSE_REMINDERS,
-        if paused { "恢复提醒" } else { "暂停提醒" },
+        if paused {
+            "恢复提醒"
+        } else {
+            "暂停提醒"
+        },
         true,
         paused,
         None::<&str>,
@@ -590,9 +618,8 @@ fn local_today_range() -> (String, String) {
         .and_then(|d| chrono::Local.from_local_datetime(&d).single())
         .unwrap_or(now);
     let end = start + chrono::Duration::days(1);
-    let fmt = |d: chrono::DateTime<chrono::Local>| {
-        crate::db::to_db_time(d.with_timezone(&chrono::Utc))
-    };
+    let fmt =
+        |d: chrono::DateTime<chrono::Local>| crate::db::to_db_time(d.with_timezone(&chrono::Utc));
     (fmt(start), fmt(end))
 }
 
@@ -671,7 +698,10 @@ fn handle_tray_menu(app: &AppHandle, event: MenuEvent) {
 
         tray_ids::PAUSE_REMINDERS => {
             let now = tauri::async_runtime::block_on(window_mgr::toggle_reminders_paused(app));
-            log::info!("提醒已{}（来自托盘菜单）", if now { "暂停" } else { "恢复" });
+            log::info!(
+                "提醒已{}（来自托盘菜单）",
+                if now { "暂停" } else { "恢复" }
+            );
             refresh_tray_menu(app);
         }
 

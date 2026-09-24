@@ -214,8 +214,10 @@ impl ProviderConfig {
             return Err(AppError::validation("Base URL 不能为空"));
         }
         if !u.starts_with("https://") && !u.starts_with("http://") {
-            return Err(AppError::validation(format!("Base URL 必须以 http:// 或 https:// 开头：{u}"))
-                .with_hint("例如 https://api.deepseek.com"));
+            return Err(AppError::validation(format!(
+                "Base URL 必须以 http:// 或 https:// 开头：{u}"
+            ))
+            .with_hint("例如 https://api.deepseek.com"));
         }
         // 明文 HTTP 只允许本机（本地模型常见），其它地址必须用 HTTPS，
         // 否则 API Key 会在网络上明文传输。
@@ -233,10 +235,11 @@ impl ProviderConfig {
             };
             let is_local = matches!(host, "localhost" | "127.0.0.1" | "::1");
             if !is_local {
-                return Err(AppError::validation(
-                    "出于安全考虑，非本机地址必须使用 https://",
-                )
-                .with_hint("明文 HTTP 会让 API Key 在网络上以明文传输，仅在连接 localhost 时允许"));
+                return Err(
+                    AppError::validation("出于安全考虑，非本机地址必须使用 https://").with_hint(
+                        "明文 HTTP 会让 API Key 在网络上以明文传输，仅在连接 localhost 时允许",
+                    ),
+                );
             }
         }
         if self.model.trim().is_empty() {
@@ -253,12 +256,15 @@ impl ProviderConfig {
 
 /// 凭据条目名
 fn key_name(provider: Provider) -> String {
-    format!("ai-{}", match provider {
-        Provider::DeepSeek => "deepseek",
-        Provider::OpenAI => "openai",
-        Provider::Claude => "claude",
-        Provider::Custom => "custom",
-    })
+    format!(
+        "ai-{}",
+        match provider {
+            Provider::DeepSeek => "deepseek",
+            Provider::OpenAI => "openai",
+            Provider::Claude => "claude",
+            Provider::Custom => "custom",
+        }
+    )
 }
 
 /// 保存 API Key 到系统凭据管理器（§6 要求优先使用 Windows 凭据管理）
@@ -267,9 +273,8 @@ pub fn save_api_key(provider: Provider, key: &str) -> AppResult<()> {
     if k.is_empty() {
         return delete_api_key(provider);
     }
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider)).map_err(|e| {
-        AppError::internal(format!("无法访问系统凭据管理器：{e}"))
-    })?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+        .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     entry.set_password(k).map_err(|e| {
         AppError::internal(format!("保存密钥失败：{e}"))
             .with_hint("请确认当前用户有权限写入 Windows 凭据管理器")
@@ -281,9 +286,8 @@ pub fn save_api_key(provider: Provider, key: &str) -> AppResult<()> {
 
 /// 读取 API Key
 pub fn load_api_key(provider: Provider) -> AppResult<Option<String>> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider)).map_err(|e| {
-        AppError::internal(format!("无法访问系统凭据管理器：{e}"))
-    })?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+        .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     match entry.get_password() {
         Ok(p) if !p.trim().is_empty() => Ok(Some(p)),
         Ok(_) => Ok(None),
@@ -294,9 +298,8 @@ pub fn load_api_key(provider: Provider) -> AppResult<Option<String>> {
 
 /// 删除 API Key
 pub fn delete_api_key(provider: Provider) -> AppResult<()> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider)).map_err(|e| {
-        AppError::internal(format!("无法访问系统凭据管理器：{e}"))
-    })?;
+    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+        .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     match entry.delete_credential() {
         Ok(()) => {
             log::info!("已删除 {} 的 API Key", provider.label());
@@ -397,10 +400,16 @@ fn map_net_err(e: reqwest::Error) -> AppError {
         AppError::new(crate::error::ErrorCode::Timeout, "请求超时")
             .with_hint("服务商响应过慢或网络不稳定。可在设置中调大超时时间，或稍后重试")
     } else if e.is_connect() {
-        AppError::new(crate::error::ErrorCode::Network, format!("无法连接到服务商：{e}"))
-            .with_hint("请检查网络、代理设置与 Base URL 是否正确")
+        AppError::new(
+            crate::error::ErrorCode::Network,
+            format!("无法连接到服务商：{e}"),
+        )
+        .with_hint("请检查网络、代理设置与 Base URL 是否正确")
     } else {
-        AppError::new(crate::error::ErrorCode::Network, format!("网络请求失败：{e}"))
+        AppError::new(
+            crate::error::ErrorCode::Network,
+            format!("网络请求失败：{e}"),
+        )
     }
 }
 
@@ -477,12 +486,7 @@ pub fn sanitize_provider_error(body: &str, limit: usize) -> String {
 /// - 长度 ≥ 32 的纯字母数字串（很多网关会裸回显 token）
 fn redact_secrets(input: &str) -> String {
     const MARKERS: [&str; 6] = [
-        "sk-ant-",
-        "sk-proj-",
-        "sk-",
-        "Bearer ",
-        "bearer ",
-        "api-key",
+        "sk-ant-", "sk-proj-", "sk-", "Bearer ", "bearer ", "api-key",
     ];
 
     let mut out = String::with_capacity(input.len());
@@ -546,17 +550,24 @@ fn map_http_error(provider: Provider, status: u16, body: &str) -> AppError {
     // 就说明两处处理不一致，因此这里只算一次。
     let snippet = sanitize_provider_error(body, 300);
     match status {
-        401 | 403 => AppError::new(crate::error::ErrorCode::Unauthorized, "API Key 无效或没有权限")
-            .with_hint(format!(
-                "请在设置中检查 {} 的 API Key 是否正确、是否已过期。\n服务商返回：{snippet}",
-                provider.label()
-            )),
+        401 | 403 => AppError::new(
+            crate::error::ErrorCode::Unauthorized,
+            "API Key 无效或没有权限",
+        )
+        .with_hint(format!(
+            "请在设置中检查 {} 的 API Key 是否正确、是否已过期。\n服务商返回：{snippet}",
+            provider.label()
+        )),
         402 => AppError::new(crate::error::ErrorCode::QuotaExceeded, "账户余额不足")
             .with_hint("这是计费问题，重试无效。请到服务商控制台充值后重试"),
-        429 => AppError::new(crate::error::ErrorCode::RateLimited, "请求过于频繁，已触发限流")
-            .with_hint("请稍后重试。若频繁出现，请降低调用频率或检查账户配额"),
-        400 | 422 => AppError::validation(format!("请求参数被拒绝（HTTP {status}）"))
-            .with_hint(format!("常见原因：模型名不存在、参数超范围。\n服务商返回：{snippet}")),
+        429 => AppError::new(
+            crate::error::ErrorCode::RateLimited,
+            "请求过于频繁，已触发限流",
+        )
+        .with_hint("请稍后重试。若频繁出现，请降低调用频率或检查账户配额"),
+        400 | 422 => AppError::validation(format!("请求参数被拒绝（HTTP {status}）")).with_hint(
+            format!("常见原因：模型名不存在、参数超范围。\n服务商返回：{snippet}"),
+        ),
         404 => AppError::validation("接口地址不存在（HTTP 404）").with_hint(format!(
             "请检查 Base URL 是否正确——注意 DeepSeek 的地址不含 /v1。\n服务商返回：{snippet}"
         )),
@@ -849,14 +860,17 @@ fn parse_openai_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
 
     // DeepSeek 官方提示"偶发返回空内容"，这种情况要明确告知而不是当成成功
     if text.trim().is_empty() {
-        return Err(AppError::new(
-            crate::error::ErrorCode::Internal,
-            "服务商返回了空内容",
-        )
-        .with_hint("DeepSeek 官方提示存在偶发返回空内容的情况，可重试一次；若持续出现请更换模型"));
+        return Err(
+            AppError::new(crate::error::ErrorCode::Internal, "服务商返回了空内容").with_hint(
+                "DeepSeek 官方提示存在偶发返回空内容的情况，可重试一次；若持续出现请更换模型",
+            ),
+        );
     }
 
-    let finish = choice.get("finish_reason").and_then(|f| f.as_str()).unwrap_or("");
+    let finish = choice
+        .get("finish_reason")
+        .and_then(|f| f.as_str())
+        .unwrap_or("");
     let usage = v.get("usage").map(|u| TokenUsage {
         input_tokens: u.get("prompt_tokens").and_then(|x| x.as_i64()),
         output_tokens: u.get("completion_tokens").and_then(|x| x.as_i64()),
@@ -884,9 +898,7 @@ fn parse_anthropic_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
     let blocks = v
         .get("content")
         .and_then(|c| c.as_array())
-        .ok_or_else(|| {
-            AppError::internal("Claude 返回的结构不符合预期（缺少 content 数组）")
-        })?;
+        .ok_or_else(|| AppError::internal("Claude 返回的结构不符合预期（缺少 content 数组）"))?;
 
     let mut text = String::new();
     for b in blocks {
@@ -899,11 +911,10 @@ fn parse_anthropic_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
     }
 
     if text.trim().is_empty() {
-        return Err(AppError::new(
-            crate::error::ErrorCode::Internal,
-            "Claude 返回了空内容",
-        )
-        .with_hint("可能被安全策略拦截，或响应只包含非文本块。可尝试调整提示词后重试"));
+        return Err(
+            AppError::new(crate::error::ErrorCode::Internal, "Claude 返回了空内容")
+                .with_hint("可能被安全策略拦截，或响应只包含非文本块。可尝试调整提示词后重试"),
+        );
     }
 
     let stop = v.get("stop_reason").and_then(|s| s.as_str()).unwrap_or("");
@@ -911,7 +922,9 @@ fn parse_anthropic_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
         input_tokens: u.get("input_tokens").and_then(|x| x.as_i64()),
         output_tokens: u.get("output_tokens").and_then(|x| x.as_i64()),
         cache_hit_tokens: u.get("cache_read_input_tokens").and_then(|x| x.as_i64()),
-        cache_miss_tokens: u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()),
+        cache_miss_tokens: u
+            .get("cache_creation_input_tokens")
+            .and_then(|x| x.as_i64()),
     });
 
     Ok(ChatResponse {
@@ -957,10 +970,7 @@ pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResp
     }
     let (body, wire) = match cfg.provider {
         Provider::Claude => (build_anthropic_body(req), Wire::Anthropic),
-        Provider::OpenAI => (
-            build_openai_responses_body(req),
-            Wire::OpenAiResponses,
-        ),
+        Provider::OpenAI => (build_openai_responses_body(req), Wire::OpenAiResponses),
         _ => (build_openai_body(req), Wire::OpenAiChat),
     };
 
@@ -1018,7 +1028,11 @@ pub async fn test_connection(cfg: &ProviderConfig) -> AppResult<String> {
     let preview: String = r.text.trim().chars().take(60).collect();
     Ok(format!(
         "连接成功。模型 {} 返回：{}",
-        if r.model.is_empty() { &cfg.model } else { &r.model },
+        if r.model.is_empty() {
+            &cfg.model
+        } else {
+            &r.model
+        },
         preview
     ))
 }
@@ -1028,12 +1042,8 @@ pub async fn test_connection(cfg: &ProviderConfig) -> AppResult<String> {
 /// §6 要求"模型列表接口若不可用允许手动输入模型名"，因此这里**失败不算错**：
 /// 返回空列表 + 说明，让界面引导用户手动填写。
 pub async fn list_models(cfg: &ProviderConfig) -> AppResult<Vec<String>> {
-    let api_key = load_api_key(cfg.provider)?.ok_or_else(|| {
-        AppError::new(
-            crate::error::ErrorCode::NotConfigured,
-            "尚未配置 API Key",
-        )
-    })?;
+    let api_key = load_api_key(cfg.provider)?
+        .ok_or_else(|| AppError::new(crate::error::ErrorCode::NotConfigured, "尚未配置 API Key"))?;
 
     let client = build_client(20)?;
     let base = cfg.base_url.trim_end_matches('/');
@@ -1088,9 +1098,7 @@ use crate::commands::AppState;
 
 /// 读取当前 AI 配置（**不含密钥**）
 #[tauri::command]
-pub async fn ai_get_config(
-    state: State<'_, AppState>,
-) -> AppResult<Option<ProviderConfig>> {
+pub async fn ai_get_config(state: State<'_, AppState>) -> AppResult<Option<ProviderConfig>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT value_json FROM settings WHERE key = 'ai_config'")
             .fetch_optional(state.db.pool())
@@ -1140,7 +1148,11 @@ pub async fn ai_set_config(
         "AI 配置已更新：{} / {}（密钥{}）",
         cfg.provider.label(),
         cfg.model,
-        if cfg.has_api_key { "已保存" } else { "未设置" }
+        if cfg.has_api_key {
+            "已保存"
+        } else {
+            "未设置"
+        }
     );
     Ok(cfg)
 }
@@ -1153,9 +1165,7 @@ pub async fn ai_test_connection(config: ProviderConfig) -> AppResult<String> {
 
 /// 列出可用模型。失败时返回空列表 + 原因，界面据此引导手动输入（§6）。
 #[tauri::command]
-pub async fn ai_list_models(
-    config: ProviderConfig,
-) -> AppResult<serde_json::Value> {
+pub async fn ai_list_models(config: ProviderConfig) -> AppResult<serde_json::Value> {
     match list_models(&config).await {
         Ok(list) => Ok(serde_json::json!({ "ok": true, "models": list })),
         Err(e) => Ok(serde_json::json!({
@@ -1171,10 +1181,7 @@ pub async fn ai_list_models(
 
 /// 删除已保存的密钥
 #[tauri::command]
-pub async fn ai_clear_key(
-    state: State<'_, AppState>,
-    provider: Provider,
-) -> AppResult<bool> {
+pub async fn ai_clear_key(state: State<'_, AppState>, provider: Provider) -> AppResult<bool> {
     delete_api_key(provider)?;
     // 同步更新数据库里的 has_api_key 标记
     if let Some((json,)) =
@@ -1187,11 +1194,13 @@ pub async fn ai_clear_key(
                 cfg.has_api_key = false;
                 let now = crate::db::to_db_time(crate::db::utc_now());
                 let s = serde_json::to_string(&cfg).unwrap_or(json);
-                sqlx::query("UPDATE settings SET value_json = ?1, updated_at = ?2 WHERE key = 'ai_config'")
-                    .bind(&s)
-                    .bind(&now)
-                    .execute(state.db.pool())
-                    .await?;
+                sqlx::query(
+                    "UPDATE settings SET value_json = ?1, updated_at = ?2 WHERE key = 'ai_config'",
+                )
+                .bind(&s)
+                .bind(&now)
+                .execute(state.db.pool())
+                .await?;
             }
         }
     }
@@ -1301,7 +1310,10 @@ mod provider_matrix_tests {
 
             if c.anthropic_style {
                 assert_eq!(body["system"], "S", "Claude 的 system 应在顶层");
-                assert!(body.get("max_tokens").is_some(), "Claude 的 max_tokens 必填");
+                assert!(
+                    body.get("max_tokens").is_some(),
+                    "Claude 的 max_tokens 必填"
+                );
             }
         }
     }
@@ -1572,9 +1584,18 @@ mod tests {
 
     #[test]
     fn default_base_urls_match_official_docs() {
-        assert_eq!(Provider::DeepSeek.default_base_url(), "https://api.deepseek.com");
-        assert_eq!(Provider::OpenAI.default_base_url(), "https://api.openai.com/v1");
-        assert_eq!(Provider::Claude.default_base_url(), "https://api.anthropic.com");
+        assert_eq!(
+            Provider::DeepSeek.default_base_url(),
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            Provider::OpenAI.default_base_url(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            Provider::Claude.default_base_url(),
+            "https://api.anthropic.com"
+        );
     }
 
     /// 默认模型必须是调研时官方文档列出的 ID，不能用已退役的旧名
@@ -1663,8 +1684,14 @@ mod tests {
         assert!(oa.get("input").is_some(), "Responses 用 input");
         assert!(oa.get("messages").is_none(), "Responses 不应出现 messages");
         assert_eq!(oa["instructions"], "系统提示", "system 走顶层 instructions");
-        assert_eq!(oa["max_output_tokens"], 128, "输出上限字段名是 max_output_tokens");
-        assert!(oa.get("max_tokens").is_none(), "Responses 不接受 max_tokens");
+        assert_eq!(
+            oa["max_output_tokens"], 128,
+            "输出上限字段名是 max_output_tokens"
+        );
+        assert!(
+            oa.get("max_tokens").is_none(),
+            "Responses 不接受 max_tokens"
+        );
         assert_eq!(
             oa["text"]["format"]["type"], "json_object",
             "JSON 输出走 text.format"
@@ -1686,11 +1713,14 @@ mod tests {
         // --- Anthropic ---
         let cl = build_anthropic_body(&req(Provider::Claude));
         assert_eq!(cl["system"], "系统提示", "Anthropic 的 system 是顶层字段");
-        assert!(cl["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|m| m["role"] != "system"), "Anthropic 的 messages 里不能有 system");
+        assert!(
+            cl["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["role"] != "system"),
+            "Anthropic 的 messages 里不能有 system"
+        );
         assert_eq!(cl["max_tokens"], 128, "Anthropic 的 max_tokens 必填");
         assert_eq!(cl["output_config"]["format"]["type"], "json_schema");
     }
@@ -1741,7 +1771,11 @@ mod tests {
         let u = r.usage.unwrap();
         assert_eq!(u.input_tokens, Some(120));
         assert_eq!(u.output_tokens, Some(34));
-        assert_eq!(u.cache_hit_tokens, Some(100), "缓存命中取 input_tokens_details");
+        assert_eq!(
+            u.cache_hit_tokens,
+            Some(100),
+            "缓存命中取 input_tokens_details"
+        );
     }
 
     /// 截断状态：OpenAI Responses 看 status=incomplete，而不是 finish_reason
@@ -1809,7 +1843,11 @@ mod tests {
                            "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1 }
             })
         };
-        assert!(parse_anthropic_response(&mk("max_tokens")).unwrap().truncated);
+        assert!(
+            parse_anthropic_response(&mk("max_tokens"))
+                .unwrap()
+                .truncated
+        );
         assert!(!parse_anthropic_response(&mk("end_turn")).unwrap().truncated);
 
         let r = parse_anthropic_response(&mk("end_turn")).unwrap();
@@ -1873,7 +1911,10 @@ mod tests {
     fn provider_error_bodies_are_sanitized() {
         // 1) Bearer token 被回显
         let s = sanitize_provider_error("Unauthorized: Bearer sk-abcdef1234567890abcdef", 300);
-        assert!(!s.contains("sk-abcdef1234567890abcdef"), "密钥必须被打码：{s}");
+        assert!(
+            !s.contains("sk-abcdef1234567890abcdef"),
+            "密钥必须被打码：{s}"
+        );
         assert!(s.contains("***"));
         assert!(s.contains("Unauthorized"), "但错误原因要保留");
 
@@ -1891,7 +1932,10 @@ mod tests {
             "<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>",
             300,
         );
-        assert!(!s.contains('<') && !s.contains('>'), "HTML 标签应被剥掉：{s}");
+        assert!(
+            !s.contains('<') && !s.contains('>'),
+            "HTML 标签应被剥掉：{s}"
+        );
         assert!(s.contains("502 Bad Gateway"));
 
         // 5) 超长正文被截断且明示
@@ -2007,10 +2051,7 @@ mod tests {
         let mut c = cfg(Provider::Custom);
         c.model = "local-model".into();
 
-        for ok in [
-            "http://localhost:11434/v1",
-            "http://127.0.0.1:8080/v1",
-        ] {
+        for ok in ["http://localhost:11434/v1", "http://127.0.0.1:8080/v1"] {
             c.base_url = ok.into();
             assert!(c.validate().is_ok(), "本机地址应允许：{ok}");
         }
@@ -2105,7 +2146,10 @@ mod tests {
         assert_ne!(ds, cl);
 
         // DeepSeek 的默认姿态是"用于改进服务"，必须明说
-        assert!(ds.contains("改进"), "DeepSeek 文案应说明默认用于改进服务：{ds}");
+        assert!(
+            ds.contains("改进"),
+            "DeepSeek 文案应说明默认用于改进服务：{ds}"
+        );
         assert!(ds.contains("关闭") || ds.contains("opt"), "应说明如何退出");
     }
 

@@ -78,11 +78,8 @@ fn ensure_inside_attachments(state: &AppState, candidate: &Path) -> AppResult<Pa
         .map_err(|e| AppError::new(crate::error::ErrorCode::Io, format!("附件目录不可用：{e}")))?;
 
     let cand_abs = candidate.canonicalize().map_err(|e| {
-        AppError::new(
-            crate::error::ErrorCode::Io,
-            format!("文件路径无效：{e}"),
-        )
-        .with_hint("文件可能已被移动或删除")
+        AppError::new(crate::error::ErrorCode::Io, format!("文件路径无效：{e}"))
+            .with_hint("文件可能已被移动或删除")
     })?;
 
     if !cand_abs.starts_with(&root_abs) {
@@ -290,10 +287,7 @@ pub async fn attachment_list(
 /// - 引用模式：**只删记录，绝不动原文件**（任务书明确要求）。
 /// - 复制模式：删记录，并删除我们自己的副本（副本在受控目录内，删它不影响用户原件）。
 #[tauri::command]
-pub async fn attachment_remove(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<bool> {
+pub async fn attachment_remove(state: State<'_, AppState>, id: String) -> AppResult<bool> {
     let a = get_attachment(&state, &id).await?;
 
     let mut removed_copy = false;
@@ -323,17 +317,18 @@ pub async fn attachment_remove(
         "已删除附件记录「{}」（模式 {}，副本文件{}）",
         a.file_name,
         a.storage_mode,
-        if removed_copy { "已删除" } else { "未涉及" }
+        if removed_copy {
+            "已删除"
+        } else {
+            "未涉及"
+        }
     );
     Ok(removed_copy)
 }
 
 /// 在文件管理器中定位附件（用户想要"找到这个文件"）
 #[tauri::command]
-pub async fn attachment_reveal(
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<String> {
+pub async fn attachment_reveal(state: State<'_, AppState>, id: String) -> AppResult<String> {
     let a = get_attachment(&state, &id).await?;
     let p = a
         .open_path()
@@ -386,7 +381,11 @@ mod tests {
     #[test]
     fn mime_guess_covers_common_types() {
         assert_eq!(guess_mime("a.pdf").as_deref(), Some("application/pdf"));
-        assert_eq!(guess_mime("图.PNG").as_deref(), Some("image/png"), "扩展名应大小写无关");
+        assert_eq!(
+            guess_mime("图.PNG").as_deref(),
+            Some("image/png"),
+            "扩展名应大小写无关"
+        );
         assert_eq!(guess_mime("data.csv").as_deref(), Some("text/csv"));
         assert_eq!(guess_mime("noext"), None);
         assert_eq!(guess_mime("unknown.xyz"), None);

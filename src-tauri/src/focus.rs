@@ -151,7 +151,11 @@ fn session_seconds(s: &FocusSession, now: chrono::DateTime<chrono::Utc>) -> i64 
 }
 
 /// 构造会话的实时视图
-fn to_view(s: FocusSession, now: chrono::DateTime<chrono::Utc>, task_title: Option<String>) -> FocusView {
+fn to_view(
+    s: FocusSession,
+    now: chrono::DateTime<chrono::Utc>,
+    task_title: Option<String>,
+) -> FocusView {
     let current = session_seconds(&s, now);
     let is_pomodoro = s.kind == "pomodoro";
     let remaining = if is_pomodoro {
@@ -216,8 +220,10 @@ pub async fn focus_start(
 
     let minutes = input.minutes.unwrap_or(DEFAULT_POMODORO_MINUTES);
     if kind == "pomodoro" && !(MIN_MINUTES..=MAX_MINUTES).contains(&minutes) {
-        return Err(AppError::validation(format!("时长超出范围：{minutes} 分钟"))
-            .with_hint(format!("允许 {MIN_MINUTES}–{MAX_MINUTES} 分钟")));
+        return Err(
+            AppError::validation(format!("时长超出范围：{minutes} 分钟"))
+                .with_hint(format!("允许 {MIN_MINUTES}–{MAX_MINUTES} 分钟")),
+        );
     }
 
     // 2) 校验任务存在（若有绑定）
@@ -304,9 +310,7 @@ pub async fn focus_current(state: State<'_, AppState>) -> AppResult<Option<Focus
 
     // 倒计时会话已远超预期时长 → 判定为用户已离开，标记为中断并告知，
     // 而不是继续显示一个"还在计时"的假象，也不是默默给一个虚高的时长。
-    if s.kind == "pomodoro"
-        && s.planned_seconds > 0
-        && secs > s.planned_seconds * INTERRUPT_FACTOR
+    if s.kind == "pomodoro" && s.planned_seconds > 0 && secs > s.planned_seconds * INTERRUPT_FACTOR
     {
         let ts = to_db_time(now);
         sqlx::query(
@@ -391,10 +395,7 @@ pub async fn focus_resume(state: State<'_, AppState>, session_id: String) -> App
 
 /// 结束并记录
 #[tauri::command]
-pub async fn focus_end(
-    state: State<'_, AppState>,
-    input: EndFocusInput,
-) -> AppResult<FocusView> {
+pub async fn focus_end(state: State<'_, AppState>, input: EndFocusInput) -> AppResult<FocusView> {
     let db = &state.db;
     let s = get_session(db, &input.session_id).await?;
 
@@ -443,10 +444,7 @@ pub async fn focus_end(
 
 /// 放弃当前专注（不记录时长）
 #[tauri::command]
-pub async fn focus_cancel(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> AppResult<bool> {
+pub async fn focus_cancel(state: State<'_, AppState>, session_id: String) -> AppResult<bool> {
     let db = &state.db;
     let s = get_session(db, &session_id).await?;
     let now = to_db_time(utc_now());
@@ -486,7 +484,8 @@ pub async fn focus_summary(state: State<'_, AppState>) -> AppResult<FocusSummary
     let db = &state.db;
     let today = chrono::Local::now().date_naive();
     let today_str = today.format("%Y-%m-%d").to_string();
-    let week_start = today - chrono::Duration::days((today.format("%u").to_string().parse::<i64>().unwrap_or(1)) - 1);
+    let week_start = today
+        - chrono::Duration::days((today.format("%u").to_string().parse::<i64>().unwrap_or(1)) - 1);
 
     // 只统计"已完成"的会话——中断的时长不应算作有效专注
     let today_row = sqlx::query(
@@ -555,7 +554,13 @@ pub fn format_hms(seconds: i64) -> String {
 mod tests {
     use super::*;
 
-    fn mk(state: &str, elapsed: i64, resumed: Option<&str>, planned: i64, kind: &str) -> FocusSession {
+    fn mk(
+        state: &str,
+        elapsed: i64,
+        resumed: Option<&str>,
+        planned: i64,
+        kind: &str,
+    ) -> FocusSession {
         FocusSession {
             id: "s1".into(),
             task_id: None,
@@ -580,7 +585,13 @@ mod tests {
     /// 进行中的会话要算上"从上次恢复到现在"的真实时间
     #[test]
     fn running_session_accumulates_realtime() {
-        let s = mk("running", 300, Some("2026-09-23T01:10:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "running",
+            300,
+            Some("2026-09-23T01:10:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         let now = at("2026-09-23T01:12:00.000Z");
         assert_eq!(session_seconds(&s, now), 300 + 120);
     }
@@ -588,7 +599,13 @@ mod tests {
     /// 暂停后时间必须停止累积，否则用户会发现自己"被计时"了
     #[test]
     fn paused_session_does_not_accumulate() {
-        let s = mk("paused", 300, Some("2026-09-23T01:10:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "paused",
+            300,
+            Some("2026-09-23T01:10:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         let far_later = at("2026-09-23T05:00:00.000Z");
         assert_eq!(
             session_seconds(&s, far_later),
@@ -608,7 +625,13 @@ mod tests {
     /// 时钟回拨（用户改了系统时间）不能让计时倒退
     #[test]
     fn clock_going_backwards_does_not_reduce_elapsed() {
-        let s = mk("running", 300, Some("2026-09-23T01:10:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "running",
+            300,
+            Some("2026-09-23T01:10:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         // "现在"早于 last_resumed_at
         let now = at("2026-09-23T01:05:00.000Z");
         assert_eq!(session_seconds(&s, now), 300, "时钟回拨时应保持已累计值");
@@ -630,7 +653,13 @@ mod tests {
 
     #[test]
     fn pomodoro_view_has_remaining_and_due() {
-        let s = mk("running", 1400, Some("2026-09-23T01:00:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "running",
+            1400,
+            Some("2026-09-23T01:00:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         let v = to_view(s, at("2026-09-23T01:01:40.000Z"), None);
         assert_eq!(v.current_seconds, 1500);
         assert_eq!(v.remaining_seconds, Some(0));
@@ -641,7 +670,13 @@ mod tests {
     /// 正计时没有"剩余时间"，界面不应显示倒计时
     #[test]
     fn stopwatch_view_has_no_remaining() {
-        let s = mk("running", 100, Some("2026-09-23T01:00:00.000Z"), 0, "stopwatch");
+        let s = mk(
+            "running",
+            100,
+            Some("2026-09-23T01:00:00.000Z"),
+            0,
+            "stopwatch",
+        );
         let v = to_view(s, at("2026-09-23T01:00:50.000Z"), None);
         assert_eq!(v.current_seconds, 150);
         assert_eq!(v.remaining_seconds, None);
@@ -652,7 +687,13 @@ mod tests {
 
     #[test]
     fn progress_is_capped_at_hundred() {
-        let s = mk("running", 3000, Some("2026-09-23T01:00:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "running",
+            3000,
+            Some("2026-09-23T01:00:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         let v = to_view(s, at("2026-09-23T01:10:00.000Z"), None);
         assert_eq!(v.progress, 100, "进度不应超过 100");
         assert_eq!(v.remaining_seconds, Some(0), "剩余不应为负");
@@ -660,7 +701,13 @@ mod tests {
 
     #[test]
     fn view_carries_task_title() {
-        let s = mk("running", 0, Some("2026-09-23T01:00:00.000Z"), 1500, "pomodoro");
+        let s = mk(
+            "running",
+            0,
+            Some("2026-09-23T01:00:00.000Z"),
+            1500,
+            "pomodoro",
+        );
         let v = to_view(s, at("2026-09-23T01:00:00.000Z"), Some("写周报".into()));
         assert_eq!(v.task_title.as_deref(), Some("写周报"));
     }

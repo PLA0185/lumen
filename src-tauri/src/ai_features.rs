@@ -1,4 +1,4 @@
-﻿//! AI 功能层（任务书 §6）。
+//! AI 功能层（任务书 §6）。
 //!
 //! ## 本模块的核心约束
 //!
@@ -179,7 +179,8 @@ fn register(capability: &str, items: Vec<DiffItem>) -> String {
     let now = Instant::now();
     if let Ok(mut r) = registry().lock() {
         // 顺手清理过期项，避免长期运行后无限增长
-        r.map.retain(|_, (t, _)| now.duration_since(*t) < PREVIEW_TTL);
+        r.map
+            .retain(|_, (t, _)| now.duration_since(*t) < PREVIEW_TTL);
         r.map.insert(
             id.clone(),
             (
@@ -207,9 +208,8 @@ fn take(id: &str) -> AppResult<(String, Vec<DiffItem>)> {
             }
             Ok((p.capability, p.items))
         }
-        None => Err(AppError::not_found("预览", id).with_hint(
-            "预览可能已过期、已被应用，或程序重启过。请重新生成后再确认",
-        )),
+        None => Err(AppError::not_found("预览", id)
+            .with_hint("预览可能已过期、已被应用，或程序重启过。请重新生成后再确认")),
     }
 }
 
@@ -281,17 +281,11 @@ fn extract_json(text: &str) -> AppResult<serde_json::Value> {
 /// §6 要求"日期与时区校验"：模型经常返回 `2026-09-25` 这样的纯日期，
 /// 或相对描述（"明天"）。纯日期按**当天本地零点**解释并明确标注为"仅日期"，
 /// 而不是当成凌晨到期（§4.3 明确禁止把全天任务当作凌晨到期）。
-fn normalize_model_datetime(
-    field: &str,
-    raw: &str,
-) -> AppResult<(Option<String>, bool)> {
+fn normalize_model_datetime(field: &str, raw: &str) -> AppResult<(Option<String>, bool)> {
     let s = raw.trim();
     // 模型返回"空值"的写法不统一：空串、null、NULL、"None" 都出现过。
     // 大小写敏感地只认 "null" 会让大写形式被当成非法日期而报错。
-    if s.is_empty()
-        || s.eq_ignore_ascii_case("null")
-        || s.eq_ignore_ascii_case("none")
-        || s == "-"
+    if s.is_empty() || s.eq_ignore_ascii_case("null") || s.eq_ignore_ascii_case("none") || s == "-"
     {
         return Ok((None, false));
     }
@@ -310,10 +304,11 @@ fn normalize_model_datetime(
         let local = d
             .and_hms_opt(0, 0, 0)
             .and_then(|ndt| chrono::Local.from_local_datetime(&ndt).single())
-            .ok_or_else(|| {
-                AppError::validation(format!("{field}无法转换为本地时间：{s}"))
-            })?;
-        return Ok((Some(crate::db::to_db_time(local.with_timezone(&chrono::Utc))), false));
+            .ok_or_else(|| AppError::validation(format!("{field}无法转换为本地时间：{s}")))?;
+        return Ok((
+            Some(crate::db::to_db_time(local.with_timezone(&chrono::Utc))),
+            false,
+        ));
     }
 
     // 本地日期时间（无时区）
@@ -323,13 +318,16 @@ fn normalize_model_datetime(
             .from_local_datetime(&ndt)
             .single()
             .ok_or_else(|| AppError::validation(format!("{field}无法转换为本地时间：{s}")))?;
-        return Ok((Some(crate::db::to_db_time(local.with_timezone(&chrono::Utc))), true));
+        return Ok((
+            Some(crate::db::to_db_time(local.with_timezone(&chrono::Utc))),
+            true,
+        ));
     }
 
-    Err(AppError::validation(format!(
-        "{field}的日期格式无法识别：{s}"
-    ))
-    .with_hint("AI 应返回 YYYY-MM-DD 或带时区的 ISO-8601。可重新生成，或手动修正该条"))
+    Err(
+        AppError::validation(format!("{field}的日期格式无法识别：{s}"))
+            .with_hint("AI 应返回 YYYY-MM-DD 或带时区的 ISO-8601。可重新生成，或手动修正该条"),
+    )
 }
 
 /// 校验一条 `create` 条目，产出 DiffItem
@@ -606,10 +604,7 @@ fn detect_duplicates(items: &[DiffItem], issues: &mut Vec<ValidationIssue>) {
             issues.push(ValidationIssue {
                 level: "warning".into(),
                 index: i + 1,
-                message: format!(
-                    "与第 {} 条内容重复（标题与计划时间相同）",
-                    prev + 1
-                ),
+                message: format!("与第 {} 条内容重复（标题与计划时间相同）", prev + 1),
             });
         } else {
             seen.insert(key, i);
@@ -649,7 +644,10 @@ async fn collect_task_brief(
     ids: Option<&[String]>,
     limit: i64,
     send_notes: bool,
-) -> AppResult<(Vec<serde_json::Value>, HashMap<String, (String, Option<String>)>)> {
+) -> AppResult<(
+    Vec<serde_json::Value>,
+    HashMap<String, (String, Option<String>)>,
+)> {
     let rows = if let Some(id_list) = ids.filter(|l| !l.is_empty()) {
         // 只取用户选中的任务
         let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
@@ -758,12 +756,13 @@ pub async fn ai_organize(
         return Err(AppError::validation("请先输入需要整理的文本"));
     }
     if text.chars().count() > 20_000 {
-        return Err(AppError::validation("输入过长，请分段整理（上限 20000 字符）"));
+        return Err(AppError::validation(
+            "输入过长，请分段整理（上限 20000 字符）",
+        ));
     }
 
     // 已有任务摘要用于去重判断，但**不发送备注**（除用户显式开启）
-    let (brief, _index) =
-        collect_task_brief(&state, None, 80, input.send_notes).await?;
+    let (brief, _index) = collect_task_brief(&state, None, 80, input.send_notes).await?;
 
     let user = format!(
         "已有任务（用于避免重复）：\n{}\n\n需要整理的文本：\n{}",
@@ -884,9 +883,7 @@ pub async fn ai_breakdown(
         "estimatedMinutes": est,
     });
     if input.as_subtasks {
-        payload["note"] = serde_json::json!(
-            "结果将以子任务形式提交，需要你确认后才会写入"
-        );
+        payload["note"] = serde_json::json!("结果将以子任务形式提交，需要你确认后才会写入");
     }
 
     let resp = ai::chat(
@@ -1052,13 +1049,8 @@ pub async fn ai_plan(
         return Err(AppError::validation("每日可用时间应在 1–1440 分钟之间"));
     }
 
-    let (brief, index) = collect_task_brief(
-        &state,
-        input.task_ids.as_deref(),
-        120,
-        input.send_notes,
-    )
-    .await?;
+    let (brief, index) =
+        collect_task_brief(&state, input.task_ids.as_deref(), 120, input.send_notes).await?;
 
     if brief.is_empty() {
         return Err(AppError::validation("没有可安排的任务")
@@ -1146,10 +1138,7 @@ pub async fn ai_plan(
     }
     if let Some(unsched) = value.get("unscheduled").and_then(|v| v.as_array()) {
         for u in unsched.iter().take(10) {
-            let reason = u
-                .get("reason")
-                .and_then(|v| v.as_str())
-                .unwrap_or("排不下");
+            let reason = u.get("reason").and_then(|v| v.as_str()).unwrap_or("排不下");
             let tid = u.get("taskId").and_then(|v| v.as_str()).unwrap_or("");
             let name = index.get(tid).map(|(t, _)| t.as_str()).unwrap_or(tid);
             issues.push(ValidationIssue {
@@ -1165,7 +1154,9 @@ pub async fn ai_plan(
     // 排程本身的合理性检查：不能把任务排到自己的截止时间之后
     let mut late = 0;
     for (i, it) in items.iter().enumerate() {
-        let Some(tid) = it.task_id.as_ref() else { continue };
+        let Some(tid) = it.task_id.as_ref() else {
+            continue;
+        };
         let due: Option<String> = sqlx::query("SELECT due_at FROM tasks WHERE id = ?1")
             .bind(tid)
             .fetch_optional(state.db.pool())
@@ -1407,9 +1398,24 @@ pub async fn ai_apply(
                      )",
                 )
                 .bind(&id)
-                .bind(it.payload.get("title").and_then(|v| v.as_str()).unwrap_or(&it.title))
-                .bind(it.payload.get("description").and_then(|v| v.as_str()).unwrap_or(""))
-                .bind(it.payload.get("priority").and_then(|v| v.as_i64()).unwrap_or(0))
+                .bind(
+                    it.payload
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&it.title),
+                )
+                .bind(
+                    it.payload
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                )
+                .bind(
+                    it.payload
+                        .get("priority")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0),
+                )
                 .bind(it.payload.get("projectId").and_then(|v| v.as_str()))
                 .bind(it.payload.get("categoryId").and_then(|v| v.as_str()))
                 .bind(it.payload.get("plannedAt").and_then(|v| v.as_str()))
@@ -1465,7 +1471,9 @@ pub async fn ai_apply(
 
     tx.commit().await?;
 
-    log::info!("应用 AI「{capability}」预览：新增 {created}、修改 {updated}（共 {total} 条被接受）");
+    log::info!(
+        "应用 AI「{capability}」预览：新增 {created}、修改 {updated}（共 {total} 条被接受）"
+    );
 
     Ok(ApplyResult {
         created,
@@ -1485,9 +1493,7 @@ pub async fn ai_discard(preview_id: String) -> AppResult<bool> {
 
 /// 冲突检测（不依赖 AI，纯规则计算；§6 要求"识别明显排程冲突并建议改期"）
 #[tauri::command]
-pub async fn schedule_conflicts(
-    state: State<'_, AppState>,
-) -> AppResult<Vec<serde_json::Value>> {
+pub async fn schedule_conflicts(state: State<'_, AppState>) -> AppResult<Vec<serde_json::Value>> {
     // 同一天内被安排了过多耗时，或截止时间早于计划时间
     let rows = sqlx::query(
         "SELECT
@@ -1589,7 +1595,10 @@ mod tests {
     fn date_only_is_marked_as_date_only() {
         let (dt, has_time) = normalize_model_datetime("截止时间", "2026-09-25").unwrap();
         assert!(dt.is_some());
-        assert!(!has_time, "纯日期必须是「仅日期」，否则全天任务会被当成凌晨到期");
+        assert!(
+            !has_time,
+            "纯日期必须是「仅日期」，否则全天任务会被当成凌晨到期"
+        );
     }
 
     #[test]
@@ -1603,12 +1612,24 @@ mod tests {
     #[test]
     fn empty_or_null_means_unset() {
         assert_eq!(normalize_model_datetime("x", "").unwrap(), (None, false));
-        assert_eq!(normalize_model_datetime("x", "null").unwrap(), (None, false));
+        assert_eq!(
+            normalize_model_datetime("x", "null").unwrap(),
+            (None, false)
+        );
         assert_eq!(normalize_model_datetime("x", "   ").unwrap(), (None, false));
         // "null" 字符串是模型常见的表示方式
-        assert_eq!(normalize_model_datetime("x", "NULL").unwrap(), (None, false));
-        assert_eq!(normalize_model_datetime("x", "Null").unwrap(), (None, false));
-        assert_eq!(normalize_model_datetime("x", "None").unwrap(), (None, false));
+        assert_eq!(
+            normalize_model_datetime("x", "NULL").unwrap(),
+            (None, false)
+        );
+        assert_eq!(
+            normalize_model_datetime("x", "Null").unwrap(),
+            (None, false)
+        );
+        assert_eq!(
+            normalize_model_datetime("x", "None").unwrap(),
+            (None, false)
+        );
         assert_eq!(normalize_model_datetime("x", "-").unwrap(), (None, false));
     }
 
@@ -1622,7 +1643,11 @@ mod tests {
     /// 输出必须是固定宽度 UTC，与全库格式一致
     #[test]
     fn normalized_output_is_fixed_width() {
-        for raw in ["2026-09-25", "2026-09-25T09:30:00+08:00", "2026-09-25T09:30:00"] {
+        for raw in [
+            "2026-09-25",
+            "2026-09-25T09:30:00+08:00",
+            "2026-09-25T09:30:00",
+        ] {
             let (dt, _) = normalize_model_datetime("x", raw).unwrap();
             let s = dt.unwrap();
             assert_eq!(s.len(), 24, "{raw} → {s}");
@@ -1639,7 +1664,11 @@ mod tests {
     #[test]
     fn create_requires_title() {
         let mut issues = Vec::new();
-        let r = build_create_item(0, &obj(serde_json::json!({"dueAt": "2026-09-25"})), &mut issues);
+        let r = build_create_item(
+            0,
+            &obj(serde_json::json!({"dueAt": "2026-09-25"})),
+            &mut issues,
+        );
         assert!(r.is_none(), "缺少标题应被拒绝");
         assert!(issues.iter().any(|i| i.level == "error"));
     }
@@ -1768,7 +1797,9 @@ mod tests {
             &mut issues,
         );
         assert!(r.is_some(), "不应阻止");
-        assert!(issues.iter().any(|i| i.level == "warning" && i.message.contains("没有变化")));
+        assert!(issues
+            .iter()
+            .any(|i| i.level == "warning" && i.message.contains("没有变化")));
     }
 
     // ------------------------- 重复检测 -------------------------

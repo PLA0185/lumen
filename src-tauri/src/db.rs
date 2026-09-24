@@ -209,18 +209,19 @@ async fn open_probe_connection(db_path: &Path) -> Result<SqliteConnection, DbErr
 pub async fn pending_migrations(db_path: &Path) -> Result<Vec<String>, DbError> {
     let mut conn = open_probe_connection(db_path).await?;
 
-    let applied: Vec<i64> = match sqlx::query_scalar::<_, i64>("SELECT version FROM _sqlx_migrations")
-        .fetch_all(&mut conn)
-        .await
-    {
-        Ok(v) => v,
-        // 表不存在 = 全新库（或不是 sqlx 建的库）：当作"没有旧数据要保护"
-        Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => Vec::new(),
-        Err(e) => {
-            let _ = conn.close().await;
-            return Err(DbError::Sqlx(e));
-        }
-    };
+    let applied: Vec<i64> =
+        match sqlx::query_scalar::<_, i64>("SELECT version FROM _sqlx_migrations")
+            .fetch_all(&mut conn)
+            .await
+        {
+            Ok(v) => v,
+            // 表不存在 = 全新库（或不是 sqlx 建的库）：当作"没有旧数据要保护"
+            Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => Vec::new(),
+            Err(e) => {
+                let _ = conn.close().await;
+                return Err(DbError::Sqlx(e));
+            }
+        };
     let _ = conn.close().await;
 
     let mut pending: Vec<String> = Vec::new();
@@ -284,7 +285,9 @@ async fn vacuum_into(db_path: &Path, dest: &Path) -> Result<(), DbError> {
     // 显式标注已审计（与 `backup_to` 同一处理）。
     let dest_str = dest.to_string_lossy().replace('\'', "''");
     let sql = format!("VACUUM INTO '{dest_str}'");
-    let res = sqlx::query(sqlx::AssertSqlSafe(sql)).execute(&mut conn).await;
+    let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .execute(&mut conn)
+        .await;
     let _ = conn.close().await;
     res?;
     Ok(())
@@ -293,7 +296,9 @@ async fn vacuum_into(db_path: &Path, dest: &Path) -> Result<(), DbError> {
 /// 把 WAL 内容并入主库文件（降级路径用）。
 async fn checkpoint_truncate(db_path: &Path) -> Result<(), DbError> {
     let mut conn = open_probe_connection(db_path).await?;
-    let res = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&mut conn).await;
+    let res = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut conn)
+        .await;
     let _ = conn.close().await;
     res?;
     Ok(())
@@ -381,8 +386,14 @@ mod tests {
         // 关掉自动 checkpoint，并**保持这个连接不关闭**：
         // 一旦所有连接关闭，SQLite 会把 WAL 并回主库，就模拟不出这个场景了。
         let mut writer = open_probe_connection(&db_path).await.unwrap();
-        sqlx::query("PRAGMA journal_mode=WAL").execute(&mut writer).await.unwrap();
-        sqlx::query("PRAGMA wal_autocheckpoint=0").execute(&mut writer).await.unwrap();
+        sqlx::query("PRAGMA journal_mode=WAL")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA wal_autocheckpoint=0")
+            .execute(&mut writer)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO tasks (id, title, status, priority, created_at, updated_at, sort_order,
                                 is_pinned, is_favorite, has_planned_time, has_due_time,
@@ -496,10 +507,7 @@ mod tests {
         );
 
         // 目录不存在时不应报错（首次启动就会遇到）
-        assert_eq!(
-            prune_pre_migrate_backups(&dir.join("nope"), 2).unwrap(),
-            0
-        );
+        assert_eq!(prune_pre_migrate_backups(&dir.join("nope"), 2).unwrap(), 0);
 
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -512,7 +520,10 @@ mod tests {
         let db_path = db.db_path();
 
         let pending = pending_migrations(&db_path).await.unwrap();
-        assert!(pending.is_empty(), "刚初始化完不应还有待执行迁移：{pending:?}");
+        assert!(
+            pending.is_empty(),
+            "刚初始化完不应还有待执行迁移：{pending:?}"
+        );
 
         // 再初始化一次：不应生成新的 pre-migrate 备份
         let _db2 = Db::init(&dir).await.expect("再次初始化");
@@ -536,12 +547,11 @@ mod tests {
         let db2 = Db::init(&dir).await.expect("重复初始化应成功（迁移幂等）");
 
         // 关键表都应存在
-        let tables: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        )
-        .fetch_all(db2.pool())
-        .await
-        .unwrap();
+        let tables: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .fetch_all(db2.pool())
+                .await
+                .unwrap();
         let names: Vec<String> = tables.into_iter().map(|(n,)| n).collect();
         for t in [
             "tasks",

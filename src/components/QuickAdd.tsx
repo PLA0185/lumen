@@ -100,7 +100,9 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
     } finally {
       setSaving(false)
     }
-  }, [parsed, text, dateStr, timeStr, priority, tags, onCreated, reset])
+    // `periodType` 必须列进来：它参与请求体（周期跨度），
+    // 漏掉会让"先选周期再回车"保存成上一次的值。
+  }, [parsed, text, dateStr, timeStr, priority, periodType, tags, onCreated, reset])
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

@@ -143,8 +143,9 @@ fn weekday_to_code(w: u8) -> AppResult<&'static str> {
         6 => "SA",
         7 => "SU",
         other => {
-            return Err(AppError::validation(format!("星期编号非法：{other}"))
-                .with_hint("1=周一 … 7=周日"))
+            return Err(
+                AppError::validation(format!("星期编号非法：{other}")).with_hint("1=周一 … 7=周日")
+            )
         }
     })
 }
@@ -238,18 +239,18 @@ impl RecurrenceRule {
         let mut end = EndCondition::Never;
 
         for token in rrule.split(';').filter(|s| !s.trim().is_empty()) {
-            let (key, value) = token.split_once('=').ok_or_else(|| {
-                AppError::validation(format!("重复规则片段格式不正确：{token}"))
-            })?;
+            let (key, value) = token
+                .split_once('=')
+                .ok_or_else(|| AppError::validation(format!("重复规则片段格式不正确：{token}")))?;
             let key = key.trim().to_ascii_uppercase();
             let value = value.trim();
 
             match key.as_str() {
                 "FREQ" => freq = Some(Freq::from_rrule(value)?),
                 "INTERVAL" => {
-                    interval = value.parse::<i64>().map_err(|_| {
-                        AppError::validation(format!("INTERVAL 不是整数：{value}"))
-                    })?;
+                    interval = value
+                        .parse::<i64>()
+                        .map_err(|_| AppError::validation(format!("INTERVAL 不是整数：{value}")))?;
                     if interval < 1 {
                         return Err(AppError::validation("INTERVAL 必须至少为 1"));
                     }
@@ -257,7 +258,10 @@ impl RecurrenceRule {
                 "BYDAY" => {
                     let codes: Vec<&str> = value.split(',').map(|s| s.trim()).collect();
                     // 识别"工作日"的简写
-                    if codes.len() == 5 && codes.iter().all(|c| matches!(*c, "MO" | "TU" | "WE" | "TH" | "FR"))
+                    if codes.len() == 5
+                        && codes
+                            .iter()
+                            .all(|c| matches!(*c, "MO" | "TU" | "WE" | "TH" | "FR"))
                     {
                         weekdays_only = true;
                     } else {
@@ -280,9 +284,10 @@ impl RecurrenceRule {
                 }
                 "BYMONTH" => {
                     for m in value.split(',') {
-                        let n: u8 = m.trim().parse().map_err(|_| {
-                            AppError::validation(format!("BYMONTH 不是整数：{m}"))
-                        })?;
+                        let n: u8 = m
+                            .trim()
+                            .parse()
+                            .map_err(|_| AppError::validation(format!("BYMONTH 不是整数：{m}")))?;
                         if !(1..=12).contains(&n) {
                             return Err(AppError::validation(format!("月份超出范围：{n}"))
                                 .with_hint("月份必须在 1–12 之间"));
@@ -291,9 +296,9 @@ impl RecurrenceRule {
                     }
                 }
                 "BYSETPOS" => {
-                    let nth: i8 = value.parse().map_err(|_| {
-                        AppError::validation(format!("BYSETPOS 不是整数：{value}"))
-                    })?;
+                    let nth: i8 = value
+                        .parse()
+                        .map_err(|_| AppError::validation(format!("BYSETPOS 不是整数：{value}")))?;
                     if nth == 0 || nth > 5 || nth < -1 {
                         return Err(AppError::validation(format!("BYSETPOS 超出范围：{nth}"))
                             .with_hint("允许 1–5（第几个）或 -1（最后一个）"));
@@ -313,9 +318,9 @@ impl RecurrenceRule {
                     end = EndCondition::Until { date };
                 }
                 "COUNT" => {
-                    let n: i64 = value.parse().map_err(|_| {
-                        AppError::validation(format!("COUNT 不是整数：{value}"))
-                    })?;
+                    let n: i64 = value
+                        .parse()
+                        .map_err(|_| AppError::validation(format!("COUNT 不是整数：{value}")))?;
                     if n < 1 {
                         return Err(AppError::validation("COUNT 必须至少为 1"));
                     }
@@ -328,8 +333,7 @@ impl RecurrenceRule {
         }
 
         let freq = freq.ok_or_else(|| {
-            AppError::validation("重复规则缺少 FREQ")
-                .with_hint("例如 FREQ=WEEKLY;BYDAY=MO,WE,FR")
+            AppError::validation("重复规则缺少 FREQ").with_hint("例如 FREQ=WEEKLY;BYDAY=MO,WE,FR")
         })?;
 
         // BYSETPOS 需要 BYDAY 提供星期；若同时存在，取第一个星期
@@ -341,19 +345,20 @@ impl RecurrenceRule {
 
         // 校验语义冲突
         if by_setpos.is_some() && !by_monthday.is_empty() {
-            return Err(AppError::validation(
-                "「每月第几个星期 X」与「每月第几天」不能同时设置",
-            )
-            .with_hint("请二选一，它们表达的是两种不同的月度重复方式"));
+            return Err(
+                AppError::validation("「每月第几个星期 X」与「每月第几天」不能同时设置")
+                    .with_hint("请二选一，它们表达的是两种不同的月度重复方式"),
+            );
         }
         if let Some(sp) = by_setpos {
             if freq != Freq::Monthly {
-                return Err(AppError::validation(
-                    "「每月第几个星期 X」只能用于每月重复",
-                ));
+                return Err(AppError::validation("「每月第几个星期 X」只能用于每月重复"));
             }
             if sp.nth > 5 {
-                return Err(AppError::validation(format!("BYSETPOS 超出范围：{}", sp.nth)));
+                return Err(AppError::validation(format!(
+                    "BYSETPOS 超出范围：{}",
+                    sp.nth
+                )));
             }
         }
         if weekdays_only && freq != Freq::Weekly {
@@ -444,7 +449,11 @@ impl RecurrenceRule {
     /// 这条规则涉及的边界策略说明（界面必须展示，§5 明确要求）
     pub fn edge_policy_note(&self) -> Option<String> {
         let touches_month_end = self.by_monthday.iter().any(|d| *d > 28)
-            || self.by_setpos.as_ref().map(|s| s.nth == 5 || s.nth == -1).unwrap_or(false)
+            || self
+                .by_setpos
+                .as_ref()
+                .map(|s| s.nth == 5 || s.nth == -1)
+                .unwrap_or(false)
             || self.freq == Freq::Monthly;
 
         if !touches_month_end {
@@ -497,7 +506,11 @@ pub fn parse_local_datetime(s: &str) -> AppResult<chrono::NaiveDateTime> {
 
 /// 该年该月有多少天
 fn days_in_month(year: i32, month: u32) -> u32 {
-    let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    let (ny, nm) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
     let first_next = chrono::NaiveDate::from_ymd_opt(ny, nm, 1).expect("构造下月首日");
     let first_this = chrono::NaiveDate::from_ymd_opt(year, month, 1).expect("构造本月首日");
     (first_next - first_this).num_days() as u32
@@ -678,10 +691,7 @@ impl RecurrenceRule {
                 }
 
                 let dt = d.and_time(time);
-                out.push(Occurrence {
-                    local: dt,
-                    index,
-                });
+                out.push(Occurrence { local: dt, index });
             }
 
             d += chrono::Duration::days(1);
@@ -747,7 +757,6 @@ pub fn occurrences_to_utc(
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -805,7 +814,12 @@ mod tests {
     #[test]
     fn parses_until_and_count() {
         let a = rule("FREQ=DAILY;UNTIL=20261231");
-        assert_eq!(a.end, EndCondition::Until { date: "2026-12-31".into() });
+        assert_eq!(
+            a.end,
+            EndCondition::Until {
+                date: "2026-12-31".into()
+            }
+        );
 
         let b = rule("FREQ=DAILY;COUNT=10");
         assert_eq!(b.end, EndCondition::Count { count: 10 });
@@ -832,8 +846,9 @@ mod tests {
         ] {
             let a = rule(src);
             let s = a.to_rrule_string().unwrap();
-            let b = RecurrenceRule::from_rrule_string(&s, "Asia/Shanghai", "2026-09-21T09:00:00", true)
-                .unwrap_or_else(|e| panic!("{src} 序列化为 {s} 后应能重新解析：{e}"));
+            let b =
+                RecurrenceRule::from_rrule_string(&s, "Asia/Shanghai", "2026-09-21T09:00:00", true)
+                    .unwrap_or_else(|e| panic!("{src} 序列化为 {s} 后应能重新解析：{e}"));
             assert_eq!(a, b, "{src} 往返后应等价（中间形态 {s}）");
         }
     }
@@ -849,34 +864,49 @@ mod tests {
 
     #[test]
     fn rejects_unknown_freq() {
-        assert!(
-            RecurrenceRule::from_rrule_string("FREQ=HOURLY", "UTC", "2026-01-01T00:00:00", true)
-                .is_err()
-        );
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=HOURLY",
+            "UTC",
+            "2026-01-01T00:00:00",
+            true
+        )
+        .is_err());
     }
 
     #[test]
     fn rejects_invalid_interval_and_count() {
-        assert!(
-            RecurrenceRule::from_rrule_string("FREQ=DAILY;INTERVAL=0", "UTC", "2026-01-01T00:00:00", true)
-                .is_err()
-        );
-        assert!(
-            RecurrenceRule::from_rrule_string("FREQ=DAILY;COUNT=0", "UTC", "2026-01-01T00:00:00", true)
-                .is_err()
-        );
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;INTERVAL=0",
+            "UTC",
+            "2026-01-01T00:00:00",
+            true
+        )
+        .is_err());
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;COUNT=0",
+            "UTC",
+            "2026-01-01T00:00:00",
+            true
+        )
+        .is_err());
     }
 
     #[test]
     fn rejects_out_of_range_monthday_and_month() {
-        assert!(
-            RecurrenceRule::from_rrule_string("FREQ=MONTHLY;BYMONTHDAY=32", "UTC", "2026-01-01T00:00:00", true)
-                .is_err()
-        );
-        assert!(
-            RecurrenceRule::from_rrule_string("FREQ=YEARLY;BYMONTH=13", "UTC", "2026-01-01T00:00:00", true)
-                .is_err()
-        );
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=MONTHLY;BYMONTHDAY=32",
+            "UTC",
+            "2026-01-01T00:00:00",
+            true
+        )
+        .is_err());
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=YEARLY;BYMONTH=13",
+            "UTC",
+            "2026-01-01T00:00:00",
+            true
+        )
+        .is_err());
     }
 
     /// 「每月第 N 个星期 X」与「每月第几天」是两种不同的月度语义，
@@ -917,13 +947,20 @@ mod tests {
 
     #[test]
     fn rejects_invalid_dtstart() {
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY",
+            "UTC",
+            "2026-13-45T00:00:00",
+            true
+        )
+        .is_err());
         assert!(
-            RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "2026-13-45T00:00:00", true)
-                .is_err()
+            RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "not-a-date", true).is_err()
         );
-        assert!(RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "not-a-date", true).is_err());
         // 只有日期没有时刻也不行——推进运算需要完整时间
-        assert!(RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "2026-01-01", true).is_err());
+        assert!(
+            RecurrenceRule::from_rrule_string("FREQ=DAILY", "UTC", "2026-01-01", true).is_err()
+        );
     }
 
     /// 未知键应被忽略而不是报错：不同工具生成的 RRULE 常带额外字段，
@@ -940,7 +977,10 @@ mod tests {
     fn describes_weekly_rule_in_chinese() {
         let s = rule("FREQ=WEEKLY;BYDAY=MO,WE,FR").describe();
         assert!(s.contains("周"), "应包含周期单位：{s}");
-        assert!(s.contains("周一") && s.contains("周三") && s.contains("周五"), "{s}");
+        assert!(
+            s.contains("周一") && s.contains("周三") && s.contains("周五"),
+            "{s}"
+        );
     }
 
     #[test]
@@ -969,9 +1009,15 @@ mod tests {
     /// §5 明确要求把边界策略展示给用户，因此涉及月末的规则必须给出说明。
     #[test]
     fn edge_policy_note_present_for_month_end_rules() {
-        assert!(rule("FREQ=MONTHLY;BYMONTHDAY=31").edge_policy_note().is_some());
-        assert!(rule("FREQ=MONTHLY;BYMONTHDAY=1").edge_policy_note().is_some());
-        assert!(rule("FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1").edge_policy_note().is_some());
+        assert!(rule("FREQ=MONTHLY;BYMONTHDAY=31")
+            .edge_policy_note()
+            .is_some());
+        assert!(rule("FREQ=MONTHLY;BYMONTHDAY=1")
+            .edge_policy_note()
+            .is_some());
+        assert!(rule("FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1")
+            .edge_policy_note()
+            .is_some());
         // 每日规则与月末无关，不该打扰用户
         assert!(rule("FREQ=DAILY").edge_policy_note().is_none());
         assert!(rule("FREQ=WEEKLY;BYDAY=MO").edge_policy_note().is_none());
@@ -984,7 +1030,11 @@ mod tests {
         assert_eq!(days_in_month(2026, 2), 28, "2026 是平年");
         assert_eq!(days_in_month(2024, 2), 29, "2024 是闰年");
         assert_eq!(days_in_month(2000, 2), 29, "2000 是闰年（能被 400 整除）");
-        assert_eq!(days_in_month(1900, 2), 28, "1900 不是闰年（能被 100 但不能被 400 整除）");
+        assert_eq!(
+            days_in_month(1900, 2),
+            28,
+            "1900 不是闰年（能被 100 但不能被 400 整除）"
+        );
         assert_eq!(days_in_month(2026, 1), 31);
         assert_eq!(days_in_month(2026, 4), 30);
         assert_eq!(days_in_month(2026, 12), 31);
@@ -1003,9 +1053,15 @@ mod tests {
     fn iso_weekday_maps_monday_to_one() {
         use chrono::NaiveDate;
         // 2026-09-21 是周一
-        assert_eq!(iso_weekday(NaiveDate::from_ymd_opt(2026, 9, 21).unwrap()), 1);
+        assert_eq!(
+            iso_weekday(NaiveDate::from_ymd_opt(2026, 9, 21).unwrap()),
+            1
+        );
         // 2026-09-27 是周日
-        assert_eq!(iso_weekday(NaiveDate::from_ymd_opt(2026, 9, 27).unwrap()), 7);
+        assert_eq!(
+            iso_weekday(NaiveDate::from_ymd_opt(2026, 9, 27).unwrap()),
+            7
+        );
     }
 
     // =========================================================================
@@ -1040,7 +1096,10 @@ mod tests {
             ]
         );
         // 序号必须连续，它是"第几次"稳定身份的基础
-        assert_eq!(occ.iter().map(|o| o.index).collect::<Vec<_>>(), vec![1, 2, 3, 4, 5, 6]);
+        assert_eq!(
+            occ.iter().map(|o| o.index).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5, 6]
+        );
     }
 
     /// 所有发生必须保留起始时刻（09:00），不会因为日期推进而漂移
@@ -1111,7 +1170,10 @@ mod tests {
         .unwrap();
         let occ = r.expand(10).unwrap();
         assert_eq!(occ.len(), 3, "COUNT=3 应只产生 3 次");
-        assert_eq!(occ.last().unwrap().local.date().format("%m-%d").to_string(), "09-23");
+        assert_eq!(
+            occ.last().unwrap().local.date().format("%m-%d").to_string(),
+            "09-23"
+        );
     }
 
     /// UNTIL 的日期是含当日的
@@ -1203,7 +1265,11 @@ mod tests {
             .iter()
             .map(|o| o.local.date().format("%Y-%m-%d").to_string())
             .collect();
-        assert_eq!(d2, vec!["2028-01-29", "2028-02-29"], "闰年 2 月 29 日应正常发生");
+        assert_eq!(
+            d2,
+            vec!["2028-01-29", "2028-02-29"],
+            "闰年 2 月 29 日应正常发生"
+        );
     }
 
     /// 每年 2 月 29 日：只在闰年发生，平年跳过
@@ -1419,7 +1485,10 @@ mod tests {
         .unwrap();
         let occ = r.expand(1).unwrap();
         let utc = occurrences_to_utc(&occ, "Asia/Shanghai");
-        assert_eq!(utc[0].1.format("%Y-%m-%dT%H:%M:%S").to_string(), "2026-09-21T01:00:00");
+        assert_eq!(
+            utc[0].1.format("%Y-%m-%dT%H:%M:%S").to_string(),
+            "2026-09-21T01:00:00"
+        );
     }
 
     /// 未知时区应回退为 UTC 而不是失败——不能让一个陌生 tzid 让整个任务不可用
@@ -1434,7 +1503,11 @@ mod tests {
         .unwrap();
         let occ = r.expand(1).unwrap();
         let utc = occurrences_to_utc(&occ, "Not/AZone");
-        assert_eq!(utc[0].1.format("%H:%M").to_string(), "09:00", "回退后时刻不变");
+        assert_eq!(
+            utc[0].1.format("%H:%M").to_string(),
+            "09:00",
+            "回退后时刻不变"
+        );
     }
 
     /// 跨夏令时的墙上时刻保持不变（这是选择"本地墙上时间推进"的原因）
@@ -1455,7 +1528,10 @@ mod tests {
         }
         // 但换算成 UTC 后偏移量会变化（EDT 是 -4，EST 是 -5）
         let utc = occurrences_to_utc(&occ, "America/New_York");
-        let offsets: Vec<i32> = utc.iter().map(|(_, u)| u.format("%H").to_string().parse().unwrap()).collect();
+        let offsets: Vec<i32> = utc
+            .iter()
+            .map(|(_, u)| u.format("%H").to_string().parse().unwrap())
+            .collect();
         assert_eq!(offsets[0], 13, "10-30 是 EDT（-4），09:00 → 13:00 UTC");
         assert_eq!(offsets[4], 14, "11-03 已转 EST（-5），09:00 → 14:00 UTC");
     }
