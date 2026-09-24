@@ -39,6 +39,8 @@ pub mod recurrence;
 #[cfg(test)]
 mod recurrence_e2e;
 pub mod recurrence_service;
+#[cfg(test)]
+mod remediation2_e2e;
 pub mod reminders;
 pub mod shortcuts;
 pub mod stats;
@@ -362,6 +364,7 @@ pub fn run() {
             window_mgr::window_set_floating_size,
             window_mgr::app_quit,
             // ---- AI 提供商适配（§6）----
+            ai::ai_provider_defaults,
             ai::ai_get_config,
             ai::ai_set_config,
             ai::ai_test_connection,

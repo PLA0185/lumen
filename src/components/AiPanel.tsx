@@ -26,6 +26,8 @@ function errText(e: unknown): string {
 export function AiPanel() {
   const pushToast = useApp((s) => s.pushToast)
   const [cfg, setCfg] = useState<ProviderConfig | null>(null)
+  /** 各提供商的默认值（**唯一来源是后端**，见整改任务书 §2） */
+  const [providers, setProviders] = useState<ai.ProviderDefaults[]>([])
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -42,8 +44,16 @@ export function AiPanel() {
 
   const reload = useCallback(async () => {
     try {
-      const c = await ai.aiGetConfig()
-      setCfg(c ?? defaultConfig('deep_seek'))
+      // 默认值表与已保存配置一起取：切换服务商必须用后端给的默认值，
+      // 前端不再有任何硬编码的默认模型 / Base URL 表。
+      const [list, saved] = await Promise.all([ai.aiProviderDefaults(), ai.aiGetConfig()])
+      setProviders(list)
+      if (saved) {
+        setCfg(saved)
+      } else {
+        const d = ai.findDefaults(list, 'deep_seek') ?? list[0]
+        setCfg(d ? ai.configFromDefaults(d) : null)
+      }
       setError(null)
     } catch (e) {
       setError(errText(e))
@@ -54,29 +64,31 @@ export function AiPanel() {
     void reload()
   }, [reload])
 
-  const defaultConfig = (p: AiProvider): ProviderConfig => ({
-    provider: p,
-    baseUrl: ai.PROVIDER_DEFAULT_BASE[p],
-    model: ai.PROVIDER_DEFAULT_MODEL[p],
-    timeoutSeconds: 60,
-    maxOutputTokens: 2048,
-    hasApiKey: false,
-  })
-
   const patch = (p: Partial<ProviderConfig>) => {
     setCfg((c) => (c ? { ...c, ...p } : c))
   }
 
-  /** 切换提供商时同步默认值，避免残留上一个服务商的地址与模型名 */
+  /**
+   * 切换提供商时同步默认值，避免残留上一个服务商的地址与模型名。
+   *
+   * 默认值来自后端：OpenAI 的默认模型是**空字符串**（未经验证不填），
+   * 所以切过去之后输入框是空的，界面上会提示先拉模型列表。
+   */
   const switchProvider = (p: AiProvider) => {
-    patch({
-      provider: p,
-      baseUrl: ai.PROVIDER_DEFAULT_BASE[p],
-      model: ai.PROVIDER_DEFAULT_MODEL[p],
-    })
+    const next = ai.configForProvider(providers, p, cfg?.hasApiKey ?? false)
+    if (!next) {
+      setError(`当前版本没有「${p}」的默认配置，请更新 Lumen 后重试`)
+      return
+    }
+    setCfg(next)
     setModels([])
     setModelHint(null)
+    setNotice(null)
   }
+
+  /** 当前服务商的默认值（用于数据政策提示与"模型需自己选"的说明） */
+  const defaults = cfg ? ai.findDefaults(providers, cfg.provider) : undefined
+  const modelMissing = Boolean(cfg) && !cfg?.model.trim()
 
   const save = async () => {
     if (!cfg) return
@@ -88,10 +100,14 @@ export function AiPanel() {
       const saved = await ai.aiSetConfig(cfg, apiKey.trim() ? apiKey.trim() : null)
       setCfg(saved)
       setApiKey('')
+      // 保存不再要求模型非空（整改任务书 §3.3）：先存 Key，再拉模型列表选模型。
+      // 所以这里的提示要明确告诉用户"下一步做什么"。
       setNotice(
-        saved.hasApiKey
-          ? '已保存。密钥存储在 Windows 凭据管理器中，不会写入数据库或备份。'
-          : '已保存配置。尚未设置 API Key。',
+        !saved.model.trim()
+          ? '已保存。模型尚未选择——请点击「获取模型列表」选择，或手动填写模型 ID。'
+          : saved.hasApiKey
+            ? '已保存。密钥存储在 Windows 凭据管理器中，不会写入数据库或备份。'
+            : '已保存配置。尚未设置 API Key。',
       )
       pushToast('success', 'AI 配置已保存')
     } catch (e) {
@@ -210,9 +226,9 @@ export function AiPanel() {
                   value={cfg.provider}
                   onChange={(e) => switchProvider(e.target.value as AiProvider)}
                 >
-                  {(Object.keys(ai.PROVIDER_LABELS) as AiProvider[]).map((p) => (
-                    <option key={p} value={p}>
-                      {ai.PROVIDER_LABELS[p]}
+                  {providers.map((d) => (
+                    <option key={d.provider} value={d.provider}>
+                      {d.label}
                     </option>
                   ))}
                 </select>
@@ -234,6 +250,14 @@ export function AiPanel() {
                 </datalist>
               </label>
             </div>
+
+            {modelMissing && (
+              <p className="setgroup__hint" style={{ marginTop: 4 }}>
+                {defaults?.modelMustBeChosen
+                  ? `${defaults.label} 的默认模型未经一手文档核实，Lumen 不会替你猜一个。请先保存 API Key，再点击「获取模型列表」从你的账号里读取真实可用的模型 ID。`
+                  : '尚未填写模型名称。可以点击「获取模型列表」选择，或直接手动填写。'}
+              </p>
+            )}
 
             <div className="formrow">
               <span className="formlabel">Base URL</span>
@@ -307,9 +331,15 @@ export function AiPanel() {
               <button
                 type="button"
                 className="btn btn--ghost"
-                disabled={busy || !cfg.hasApiKey}
+                disabled={busy || !cfg.hasApiKey || modelMissing}
                 onClick={() => void test()}
-                title={cfg.hasApiKey ? undefined : '请先保存 API Key'}
+                title={
+                  !cfg.hasApiKey
+                    ? '请先保存 API Key'
+                    : modelMissing
+                      ? '请先选择模型（真正调用 AI 时必须有模型名）'
+                      : undefined
+                }
               >
                 测试连接
               </button>
@@ -335,12 +365,14 @@ export function AiPanel() {
             )}
 
             {/* 数据政策提示：三家姿态不同，文案由后端给出（§6） */}
-            <div className="alert alert--warn" role="note" style={{ marginTop: 10 }}>
-              <span>
-                <strong>数据使用提示：</strong>
-                {providerPolicyNote(cfg.provider)}
-              </span>
-            </div>
+            {defaults && (
+              <div className="alert alert--warn" role="note" style={{ marginTop: 10 }}>
+                <span>
+                  <strong>数据使用提示：</strong>
+                  {defaults.dataPolicyNote}
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -530,19 +562,7 @@ export function AiPanel() {
 /**
  * 各服务商的数据使用政策提示。
  *
- * 三家姿态不一致，因此**不能统一文案**（这也是后端 `data_policy_note`
- * 的分支理由）。这里在前端重复一份简短版本，是为了在用户填写配置时
- * 就能看到，而不必等到调用时。
+ * 文案**不在前端维护**：三家姿态不一致（DeepSeek 默认可用于改进服务、
+ * OpenAI 与 Anthropic 默认不用于训练），这份文案由后端 `data_policy_note`
+ * 统一给出，前端只负责显示（整改任务书 §2.2）。
  */
-function providerPolicyNote(p: AiProvider): string {
-  switch (p) {
-    case 'deep_seek':
-      return '按 DeepSeek 官方政策，API 输入与输出默认会被用于改进其服务，需要在账户设置中主动关闭才能退出；数据存储在中国境内。发送敏感内容前请自行评估。'
-    case 'open_ai':
-      return '按 OpenAI 官方政策，自 2023-03-01 起 API 数据默认不用于训练（除非主动加入），滥用监控日志保留约 30 天。'
-    case 'claude':
-      return '按 Anthropic 官方政策，未经明确许可不会将数据用于训练，默认不保留对话内容；部分模型保留 30 天且不适用零数据保留。'
-    default:
-      return '自定义服务的隐私政策由其提供方决定，Lumen 无法代为说明。请自行确认该服务如何处理你的数据。'
-  }
-}

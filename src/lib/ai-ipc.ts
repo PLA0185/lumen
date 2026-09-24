@@ -24,9 +24,32 @@ export interface ProviderConfig {
   hasApiKey: boolean
 }
 
+/**
+ * 提供商的默认配置（由**后端**给出，见整改任务书 §2）。
+ *
+ * 这里刻意不保留任何前端常量表：整改前前端另有一份默认模型表
+ * （护栏见 Rust 侧测试 `frontend_has_no_duplicate_provider_defaults`），
+ * 其中 OpenAI 填的是一个**未经验证**的 Azure 模型 ID，与后端"留空"的默认值
+ * 已经漂移，而漂移不会报错，只会静默用错误的模型名发请求。
+ * 现在唯一来源是 Rust 侧的 `ai_provider_defaults`。
+ */
+export interface ProviderDefaults {
+  provider: AiProvider
+  label: string
+  baseUrl: string
+  /** 可能为空：表示该服务商的默认模型未经验证，必须由用户选定 */
+  model: string
+  timeoutSeconds: number
+  maxOutputTokens: number
+  dataPolicyNote: string
+  /** 默认模型是否"刻意留空、必须由用户选定" */
+  modelMustBeChosen: boolean
+  /** 密钥在凭据管理器中的条目名（不含密钥） */
+  keyEntry: string
+}
+
 /** token 用量 */
-export interface TokenUsage {
-  inputTokens: number | null
+export interface TokenUsage {  inputTokens: number | null
   outputTokens: number | null
   cacheHitTokens: number | null
   cacheMissTokens: number | null
@@ -110,6 +133,7 @@ export interface ModelListResult {
 }
 
 export const AI_CMD = {
+  providerDefaults: 'ai_provider_defaults',
   getConfig: 'ai_get_config',
   setConfig: 'ai_set_config',
   test: 'ai_test_connection',
@@ -142,6 +166,15 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 export const aiGetConfig = (): Promise<ProviderConfig | null> => call(AI_CMD.getConfig)
+
+/**
+ * 读取各提供商的默认配置。
+ *
+ * 界面上所有"默认 Base URL / 默认模型 / 提供商名称 / 数据政策文案"
+ * 都必须来自这里，不得在前端再写一份（整改任务书 §2.2）。
+ */
+export const aiProviderDefaults = (): Promise<ProviderDefaults[]> =>
+  call(AI_CMD.providerDefaults)
 
 /** 保存配置。`apiKey` 为 null 表示不改动已保存的密钥，空字符串表示清除。 */
 export const aiSetConfig = (
@@ -218,28 +251,50 @@ export const scheduleConflicts = (): Promise<
 // 展示辅助（纯函数）
 // =============================================================================
 
-/** 提供商显示名 */
-export const PROVIDER_LABELS: Record<AiProvider, string> = {
-  deep_seek: 'DeepSeek',
-  open_ai: 'OpenAI',
-  claude: 'Anthropic Claude',
-  custom: '自定义兼容服务',
+/**
+ * 在后端返回的默认值表里找某个提供商。
+ *
+ * 返回 undefined 表示这张表里没有它（例如后端版本比前端旧）——
+ * 调用方必须处理这种情况，不能退回硬编码默认值。
+ */
+export function findDefaults(
+  list: ProviderDefaults[],
+  p: AiProvider,
+): ProviderDefaults | undefined {
+  return list.find((d) => d.provider === p)
 }
 
-/** 默认 Base URL（与后端保持一致） */
-export const PROVIDER_DEFAULT_BASE: Record<AiProvider, string> = {
-  deep_seek: 'https://api.deepseek.com',
-  open_ai: 'https://api.openai.com/v1',
-  claude: 'https://api.anthropic.com',
-  custom: '',
+/**
+ * 由后端默认值构造一份可编辑的配置。
+ *
+ * `hasApiKey` 由调用方给出（来自实际保存状态），因为默认值表只描述"默认"，
+ * 不描述"当前用户是否已经存过密钥"。
+ */
+export function configFromDefaults(d: ProviderDefaults, hasApiKey = false): ProviderConfig {
+  return {
+    provider: d.provider,
+    baseUrl: d.baseUrl,
+    model: d.model,
+    timeoutSeconds: d.timeoutSeconds,
+    maxOutputTokens: d.maxOutputTokens,
+    hasApiKey,
+  }
 }
 
-/** 默认模型（调研时官方文档列出的 ID） */
-export const PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
-  deep_seek: 'deepseek-flash',
-  open_ai: 'gpt-6-astra',
-  claude: 'claude-sonnet-5',
-  custom: '',
+/**
+ * 切换提供商时的配置来源。
+ *
+ * 单独抽成函数是为了让"切换后不会残留上一个服务商的地址与模型名"
+ * 这件事可以被单元测试直接断言（整改任务书 §14.1）。
+ * 表里找不到目标提供商时返回 null，由界面提示而不是猜一个默认值。
+ */
+export function configForProvider(
+  list: ProviderDefaults[],
+  p: AiProvider,
+  hasApiKey = false,
+): ProviderConfig | null {
+  const d = findDefaults(list, p)
+  return d ? configFromDefaults(d, hasApiKey) : null
 }
 
 /** 动作的显示文案 */

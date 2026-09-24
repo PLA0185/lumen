@@ -67,6 +67,11 @@ pub enum Provider {
 }
 
 impl Provider {
+    /// 全部提供商的固定顺序。
+    ///
+    /// 默认值表、界面下拉、测试遍历都从这里取，避免各处各写一份列表。
+    pub const ALL: [Provider; 4] = [Self::DeepSeek, Self::OpenAI, Self::Claude, Self::Custom];
+
     /// 默认 Base URL。
     ///
     /// 注意 DeepSeek **不带 `/v1`**：官方文档全站未出现 `/v1` 段，
@@ -207,8 +212,13 @@ impl ProviderConfig {
         }
     }
 
-    /// 校验 Base URL 可用（§6 要求"Base URL 可编辑时校验"）
-    pub fn validate(&self) -> AppResult<()> {
+    /// 只校验连接目标（Base URL）。
+    ///
+    /// 这是**唯一**的端点校验实现，`validate_for_save` / `validate_for_run`
+    /// 都建立在它之上，避免两处判断漂移。
+    ///
+    /// §6 要求"Base URL 可编辑时校验"。
+    pub fn validate_endpoint(&self) -> AppResult<()> {
         let u = self.base_url.trim();
         if u.is_empty() {
             return Err(AppError::validation("Base URL 不能为空"));
@@ -242,18 +252,104 @@ impl ProviderConfig {
                 );
             }
         }
+        Ok(())
+    }
+}
+
+// =============================================================================
+// 保存校验 与 运行校验（整改任务书 §3.3 / §3.4）
+// =============================================================================
+//
+// 这两件事**必须分开**，否则会出现死锁：
+//
+// ```text
+// 模型为空 → 不能保存配置 → 密钥进不了凭据管理器 → 拉不到模型列表 → 选不了模型
+// ```
+//
+// 用户刚切到 OpenAI 时模型就是空的（后端默认模型刻意留空，见
+// `Provider::default_model`），所以"保存密钥"这一步**不能**要求模型非空。
+// 真正发请求时才必须严格校验。
+
+impl ProviderConfig {
+    /// **保存配置**时的校验：只要求连接目标合法。
+    ///
+    /// 允许 `model` 为空——用户需要先把 API Key 存进凭据管理器，
+    /// 才能拉取模型列表选出真实可用的模型 ID（§3.1）。
+    pub fn validate_for_save(&self) -> AppResult<()> {
+        self.validate_endpoint()
+    }
+
+    /// **真正发起调用**前的校验：在保存校验之上，额外要求模型已选定。
+    ///
+    /// 空模型发出去只会拿到服务商的 400，不如在这里给出可执行的提示（§3.5 场景 C）。
+    pub fn validate_for_run(&self) -> AppResult<()> {
+        self.validate_endpoint()?;
         if self.model.trim().is_empty() {
-            return Err(AppError::validation("模型名称不能为空")
-                .with_hint("若服务商不支持列出模型，请手动填写模型 ID"));
+            return Err(AppError::validation("尚未选择模型，无法调用 AI").with_hint(
+                "请先在「设置 → AI」中点击「获取模型列表」选择模型，或手动填写模型 ID",
+            ));
         }
         Ok(())
+    }
+}
+
+/// 提供商的默认配置（**默认值的唯一来源**，整改任务书 §2）。
+///
+/// 为什么要有这个结构：整改前前端 `ai-ipc.ts` 里另有一份
+/// `PROVIDER_DEFAULT_MODEL`，其中 OpenAI 仍写着 `gpt-6-astra`
+/// （那是 **Azure** 的模型 ID），而后端默认模型已经刻意留空。
+/// 两份表一旦漂移，用户在界面上看到的默认值与后端实际行为就不一致——
+/// 而且这种不一致**不会报错**，只会静默以错误的模型名发请求。
+///
+/// 因此默认值只在 Rust 侧维护一份，前端通过 `ai_provider_defaults` 读取。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderDefaults {
+    pub provider: Provider,
+    /// 界面显示名
+    pub label: String,
+    pub base_url: String,
+    /// 默认模型；**可能刻意为空**（见 `Provider::default_model` 的说明）
+    pub model: String,
+    pub timeout_seconds: u64,
+    pub max_output_tokens: i64,
+    /// 数据使用政策提示（三家姿态不同，文案由后端给出）
+    pub data_policy_note: String,
+    /// 默认模型是否"刻意留空、必须由用户选定"
+    pub model_must_be_chosen: bool,
+    /// 密钥在凭据管理器中的条目名（只用于界面说明，不含密钥）
+    pub key_entry: String,
+}
+
+impl ProviderDefaults {
+    /// 从 `ProviderConfig::with_defaults` 派生，保证两者永不漂移。
+    pub fn for_provider(p: Provider) -> Self {
+        let c = ProviderConfig::with_defaults(p);
+        Self {
+            provider: p,
+            label: p.label().to_string(),
+            base_url: c.base_url,
+            model: c.model,
+            timeout_seconds: c.timeout_seconds,
+            max_output_tokens: c.max_output_tokens,
+            data_policy_note: p.data_policy_note().to_string(),
+            model_must_be_chosen: p.default_model().is_empty(),
+            key_entry: key_name(p),
+        }
+    }
+
+    pub fn all() -> Vec<Self> {
+        Provider::ALL
+            .iter()
+            .copied()
+            .map(Self::for_provider)
+            .collect()
     }
 }
 
 // =============================================================================
 // 密钥存储（Windows 凭据管理器）
 // =============================================================================
-
 /// 凭据条目名
 fn key_name(provider: Provider) -> String {
     format!(
@@ -947,7 +1043,8 @@ fn parse_anthropic_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
 ///
 /// 密钥从系统凭据管理器读取，**不经过前端**（§6 要求密钥不明文展示）。
 pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResponse> {
-    cfg.validate()?;
+    // 真正发请求：这里必须严格校验，包括模型已选定（§3.5 场景 C）
+    cfg.validate_for_run()?;
 
     let api_key = load_api_key(cfg.provider)?.ok_or_else(|| {
         AppError::new(
@@ -1096,6 +1193,15 @@ use tauri::State;
 
 use crate::commands::AppState;
 
+/// 读取各提供商的默认配置（**默认值的唯一来源**，整改任务书 §2.3）。
+///
+/// 前端不再自带 `PROVIDER_DEFAULT_BASE` / `PROVIDER_DEFAULT_MODEL` /
+/// `PROVIDER_LABELS` / 数据政策文案，一律从这里取。
+#[tauri::command]
+pub fn ai_provider_defaults() -> AppResult<Vec<ProviderDefaults>> {
+    Ok(ProviderDefaults::all())
+}
+
 /// 读取当前 AI 配置（**不含密钥**）
 #[tauri::command]
 pub async fn ai_get_config(state: State<'_, AppState>) -> AppResult<Option<ProviderConfig>> {
@@ -1123,7 +1229,10 @@ pub async fn ai_set_config(
 ) -> AppResult<ProviderConfig> {
     let mut cfg = config;
     cfg.normalize();
-    cfg.validate()?;
+    // 保存时**不要求模型已选**（整改任务书 §3.3）：
+    // 用户必须先能把 API Key 存进凭据管理器，才可能拉到模型列表。
+    // 模型为空的严格校验放在真正调用前（`validate_for_run`）。
+    cfg.validate_for_save()?;
 
     // 密钥单独存凭据管理器；空字符串表示清除
     if let Some(k) = api_key.as_ref() {
@@ -1164,8 +1273,20 @@ pub async fn ai_test_connection(config: ProviderConfig) -> AppResult<String> {
 }
 
 /// 列出可用模型。失败时返回空列表 + 原因，界面据此引导手动输入（§6）。
+///
+/// 注意：这里**只校验端点**，不要求模型已选——恰恰相反，这个接口存在的意义
+/// 就是帮用户在"还没有模型"的时候把模型选出来（整改任务书 §3.5 场景 B）。
 #[tauri::command]
 pub async fn ai_list_models(config: ProviderConfig) -> AppResult<serde_json::Value> {
+    if let Err(e) = config.validate_endpoint() {
+        return Ok(serde_json::json!({
+            "ok": false,
+            "models": [],
+            "reason": e.message,
+            "hint": e.hint,
+            "fallback": "请先填写正确的 Base URL，或直接手动填写模型名称。",
+        }));
+    }
     match list_models(&config).await {
         Ok(list) => Ok(serde_json::json!({ "ok": true, "models": list })),
         Err(e) => Ok(serde_json::json!({
@@ -1582,6 +1703,96 @@ mod tests {
 
     // ------------------------- 配置校验 -------------------------
 
+    /// 默认值只有一个来源：`ai_provider_defaults` 必须与 `with_defaults` 完全一致
+    /// （整改任务书 §2.2 / §10.1）。
+    #[test]
+    fn provider_defaults_have_a_single_source() {
+        let all = ProviderDefaults::all();
+        assert_eq!(
+            all.len(),
+            Provider::ALL.len(),
+            "每个提供商都必须有默认值，否则界面上会出现空地址"
+        );
+        for d in &all {
+            let c = ProviderConfig::with_defaults(d.provider);
+            assert_eq!(d.base_url, c.base_url, "Base URL 与 with_defaults 漂移");
+            assert_eq!(d.model, c.model, "默认模型与 with_defaults 漂移");
+            assert_eq!(d.timeout_seconds, c.timeout_seconds);
+            assert_eq!(d.max_output_tokens, c.max_output_tokens);
+            assert_eq!(d.data_policy_note, d.provider.data_policy_note());
+            assert_eq!(d.label, d.provider.label());
+            assert_eq!(d.model_must_be_chosen, d.model.is_empty());
+            assert!(!d.label.trim().is_empty());
+        }
+
+        // OpenAI 默认模型未经验证，必须留空，并如实标记"必须由用户选定"
+        let openai = all
+            .iter()
+            .find(|d| d.provider == Provider::OpenAI)
+            .expect("OpenAI 必须在默认值表里");
+        assert!(openai.model.is_empty(), "OpenAI 默认模型未经验证，必须留空");
+        assert!(openai.model_must_be_chosen);
+        assert!(
+            !openai.base_url.is_empty(),
+            "Base URL 是有官方依据的，不能为空"
+        );
+    }
+
+    /// 防漂移护栏：前端不得再维护第二份默认值表（整改任务书 §2.2 / §14.1）。
+    ///
+    /// 这条测试直接扫前端源码。它挡住的正是本轮修掉的那个真问题：
+    /// 后端已经把 OpenAI 默认模型改成空，前端却还留着 `gpt-6-astra`，
+    /// 于是用户切到 OpenAI 后会被自动填入一个**未经验证的 Azure 模型 ID**。
+    #[test]
+    fn frontend_has_no_duplicate_provider_defaults() {
+        fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    collect(&p, out);
+                } else if matches!(p.extension().and_then(|s| s.to_str()), Some("ts" | "tsx")) {
+                    // 测试文件里可以讨论这些标识符（护栏自身的说明就写在里面），
+                    // 但**产品代码**里不允许出现。
+                    let is_test = p
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|n| n.contains(".test.") || n.contains(".spec."));
+                    if !is_test {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
+        assert!(root.is_dir(), "前端源码目录不存在：{}", root.display());
+        let mut files = Vec::new();
+        collect(&root, &mut files);
+        assert!(files.len() > 10, "扫到的前端文件太少，护栏失效");
+
+        // 这些标识符一旦在前端出现，就说明默认值被复制成了第二份来源
+        const FORBIDDEN: [&str; 3] = [
+            "PROVIDER_DEFAULT_MODEL",
+            "PROVIDER_DEFAULT_BASE",
+            "gpt-6-astra",
+        ];
+        for f in &files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            for bad in FORBIDDEN {
+                assert!(
+                    !text.contains(bad),
+                    "{} 里出现了 {bad}：Provider 默认值必须只由后端提供（整改任务书 §2.2）",
+                    f.display()
+                );
+            }
+        }
+    }
+
     #[test]
     fn default_base_urls_match_official_docs() {
         assert_eq!(
@@ -1985,14 +2196,14 @@ mod tests {
         c.model = "some-model".into();
 
         c.base_url = "not a url".into();
-        assert!(c.validate().is_err());
+        assert!(c.validate_endpoint().is_err());
 
         c.base_url = "ftp://api.openai.com/v1".into();
-        assert!(c.validate().is_err(), "非 http(s) 协议必须拒绝");
+        assert!(c.validate_endpoint().is_err(), "非 http(s) 协议必须拒绝");
 
         // 非本机的 http 必须拒绝（避免明文发密钥）
         c.base_url = "http://api.example.com/v1".into();
-        assert!(c.validate().is_err(), "非本机的 http 必须拒绝");
+        assert!(c.validate_endpoint().is_err(), "非本机的 http 必须拒绝");
 
         // localhost / 127.0.0.1 / ::1 的 http 允许（本地模型）
         for local in [
@@ -2001,7 +2212,10 @@ mod tests {
             "http://[::1]:11434/v1",
         ] {
             c.base_url = local.into();
-            assert!(c.validate().is_ok(), "{local} 属于本机地址，应当允许");
+            assert!(
+                c.validate_endpoint().is_ok(),
+                "{local} 属于本机地址，应当允许"
+            );
         }
     }
 
@@ -2029,20 +2243,20 @@ mod tests {
         assert_eq!(c.max_output_tokens, 4096);
 
         // 归一化之后必须能通过校验
-        assert!(c.validate().is_ok());
+        assert!(c.validate_for_run().is_ok());
     }
 
     #[test]
     fn base_url_must_be_http_or_https() {
         let mut c = cfg(Provider::OpenAI);
         c.base_url = "ftp://example.com".into();
-        assert!(c.validate().is_err());
+        assert!(c.validate_endpoint().is_err());
 
         c.base_url = "不是地址".into();
-        assert!(c.validate().is_err());
+        assert!(c.validate_endpoint().is_err());
 
         c.base_url = String::new();
-        assert!(c.validate().is_err());
+        assert!(c.validate_endpoint().is_err());
     }
 
     /// 明文 HTTP 只允许本机，否则密钥会在网络上裸奔
@@ -2053,20 +2267,35 @@ mod tests {
 
         for ok in ["http://localhost:11434/v1", "http://127.0.0.1:8080/v1"] {
             c.base_url = ok.into();
-            assert!(c.validate().is_ok(), "本机地址应允许：{ok}");
+            assert!(c.validate_endpoint().is_ok(), "本机地址应允许：{ok}");
         }
 
         c.base_url = "http://api.example.com/v1".into();
-        let e = c.validate().unwrap_err();
+        let e = c.validate_endpoint().unwrap_err();
         assert!(e.hint.unwrap().contains("明文"), "应说明风险");
     }
 
+    /// 空模型：**保存放行、真正调用拒绝**（整改任务书 §3.3 / §3.5 场景 A、C）。
+    ///
+    /// 这条测试在修复前是红的：当时 `validate()` 一个方法同时管两件事，
+    /// 于是"保存配置"也要求模型非空，用户永远走不到"拉取模型列表"那一步。
     #[test]
-    fn model_cannot_be_empty() {
+    fn empty_model_is_savable_but_not_runnable() {
         let mut c = cfg(Provider::Custom);
         c.base_url = "https://example.com/v1".into();
         c.model = "   ".into();
-        assert!(c.validate().is_err());
+
+        assert!(
+            c.validate_for_save().is_ok(),
+            "模型为空必须仍能保存配置，否则用户无法先存 API Key 再拉模型列表"
+        );
+
+        let e = c.validate_for_run().unwrap_err();
+        assert!(e.message.contains("尚未选择模型"), "实际：{}", e.message);
+        assert!(
+            e.hint.unwrap_or_default().contains("获取模型列表"),
+            "提示必须告诉用户下一步怎么做"
+        );
     }
 
     /// 归一化必须收敛越界值，避免请求参数非法
