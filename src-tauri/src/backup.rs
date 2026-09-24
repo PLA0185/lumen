@@ -1447,6 +1447,80 @@ mod tests {
     }
 
     /// 附件说明必须在有附件时给出明确提醒：
+    /// 整改任务书 §11.1：备份恢复链路里 AI 配置的行为必须明确——
+    /// **provider 配置随备份走，API Key 绝不进备份**。
+    ///
+    /// 这条测试同时锁住两件事：
+    /// 1. `ai_config` 这类设置确实会被导出、能恢复（否则用户在恢复后
+    ///    还得重新配一遍服务商）；
+    /// 2. 序列化出来的备份里**不含任何密钥字段**——只允许存在
+    ///    `hasApiKey` 这样的布尔标记。
+    #[tokio::test]
+    async fn ai_config_is_backed_up_but_never_contains_the_key() {
+        let (db, dir) = make_db_with_data().await;
+
+        // 模拟"用户已配置 DeepSeek 且保存过密钥"的状态
+        sqlx::query(
+            "INSERT INTO settings (key, value_json, updated_at) VALUES ('ai_config', ?1, '2026-01-01T00:00:00.000Z')",
+        )
+        .bind(
+            serde_json::json!({
+                "provider": "deepseek",
+                "baseUrl": "https://api.deepseek.com",
+                "model": "deepseek-flash",
+                "timeoutSeconds": 60,
+                "maxOutputTokens": 2048,
+                "hasApiKey": true
+            })
+            .to_string(),
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let data = build_backup_data(&db).await.unwrap();
+        let json = serde_json::to_string(&data).unwrap();
+
+        // 1) 配置被导出
+        assert!(json.contains("deepseek-flash"), "服务商配置应随备份导出");
+        assert!(json.contains("api.deepseek.com"));
+
+        // 2) 只有布尔标记，没有任何密钥材料
+        assert!(json.contains("hasApiKey"), "应保留「是否已配置密钥」的标记");
+        for forbidden in ["sk-", "Bearer ", "api_key\":\"", "apiKey\":\""] {
+            assert!(
+                !json.contains(forbidden),
+                "备份里不允许出现密钥相关的字面量：{forbidden}"
+            );
+        }
+
+        // 3) 恢复后配置回来，标记仍是"有凭据"（真实凭据仍来自凭据管理器）
+        let mut tx = db.pool().begin().await.unwrap();
+        sqlx::query("DELETE FROM settings")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let cols = table_columns(&db, "settings").await.unwrap();
+        insert_rows(&mut tx, "settings", &data.settings, &cols)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let restored: (String,) =
+            sqlx::query_as("SELECT value_json FROM settings WHERE key = 'ai_config'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert!(
+            restored.0.contains("deepseek-flash"),
+            "恢复后配置应完整可用"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&restored.0).unwrap();
+        assert_eq!(parsed["hasApiKey"], serde_json::json!(true));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// 用户不能因为"备份成功"就以为附件文件也被打包了。
     #[tokio::test]
     async fn attachments_note_warns_when_attachments_exist() {

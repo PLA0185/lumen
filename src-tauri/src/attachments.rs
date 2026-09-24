@@ -51,12 +51,52 @@ pub struct Attachment {
 }
 
 impl Attachment {
-    /// 实际可用于打开的文件路径
+    /// 实际可用于打开的文件路径（**相对数据目录的旧值会在这里被解析**）。
+    ///
+    /// 整改任务书 §11.2：`stored_path` 曾经存的是**绝对路径**，
+    /// 一旦数据目录发生变化（换用户名、把数据目录搬走、在另一台机器上恢复备份），
+    /// 这个路径就指向不存在的位置。现在的写入统一改成
+    /// **相对数据目录**（`attachments/<id>.ext`），读取时再拼回来；
+    /// 老数据里的绝对路径仍然按原样使用，保证升级不破坏已有附件。
     pub fn open_path(&self) -> Option<&str> {
         match self.storage_mode.as_str() {
             "copied" => self.stored_path.as_deref(),
             _ => self.external_path.as_deref(),
         }
+    }
+
+    /// `stored_path` 是否是相对路径（新格式）
+    pub fn stored_is_relative(&self) -> bool {
+        self.stored_path
+            .as_deref()
+            .map(|p| !Path::new(p).is_absolute() && !p.contains(':'))
+            .unwrap_or(false)
+    }
+}
+
+/// 把数据库里记录的 `stored_path` 解析成真实绝对路径。
+///
+/// - 相对路径（新格式）→ 拼到当前数据目录上；
+/// - 绝对路径（老数据）→ 原样返回，避免升级后老附件打不开。
+pub fn resolve_stored_path(data_dir: &Path, stored: &str) -> PathBuf {
+    let p = Path::new(stored);
+    if p.is_absolute() || stored.contains(':') || stored.starts_with("\\\\") {
+        p.to_path_buf()
+    } else {
+        data_dir.join(p)
+    }
+}
+
+/// 计算写入数据库的 `stored_path` 值：相对数据目录。
+///
+/// 为什么不存绝对路径：备份/恢复、迁移数据目录、换机器都会让绝对路径失效，
+/// 而"受控目录内的附件"本质上是**相对于数据目录**定位的。
+pub fn relative_stored_path(data_dir: &Path, abs: &Path) -> String {
+    match abs.strip_prefix(data_dir) {
+        Ok(rel) => rel.to_string_lossy().replace('\\', "/"),
+        // 理论上不会发生（附件只写入受控目录）；真发生了就退回绝对路径，
+        // 至少不会静默丢掉引用
+        Err(_) => abs.to_string_lossy().to_string(),
     }
 }
 
@@ -221,7 +261,8 @@ pub async fn attachment_add(
         (
             "copied".to_string(),
             Some(src.to_string_lossy().to_string()),
-            Some(dest.to_string_lossy().to_string()),
+            // 存**相对数据目录**的路径（§11.2），换机器/搬数据目录后仍然有效
+            Some(relative_stored_path(state.db.data_dir(), &dest)),
             hash,
         )
     } else {
@@ -295,7 +336,9 @@ pub async fn attachment_remove(state: State<'_, AppState>, id: String) -> AppRes
         if let Some(p) = a.stored_path.as_deref() {
             // 删副本前再次确认路径在受控目录内：即使数据库被手工改过，
             // 也不会因为这个操作删除目录外的文件。
-            match ensure_inside_attachments(&state, Path::new(p)) {
+            // 注意先把可能存在的相对路径解析成绝对路径（§11.2）。
+            let abs_candidate = resolve_stored_path(state.db.data_dir(), p);
+            match ensure_inside_attachments(&state, &abs_candidate) {
                 Ok(abs) => {
                     if std::fs::remove_file(&abs).is_ok() {
                         removed_copy = true;
@@ -333,11 +376,12 @@ pub async fn attachment_reveal(state: State<'_, AppState>, id: String) -> AppRes
     let p = a
         .open_path()
         .ok_or_else(|| AppError::internal("该附件没有可用的文件路径"))?;
-    let path = PathBuf::from(p);
+    // 受控副本存的是相对路径，这里解析成绝对路径再返回给系统（§11.2）
+    let path = resolve_stored_path(state.db.data_dir(), p);
     if !path.exists() {
         return Err(AppError::new(
             crate::error::ErrorCode::Io,
-            format!("附件文件已不存在：{p}"),
+            format!("附件文件已不存在：{}", path.display()),
         )
         .with_hint("文件可能已被移动或删除。若这是引用模式的附件，原件不在 Lumen 管理范围内"));
     }
@@ -359,16 +403,17 @@ pub async fn attachment_check(
 
     let mut out = Vec::with_capacity(list.len());
     for a in list {
-        let exists = a
+        // 相对路径要先解析（§11.2），否则新写入的附件会被误报成"文件已丢失"
+        let resolved = a
             .open_path()
-            .map(|p| Path::new(p).exists())
-            .unwrap_or(false);
+            .map(|p| resolve_stored_path(state.db.data_dir(), p));
+        let exists = resolved.as_ref().map(|p| p.exists()).unwrap_or(false);
         out.push(serde_json::json!({
             "id": a.id,
             "fileName": a.file_name,
             "exists": exists,
             "mode": a.storage_mode,
-            "path": a.open_path().unwrap_or(""),
+            "path": resolved.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
         }));
     }
     Ok(out)
@@ -377,6 +422,61 @@ pub async fn attachment_check(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// §11.2：受控副本必须用相对路径保存，数据目录搬走后仍然能找到文件。
+    #[test]
+    fn stored_path_is_relative_and_resolves_after_moving_data_dir() {
+        let data_dir = Path::new("C:/Users/me/AppData/Roaming/com.pla0185.lumen");
+        let abs = data_dir.join("attachments").join("abc123.pdf");
+
+        let stored = relative_stored_path(data_dir, &abs);
+        assert_eq!(stored, "attachments/abc123.pdf", "应存相对路径且用正斜杠");
+
+        // 搬到另一个数据目录后依然能解析到新位置的文件
+        let moved = Path::new("D:/lumen-data");
+        let resolved = resolve_stored_path(moved, &stored);
+        assert_eq!(resolved, moved.join("attachments").join("abc123.pdf"));
+    }
+
+    /// 老数据里存的是绝对路径，升级后必须继续可用（不能因为改了格式就打不开）
+    #[test]
+    fn absolute_legacy_stored_path_still_resolves() {
+        let old = "C:/old-place/attachments/legacy.pdf";
+        let resolved = resolve_stored_path(Path::new("D:/new-data"), old);
+        assert_eq!(
+            resolved,
+            PathBuf::from(old),
+            "绝对路径必须原样使用，否则老附件会全部失效"
+        );
+
+        let win_style = "D:\\data\\attachments\\legacy.pdf";
+        assert_eq!(
+            resolve_stored_path(Path::new("C:/new"), win_style),
+            PathBuf::from(win_style)
+        );
+    }
+
+    /// 判断"是否相对路径"的实现要能正确处理 Windows 盘符与 UNC
+    #[test]
+    fn stored_is_relative_detects_windows_paths() {
+        let mk = |p: Option<&str>| Attachment {
+            id: "a".into(),
+            task_id: "t".into(),
+            file_name: "f".into(),
+            mime_type: None,
+            byte_size: None,
+            sha256: None,
+            storage_mode: "copied".into(),
+            external_path: None,
+            stored_path: p.map(|s| s.to_string()),
+            created_at: String::new(),
+        };
+        assert!(mk(Some("attachments/a.pdf")).stored_is_relative());
+        assert!(!mk(Some("C:/x/a.pdf")).stored_is_relative());
+        assert!(!mk(Some("D:\\x\\a.pdf")).stored_is_relative());
+        assert!(!mk(Some("\\\\server\\share\\a.pdf")).stored_is_relative());
+        assert!(!mk(None).stored_is_relative());
+    }
 
     #[test]
     fn mime_guess_covers_common_types() {
