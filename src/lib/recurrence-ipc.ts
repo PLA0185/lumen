@@ -2,7 +2,7 @@
  * 重复任务 IPC 封装（任务书 §5）。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode, Task } from './types'
 
@@ -46,6 +46,8 @@ export interface CreateRecurringResult {
   description: string
   /** 边界策略说明（涉及月末等情形时存在） */
   edgeNote: string | null
+  warning: string | null
+  needsRepair: boolean
 }
 
 /** 范围语义（§5 三选一） */
@@ -58,6 +60,12 @@ export type DeleteMode = 'this_only' | 'this_and_future' | 'whole_series'
 export interface InstancePatch {
   title?: string
   description?: string
+  noteMd?: string
+  linkUrl?: string
+  projectId?: string
+  categoryId?: string
+  tagIds?: string[]
+  periodType?: string
   priority?: number
   plannedAt?: string
   hasPlannedTime?: boolean
@@ -66,6 +74,10 @@ export interface InstancePatch {
   estimatedMinutes?: number
   clearPlannedAt?: boolean
   clearDueAt?: boolean
+  clearLink?: boolean
+  clearProject?: boolean
+  clearCategory?: boolean
+  clearEstimatedMinutes?: boolean
 }
 
 export interface ScopeActionResult {
@@ -140,6 +152,7 @@ export const REC_CMD = {
   create: 'recurring_create',
   preview: 'recurring_preview',
   materialize: 'recurring_materialize',
+  ensureRange: 'recurring_ensure_range',
   get: 'recurring_get',
   occurrences: 'recurring_occurrences',
   stats: 'recurring_stats',
@@ -188,6 +201,9 @@ export const recurringMaterialize = (
   rangeStartUtc: string,
   rangeEndUtc: string,
 ): Promise<number> => call(REC_CMD.materialize, { seriesId, rangeStartUtc, rangeEndUtc })
+
+export const recurringEnsureRange = (rangeStartUtc: string, rangeEndUtc: string): Promise<number> =>
+  call(REC_CMD.ensureRange, { rangeStartUtc, rangeEndUtc })
 
 export const recurringGet = (seriesId: string): Promise<SeriesDetail> =>
   call(REC_CMD.get, { seriesId })

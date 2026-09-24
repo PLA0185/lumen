@@ -5,7 +5,7 @@
  * 单独成文件是因为这部分命令数量较多，混在一起会让任务命令难以查找。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode } from './types'
 

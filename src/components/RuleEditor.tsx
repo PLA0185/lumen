@@ -185,6 +185,7 @@ export function RuleEditor({ value, onChange, defaultDate }: RuleEditorProps) {
         try {
           const list = await rec.recurringPreview({
             rrule,
+            tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
             dtstartLocal,
             hasStartTime,
             count: 10,

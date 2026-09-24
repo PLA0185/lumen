@@ -17,6 +17,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import * as att from '../lib/attachment-ipc'
 import { IpcError } from '../lib/ipc'
+import { onDataChanged } from '../lib/data-change'
 import type { Attachment } from '../lib/attachment-ipc'
 import { Icon, iconForMime, type IconName } from './Icons'
 
@@ -71,6 +72,7 @@ export function AttachmentList({ taskId }: { taskId: string }) {
 
   useEffect(() => {
     void reload()
+    return onDataChanged(['attachments', 'tasks', 'all'], () => void reload())
   }, [reload])
 
   const addFiles = async () => {

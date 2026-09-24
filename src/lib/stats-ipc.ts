@@ -2,7 +2,7 @@
  * 统计与成长的 IPC 封装（任务书 §7）。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode } from './types'
 

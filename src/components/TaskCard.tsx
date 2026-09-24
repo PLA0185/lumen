@@ -20,6 +20,7 @@ import { FocusPanel } from './FocusPanel'
 import * as rec from '../lib/recurrence-ipc'
 import type { ScopeInfo } from '../lib/recurrence-ipc'
 import { Icon } from './Icons'
+import { onDataChanged } from '../lib/data-change'
 
 /**
  * 重复系列信息块（§5）。
@@ -35,13 +36,18 @@ function SeriesInfo({ taskId }: { taskId: string }) {
   const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
-    void (async () => {
+    let active = true
+    const load = () => { void (async () => {
       try {
-        setInfo(await rec.recurringScopeInfo(taskId))
+        const next = await rec.recurringScopeInfo(taskId)
+        if (active) setInfo(next)
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        if (active) setError(e instanceof Error ? e.message : String(e))
       }
-    })()
+    })() }
+    load()
+    const off = onDataChanged(['recurrence', 'tasks', 'all'], load)
+    return () => { active = false; off() }
   }, [taskId])
 
   if (!info?.isRecurring) return null

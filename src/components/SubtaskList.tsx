@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
+import { onDataChanged } from '../lib/data-change'
 import type { Subtask } from '../lib/organize-ipc'
 import { Icon } from './Icons'
 
@@ -43,6 +44,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
 
   useEffect(() => {
     void reload()
+    return onDataChanged(['subtasks', 'tasks', 'all'], () => void reload())
   }, [reload])
 
   const add = async () => {

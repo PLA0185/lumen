@@ -2,7 +2,7 @@
  * 专注模式 IPC 封装（任务书 §4.4）。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode } from './types'
 

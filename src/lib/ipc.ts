@@ -9,7 +9,7 @@
  * - 命令名集中定义，避免散落各处拼写不一致。
  */
 
-import { invoke } from '@tauri-apps/api/core'
+import { invokeData as invoke } from './data-change'
 import type {
   AppInfo,
   BackendError,
@@ -37,6 +37,7 @@ export const CMD = {
   appDataPaths: 'app_data_paths',
   taskCreate: 'task_create',
   taskUpdate: 'task_update',
+  taskSave: 'task_save',
   taskGet: 'task_get',
   taskList: 'task_list',
   taskCount: 'task_count',
@@ -50,7 +51,6 @@ export const CMD = {
   taskDuplicate: 'task_duplicate',
   taskReorder: 'task_reorder',
   taskReport: 'task_report',
-  taskReportAll: 'task_report_all',
   exportPdf: 'export_pdf',
   todayOverview: 'today_overview',
   setRemindersPaused: 'set_reminders_paused',
@@ -163,6 +163,9 @@ export const createTask = (input: CreateTaskInput): Promise<Task> =>
 export const updateTask = (id: string, input: UpdateTaskInput): Promise<Task> =>
   call<Task>(CMD.taskUpdate, { id, input })
 
+export const saveTask = (id: string, input: UpdateTaskInput, tagIds: string[]): Promise<Task> =>
+  call<Task>(CMD.taskSave, { id, input, tagIds })
+
 /** 读取单个任务 */
 export const getTask = (id: string): Promise<Task> => call<Task>(CMD.taskGet, { id })
 
@@ -262,15 +265,6 @@ export const taskReport = (query: TaskQuery): Promise<TaskReportRow[]> =>
  * 整改任务书 §7：报告/归档类导出不能静默截断。后端按 500 条一页连续读取
  * 直到取完，`truncated` 为真表示碰到了总量安全上限（界面必须如实告知）。
  */
-export interface ReportPage {
-  rows: TaskReportRow[]
-  total: number
-  truncated: boolean
-}
-
-export const taskReportAll = (query: TaskQuery): Promise<ReportPage> =>
-  call<ReportPage>(CMD.taskReportAll, { query })
-
 /**
  * 把主窗口当前页面导出为 PDF。
  *
@@ -286,9 +280,14 @@ export const getTodayOverview = (
 ): Promise<TodayOverview> =>
   call<TodayOverview>(CMD.todayOverview, { dayStartUtc, dayEndUtc, nowUtc: nowUtc ?? null })
 
-/** 日历视图：查询落在指定 UTC 范围内的任务 */
-export const tasksInRange = (startUtc: string, endUtc: string): Promise<Task[]> =>
-  call<Task[]>(CMD.tasksInRange, { startUtc, endUtc })
+/** 日历视图：有明确的总数和截断标记。 */
+export interface CalendarPage {
+  rows: Task[]
+  total: number
+  truncated: boolean
+}
+export const tasksInRange = (startUtc: string, endUtc: string): Promise<CalendarPage> =>
+  call<CalendarPage>(CMD.tasksInRange, { startUtc, endUtc })
 
 /** 拖拽改期：把任务的计划时间移到新日期（保留原时刻，不影响截止时间） */
 export const rescheduleTask = (id: string, newDateUtc: string): Promise<Task> =>

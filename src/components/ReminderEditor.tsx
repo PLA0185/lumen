@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import * as rem from '../lib/reminder-ipc'
 import { IpcError } from '../lib/ipc'
+import { onDataChanged } from '../lib/data-change'
 import type { Reminder, ReminderKind } from '../lib/reminder-ipc'
 import { fromUtcIso } from '../lib/datetime'
 import { Icon } from './Icons'
@@ -57,6 +58,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
 
   useEffect(() => {
     void reload()
+    return onDataChanged(['reminders', 'tasks', 'all'], () => void reload())
   }, [reload])
 
   /** 当前选择的类型是否满足创建条件 */

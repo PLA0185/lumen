@@ -12,7 +12,6 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { parseQuickInput } from '../lib/nlp'
 import { combineDateTime } from '../lib/datetime'
-import * as bus from '../lib/bus'
 import type { PeriodType, Task } from '../lib/types'
 
 interface QuickAddProps {
@@ -91,8 +90,7 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
         tagIds,
       })
       onCreated(task)
-      // 通知悬浮窗/快速添加窗等其他窗口刷新
-      void bus.notifyTasksChanged()
+      // createTask 的统一 mutation 层已通知所有数据视图。
       reset()
       inputRef.current?.focus()
     } catch (e) {

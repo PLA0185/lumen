@@ -8,7 +8,6 @@
 
 import { create } from 'zustand'
 import * as ipc from './ipc'
-import * as bus from './bus'
 import { IpcError } from './ipc'
 import type {
   AppInfo,
@@ -138,8 +137,6 @@ interface AppStore {
    * 这两个方法保留给"确实需要一次性拿到全量数据"的调用方。
    */
   reportRows: () => Promise<ipc.TaskReportRow[]>
-  /** 取全量报告数据（后端一次取 REPORT_MAX_ROWS+1 条，超出部分会如实标记截断） */
-  reportRowsAll: () => Promise<ipc.ReportPage>
 
   pushToast: (kind: Toast['kind'], text: string) => void
   /** 提醒条：不自动消失，并带「打开任务」跳转 */
@@ -489,7 +486,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.toggleTaskDone(id, done)
       await Promise.all([get().reload(), get().refreshOverview()])
-      void bus.notifyTasksChanged()
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     }
@@ -499,7 +495,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       const r = await ipc.duplicateTask(id)
       await get().reload()
-      void bus.notifyTasksChanged()
       // 附件不随副本复制，这一点必须告诉用户，不能静默丢掉
       if (r.skippedAttachments > 0) {
         get().pushToast('info', r.note)
@@ -515,7 +510,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.reorderTask(movedId, beforeId)
       await get().reload()
-      void bus.notifyTasksChanged()
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     }
@@ -525,7 +519,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.softDeleteTask(id)
       await Promise.all([get().reload(), get().refreshOverview()])
-      void bus.notifyTasksChanged()
       get().pushToast('success', '已移入回收站，可随时恢复')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -536,7 +529,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.restoreTask(id)
       await Promise.all([get().reload(), get().refreshOverview()])
-      void bus.notifyTasksChanged()
       get().pushToast('success', '已恢复')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -547,7 +539,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       await ipc.purgeTask(id)
       await get().reload()
-      void bus.notifyTasksChanged()
       get().pushToast('success', '已永久删除')
     } catch (e) {
       get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
@@ -565,7 +556,6 @@ export const useApp = create<AppStore>((set, get) => ({
     try {
       const r = await ipc.commitPurgeDeleted(query, taskIds)
       await get().reload()
-      void bus.notifyTasksChanged()
       get().pushToast('success', `已永久删除 ${r.purged} 项`)
     } catch (e) {
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
@@ -580,22 +570,6 @@ export const useApp = create<AppStore>((set, get) => ({
     const q = buildQuery(get())
     // 单页接口有 PAGE_MAX 上限，这里要 1000 条（历史用法）；需要全量请用 reportRowsAll
     return ipc.taskReport({ ...q, limit: 1000 })
-  },
-
-  /**
-   * 完整报告数据。
-   *
-   * 后端现在**一次取 `REPORT_MAX_ROWS + 1` 条**（不再是"500 条一页读到取完"：
-   * 深分页在 10 万条时是 O(n²)，实测 56 秒，改成一次取全量后 1.6 秒）。
-   * 返回的 `truncated` 交给界面提示，而不是悄悄少给用户数据。
-   *
-   * PDF 导出**不再调用它**——那条路径改成了分页流式构建 DOM。
-   */
-  reportRowsAll: async () => {
-    const q = buildQuery(get())
-    // 单页 limit/offset 由后端自己决定，这里清掉，避免影响它的取数策略
-    const { limit: _limit, offset: _offset, ...rest } = q
-    return ipc.taskReportAll(rest)
   },
 
   pushToast: (kind, text) => {
