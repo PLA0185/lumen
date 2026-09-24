@@ -111,7 +111,7 @@ pub struct Reminder {
 
 /// 待触发的提醒（带任务标题，通知正文需要）
 #[derive(Debug, Clone)]
-struct DueReminder {
+pub(crate) struct DueReminder {
     id: String,
     task_id: String,
     title: String,
@@ -521,9 +521,30 @@ async fn tick(app: &AppHandle) -> AppResult<()> {
         .ok_or_else(|| AppError::internal("应用状态未就绪"))?;
     let db = &state.db;
     let now = to_db_time(utc_now());
+    let due = due_reminders(db, &now, MAX_PER_TICK).await?;
 
+    for d in due {
+        if d.task_done {
+            continue;
+        }
+        fire(app, &d).await;
+    }
+    Ok(())
+}
+
+/// 查出"这一刻应当发出"的提醒（供调度循环与测试共用）。
+///
+/// 抽出来的原因：这段过滤条件就是 §15 里"已完成任务不再提醒、回收站任务
+/// 不再提醒、已触发的绝不重复"的**唯一实现**，必须能被测试直接验证，
+/// 而不是只能靠"跑一遍看看有没有弹窗"。
+pub(crate) async fn due_reminders(
+    db: &crate::db::Db,
+    now: &str,
+    limit: i64,
+) -> AppResult<Vec<DueReminder>> {
     // 只看未触发、已启用、且已到点的提醒。
-    // 已完成任务不再打扰（用户已经做完了，提醒没有意义）。
+    // 已完成任务不再打扰（用户已经做完了，提醒没有意义），
+    // 回收站里的任务同理（deleted_at IS NOT NULL 不算数）。
     let rows = sqlx::query(
         "SELECT r.id, r.task_id, r.remind_at, t.title, t.status
          FROM reminders r
@@ -536,14 +557,10 @@ async fn tick(app: &AppHandle) -> AppResult<()> {
          ORDER BY r.remind_at ASC
          LIMIT ?2",
     )
-    .bind(&now)
-    .bind(MAX_PER_TICK)
+    .bind(now)
+    .bind(limit.clamp(1, MAX_PER_TICK))
     .fetch_all(db.pool())
     .await?;
-
-    if rows.is_empty() {
-        return Ok(());
-    }
 
     let mut due = Vec::with_capacity(rows.len());
     for r in rows {
@@ -556,14 +573,7 @@ async fn tick(app: &AppHandle) -> AppResult<()> {
             task_done: status == "done" || status == "archived",
         });
     }
-
-    for d in due {
-        if d.task_done {
-            continue;
-        }
-        fire(app, &d).await;
-    }
-    Ok(())
+    Ok(due)
 }
 
 /// 发出单条提醒：先写 `fired_at`（去重的关键），再发通知。
@@ -1057,6 +1067,188 @@ mod disable_reason_tests {
             reason.as_deref(),
             Some(DISABLED_BY_USER),
             "老数据应保守地视为用户关闭"
+        );
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod due_selection_tests {
+    //! 整改任务书 §15：提醒的"该不该发"必须能被自动测试直接验证。
+    //!
+    //! 这些用例覆盖的是**过滤条件**本身（调度循环的唯一判定依据）：
+    //! 已完成/已归档/回收站里的任务不提醒、已触发的不重复、
+    //! 被停用的不发、到点的按时间顺序、单次有上限。
+
+    use super::*;
+    use crate::db::Db;
+
+    async fn setup(name: &str) -> (Db, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lumen-due-{name}-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.expect("初始化数据库");
+        (db, dir)
+    }
+
+    /// 建一个任务 + 一条提醒，返回 (task_id, reminder_id)
+    async fn add(
+        db: &Db,
+        title: &str,
+        status: &str,
+        deleted: bool,
+        remind_at: &str,
+        enabled: bool,
+        fired_at: Option<&str>,
+    ) -> (String, String) {
+        let task_id = uuid::Uuid::now_v7().to_string();
+        let rid = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, priority, deleted_at, created_at, updated_at,
+                                sort_order, is_pinned, is_favorite, has_planned_time, has_due_time,
+                                actual_minutes, occurrence_kind, is_exception, period_type)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5, ?5, 1, 0, 0, 0, 0, 0, 'single', 0, 'none')",
+        )
+        .bind(&task_id)
+        .bind(title)
+        .bind(status)
+        .bind(if deleted { Some(now.clone()) } else { None })
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO reminders (id, task_id, kind, remind_at, is_enabled, fired_at, created_at, updated_at)
+             VALUES (?1, ?2, 'custom', ?3, ?4, ?5, ?6, ?6)",
+        )
+        .bind(&rid)
+        .bind(&task_id)
+        .bind(remind_at)
+        .bind(enabled as i64)
+        .bind(fired_at)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        (task_id, rid)
+    }
+
+    #[tokio::test]
+    async fn only_unfired_enabled_and_not_done_tasks_are_due() {
+        let (db, dir) = setup("filter").await;
+        let past = "2026-01-01T00:00:00.000Z";
+        let now = "2026-06-01T00:00:00.000Z";
+
+        add(&db, "正常待办", "todo", false, past, true, None).await;
+        add(&db, "已完成的", "done", false, past, true, None).await;
+        add(&db, "已归档的", "archived", false, past, true, None).await;
+        add(&db, "在回收站的", "todo", true, past, true, None).await;
+        add(&db, "已停用的", "todo", false, past, false, None).await;
+        add(&db, "已经发过的", "todo", false, past, true, Some(past)).await;
+        add(
+            &db,
+            "还没到点",
+            "todo",
+            false,
+            "2026-12-01T00:00:00.000Z",
+            true,
+            None,
+        )
+        .await;
+
+        let due = due_reminders(&db, now, MAX_PER_TICK).await.unwrap();
+        let titles: Vec<&str> = due.iter().map(|d| d.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            vec!["正常待办"],
+            "只应发出「到点 + 启用 + 未触发 + 任务未完成未删除」的那一条"
+        );
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn due_list_is_ordered_and_capped() {
+        let (db, dir) = setup("order").await;
+        let now = "2026-06-01T00:00:00.000Z";
+        // 故意乱序插入，验证按 remind_at 升序返回
+        for (t, at) in [
+            ("第三", "2026-05-03T00:00:00.000Z"),
+            ("第一", "2026-05-01T00:00:00.000Z"),
+            ("第二", "2026-05-02T00:00:00.000Z"),
+        ] {
+            add(&db, t, "todo", false, at, true, None).await;
+        }
+        let due = due_reminders(&db, now, MAX_PER_TICK).await.unwrap();
+        let titles: Vec<&str> = due.iter().map(|d| d.title.as_str()).collect();
+        assert_eq!(titles, vec!["第一", "第二", "第三"], "必须按时间先后发");
+
+        // 上限必须生效，避免异常数据一次性弹满屏幕
+        let capped = due_reminders(&db, now, 2).await.unwrap();
+        assert_eq!(capped.len(), 2, "limit 应生效");
+
+        let _ = db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 超过补发窗口的提醒要能被标记成 expired，而不是无限期地"待补发"
+    #[tokio::test]
+    async fn missed_reminders_beyond_grace_are_marked_expired() {
+        let (db, dir) = setup("expired").await;
+        let now = to_db_time(utc_now());
+
+        // 很久以前的一条（超出补发窗口）
+        let (_, old_id) = add(
+            &db,
+            "很久以前",
+            "todo",
+            false,
+            "2020-01-01T00:00:00.000Z",
+            true,
+            None,
+        )
+        .await;
+        // 刚刚错过的（在窗口内，不该被标记为过期）
+        let recent = to_db_time(utc_now() - chrono::Duration::minutes(5));
+        let (_, recent_id) = add(&db, "刚刚错过", "todo", false, &recent, true, None).await;
+
+        // 与 reminder_check_missed 相同的判定：超过 grace 的标记为 expired
+        let cutoff = to_db_time(utc_now() - chrono::Duration::minutes(360));
+        sqlx::query(
+            "UPDATE reminders SET fired_at = 'expired', updated_at = ?1
+             WHERE is_enabled = 1 AND fired_at IS NULL AND remind_at < ?2",
+        )
+        .bind(&now)
+        .bind(&cutoff)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let old_state: Option<String> =
+            sqlx::query_scalar("SELECT fired_at FROM reminders WHERE id = ?1")
+                .bind(&old_id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(old_state.as_deref(), Some("expired"), "超窗的应被明确作废");
+
+        let recent_state: Option<String> =
+            sqlx::query_scalar("SELECT fired_at FROM reminders WHERE id = ?1")
+                .bind(&recent_id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert!(recent_state.is_none(), "窗口内的不应被作废，仍要补发");
+
+        // 作废后不应再出现在待发列表里（不会"过期了还弹"）
+        let due = due_reminders(&db, &now, MAX_PER_TICK).await.unwrap();
+        assert!(
+            due.iter().all(|d| d.id != old_id),
+            "标记 expired 之后不应再被发出"
         );
 
         let _ = db.pool().close().await;
