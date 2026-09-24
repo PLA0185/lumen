@@ -7,8 +7,8 @@
  * 而不是渲染一个看起来能用、实际无反应的界面。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useApp } from './lib/store'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useApp, PAGE_SIZE } from './lib/store'
 import { IpcError } from './lib/ipc'
 import * as ipc from './lib/ipc'
 import { Sidebar, VIEW_META } from './components/Sidebar'
@@ -80,6 +80,10 @@ export default function App() {
     restore,
     purge,
     purgeAll,
+    loadMore,
+    totalCount,
+    hasMore,
+    loadingMore,
     reportRowsAll,
     dismissToast,
     pushToast,
@@ -528,18 +532,30 @@ export default function App() {
           )}
 
           {/* 回收站工具栏 */}
-          {view === 'trash' && tasks.length > 0 && (
+          {view === 'trash' && totalCount > 0 && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px', display: 'flex', gap: 8 }}>
               <button
                 type="button"
                 className="btn btn--danger btn--sm"
                 onClick={() => {
-                  if (window.confirm(`确定永久删除回收站中的全部 ${tasks.length} 项任务吗？此操作不可撤销。`)) {
+                  // 确认数量必须与后端实际执行范围一致（整改任务书 §5）：
+                  // 这里用 totalCount（后端 count），**不是** tasks.length
+                  // ——后者只是"已经加载到界面的条数"，分页后可能远小于实际。
+                  const n = totalCount
+                  const loadedNote =
+                    n > tasks.length
+                      ? `\n\n（当前界面只加载了前 ${tasks.length} 条，删除范围为回收站中的全部 ${n} 条。）`
+                      : ''
+                  if (
+                    window.confirm(
+                      `将永久删除回收站中的 ${n} 项任务。\n此操作不可撤销。${loadedNote}`,
+                    )
+                  ) {
                     void purgeAll()
                   }
                 }}
               >
-                清空回收站（{tasks.length}）
+                永久删除 {totalCount} 项
               </button>
             </div>
           )}
@@ -566,6 +582,10 @@ export default function App() {
             onRetry={reload}
             onNew={() => setShowQuickAdd(true)}
             onGoSettings={() => setView('settings')}
+            totalCount={totalCount}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onLoadMore={() => void loadMore()}
           />
         </main>
       </div>
@@ -687,6 +707,11 @@ interface TaskAreaProps {
   onRetry: () => void
   onNew: () => void
   onGoSettings: () => void
+  /** 当前条件下的总条数（后端 count），用于回答"还有多少没加载" */
+  totalCount: number
+  hasMore: boolean
+  loadingMore: boolean
+  onLoadMore: () => void
 }
 
 function TaskArea({
@@ -711,6 +736,10 @@ function TaskArea({
   onRetry,
   onNew,
   onGoSettings,
+  totalCount,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }: TaskAreaProps) {
   // 组织管理视图（项目与分类、标签）走专门界面
   if (ORGANIZE_VIEWS.has(view)) {
@@ -832,29 +861,104 @@ function TaskArea({
   }
 
   return (
-    <ul className="tasklist">
-      {tasks.map((t) => (
-        <TaskCard
-          key={t.id}
-          task={t}
-          mode={view === 'trash' ? 'trash' : 'normal'}
-          progress={progressMap[t.id]}
-          onToggle={onToggle}
-          onDelete={onDelete}
-          onRestore={onRestore}
-          onEdit={onEdit}
-          onDuplicate={onDuplicate}
-          sortable={sortable}
-          isDragging={dragId === t.id}
-          dropHint={dropBeforeId === t.id && dragId !== t.id ? 'before' : null}
-          onDragStartCard={onDragStartCard}
-          onDragOverCard={onDragOverCard}
-          onDragEndCard={onDragEndCard}
-          onPurge={(id) => {
-            if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
-          }}
-        />
-      ))}
-    </ul>
+    <>
+      <ul className="tasklist">
+        {tasks.map((t) => (
+          <TaskCard
+            key={t.id}
+            task={t}
+            mode={view === 'trash' ? 'trash' : 'normal'}
+            progress={progressMap[t.id]}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onRestore={onRestore}
+            onEdit={onEdit}
+            onDuplicate={onDuplicate}
+            sortable={sortable}
+            isDragging={dragId === t.id}
+            dropHint={dropBeforeId === t.id && dragId !== t.id ? 'before' : null}
+            onDragStartCard={onDragStartCard}
+            onDragOverCard={onDragOverCard}
+            onDragEndCard={onDragEndCard}
+            onPurge={(id) => {
+              if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
+            }}
+          />
+        ))}
+      </ul>
+
+      {/*
+        分页的可见出口（整改任务书 §4.2：不得静默只展示前 N 条）。
+        只要还有没加载完的任务，这里就必须明确写出来，并给一个能继续加载的入口。
+      */}
+      <LoadMore
+        loaded={tasks.length}
+        total={totalCount}
+        hasMore={hasMore}
+        loading={loadingMore}
+        onLoadMore={onLoadMore}
+      />
+    </>
+  )
+}
+
+/**
+ * 分页出口：滚动到底部自动加载下一页，同时保留一个显式按钮。
+ *
+ * 为什么**不能**只做自动加载：键盘用户、以及"内容不够长、根本没得滚"的情况
+ * 都需要一个能点的入口。反过来只做按钮也不行——2000 条任务要手点十次。
+ *
+ * 单独成组件的原因：`TaskArea` 开头有若干个提前 return（组织管理、设置页、
+ * 自定义视图…），在那里调 hook 会违反 hooks 调用规则。
+ */
+function LoadMore({
+  loaded,
+  total,
+  hasMore,
+  loading,
+  onLoadMore,
+}: {
+  loaded: number
+  total: number
+  hasMore: boolean
+  loading: boolean
+  onLoadMore: () => void
+}) {
+  const sentinel = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!hasMore || loading) return
+    const el = sentinel.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) onLoadMore()
+      },
+      // 提前 400px 触发，滚动过程中不会出现"停一下才继续"
+      { rootMargin: '400px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasMore, loading, onLoadMore])
+
+  // 一条都没有、或已经全部加载完且本来就没分页时，不占地方
+  if (loaded === 0) return null
+  const remaining = Math.max(total - loaded, 0)
+  if (!hasMore && remaining === 0) {
+    return total > PAGE_SIZE ? (
+      <p className="loadmore__done">已加载全部 {total} 条</p>
+    ) : null
+  }
+
+  return (
+    <div className="loadmore">
+      <div ref={sentinel} aria-hidden="true" />
+      <button type="button" className="btn btn--ghost" disabled={loading} onClick={onLoadMore}>
+        {loading ? '正在加载…' : `加载更多（还有 ${remaining} 条）`}
+      </button>
+      <span className="loadmore__note">
+        已显示 {loaded} / {total} 条
+      </span>
+    </div>
   )
 }

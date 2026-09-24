@@ -240,6 +240,17 @@ export interface PurgeResult {
   purged: number
 }
 
+/**
+ * 符合条件的任务总数（整改任务书 §10）。
+ *
+ * 与 `task_list` 共用同一套筛选条件，所以它就是"这个视图一共有多少条"。
+ * 分页的"还有更多"判断与回收站清空的确认数量都用它，
+ * 而不是当前已加载的 `tasks.length`。
+ */
+export interface TaskCount {
+  total: number
+}
+
 /** 后端错误码，与 Rust `error::ErrorCode` 一一对应 */
 export type ErrorCode =
   | 'validation'

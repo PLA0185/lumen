@@ -17,6 +17,7 @@ import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import { UpdatePanel } from './UpdatePanel'
 import * as bk from '../lib/backup-ipc'
+import * as att from '../lib/attachment-ipc'
 import { IpcError } from '../lib/ipc'
 import * as rem from '../lib/reminder-ipc'
 import { useApp } from '../lib/store'
@@ -52,6 +53,26 @@ export function SettingsView() {
   // 提醒调度状态
   const [sched, setSched] = useState<rem.SchedulerStatus | null>(null)
   const [grace, setGrace] = useState(360)
+
+  // 附件副本清理（第二轮整改任务书 §6.5）
+  const [orphanResult, setOrphanResult] = useState<att.OrphanCleanupResult | null>(null)
+
+  const doCleanupOrphans = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await att.attachmentCleanupOrphans()
+      setOrphanResult(r)
+      pushToast(
+        'success',
+        r.removed > 0 ? `已清理 ${r.removed} 个无引用的附件副本` : '没有发现需要清理的孤儿副本',
+      )
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const loadBackups = useCallback(async () => {
     try {
@@ -513,6 +534,46 @@ export function SettingsView() {
               注意：备份文件包含任务数据但不包含附件文件本体。如需连附件一起备份，
               请另行复制数据目录中的 attachments 文件夹。
             </p>
+          </div>
+
+          {/*
+            附件副本清理（第二轮整改任务书 §6.5）。
+            永久删除任务时程序会顺手删掉自己复制出来的附件副本；但如果当时删除失败
+            （文件被占用等），就会留下"数据库里没记录、磁盘上还占着"的孤儿文件。
+            这里提供一个显式的清理入口，并说清楚它**只动什么**。
+          */}
+          <div className="setgroup">
+            <h3 className="setgroup__title">附件副本清理</h3>
+            <p className="setgroup__desc">
+              永久删除任务时，Lumen 会同时删掉自己复制到数据目录里的附件副本。
+              如果那次删除因为文件被占用等原因失败，副本文件会留在磁盘上成为孤儿。
+              这里可以扫描并清理它们。
+            </p>
+            <p className="setgroup__hint">
+              只会删除<strong>位于受控附件目录内、且命名为 Lumen 生成的 UUID 形式、
+              数据库已无任何引用</strong>的文件。你自己放进该目录的文件、
+              以及所有引用模式的原文件都不会被触碰。
+            </p>
+            <div className="setactions">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                disabled={busy}
+                onClick={() => void doCleanupOrphans()}
+              >
+                扫描并清理孤儿副本
+              </button>
+            </div>
+            {orphanResult && (
+              <p className="setgroup__hint" role="status">
+                扫描 {orphanResult.scanned} 个文件：仍被引用 {orphanResult.kept} 个，
+                已清理 {orphanResult.removed} 个，跳过 {orphanResult.skipped} 个
+                {orphanResult.removedFiles.length > 0 &&
+                  `（${orphanResult.removedFiles.slice(0, 5).join('、')}${
+                    orphanResult.removedFiles.length > 5 ? ' …' : ''
+                  }）`}
+              </p>
+            )}
           </div>
 
           <div className="setgroup">

@@ -23,7 +23,7 @@ use sqlx::Row;
 use tauri::State;
 
 use crate::commands::AppState;
-use crate::db::{to_db_time, utc_now};
+use crate::db::{to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 单个附件的最大字节数（200 MB）。超过则拒绝并给出明确原因，
@@ -102,15 +102,28 @@ pub fn relative_stored_path(data_dir: &Path, abs: &Path) -> String {
 
 /// 受控附件目录：`<数据目录>/attachments`
 fn attachments_dir(state: &AppState) -> PathBuf {
-    state.db.data_dir().join("attachments")
+    attachments_dir_of(state.db.data_dir())
+}
+
+/// 受控附件目录（不依赖 `AppState` 的版本，供后台清理与测试使用）
+fn attachments_dir_of(data_dir: &Path) -> PathBuf {
+    data_dir.join("attachments")
 }
 
 /// 校验并规范化一个"允许操作"的路径必须位于受控目录内。
 ///
 /// 若目录尚不存在会先创建，否则 `canonicalize` 必然失败。
 fn ensure_inside_attachments(state: &AppState, candidate: &Path) -> AppResult<PathBuf> {
-    let root = attachments_dir(state);
-    std::fs::create_dir_all(&root)?;
+    ensure_inside_dir(&attachments_dir(state), candidate)
+}
+
+/// `ensure_inside_attachments` 的纯路径版本（整改任务书 §6.5）。
+///
+/// 抽出来是为了让"删附件副本"这件事在**没有 `AppState`** 的地方
+/// （后台孤儿清理、单元测试）也能复用同一套越界判断，
+/// 而不是另写一份——那种重复正是越界漏洞的来源。
+fn ensure_inside_dir(root: &Path, candidate: &Path) -> AppResult<PathBuf> {
+    std::fs::create_dir_all(root)?;
 
     // canonicalize 会解析 .. 与符号链接，是防越界的关键一步
     let root_abs = root
@@ -127,6 +140,129 @@ fn ensure_inside_attachments(state: &AppState, candidate: &Path) -> AppResult<Pa
             .with_hint("为保护你的原始文件，程序不会修改附件目录以外的任何内容"));
     }
     Ok(cand_abs)
+}
+
+// =============================================================================
+// 永久删除后的副本文件清理（第二轮整改任务书 §6）
+// =============================================================================
+//
+// 背景：`attachments.task_id` 是 `ON DELETE CASCADE`，所以永久删除任务时
+// 附件**记录**会自动消失；但 copied 模式的**实体文件**留在
+// `<数据目录>/attachments/` 里，于是产生"数据库里没记录、磁盘上还占着"的孤儿文件。
+//
+// 顺序（§6.4 明确要求）：
+// 1. 事务**之前**读出要清理的路径（事务提交后记录就没了，读不到了）；
+// 2. 完成数据库删除并提交；
+// 3. 提交**之后**再删文件。文件删除失败只记日志，不回滚已经完成的删除
+//    ——回滚会退化成"记录还在、文件没了"，那比留个孤儿文件更糟。
+
+/// 永久删除任务前，取出该任务下 **copied** 附件的存储路径。
+pub async fn copied_paths_of_task(db: &Db, task_id: &str) -> AppResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT stored_path FROM attachments
+         WHERE task_id = ?1 AND storage_mode = 'copied' AND stored_path IS NOT NULL",
+    )
+    .bind(task_id)
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// 清空回收站前，取出**所有**回收站任务的 copied 附件存储路径。
+pub async fn copied_paths_in_trash(db: &Db) -> AppResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT a.stored_path FROM attachments a
+         JOIN tasks t ON t.id = a.task_id
+         WHERE t.deleted_at IS NOT NULL
+           AND a.storage_mode = 'copied'
+           AND a.stored_path IS NOT NULL",
+    )
+    .fetch_all(db.pool())
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
+/// 删除一批受控副本文件，返回 `(已删除, 失败或跳过)`。
+///
+/// **刻意不返回错误**：调用方按 §6.4 只记日志，
+/// 绝不因为删文件失败而回滚已经提交的数据库删除。
+///
+/// 四重保护，只要有一层不过就跳过：
+/// 1. 词法归一化后必须仍在受控附件目录内（挡住 `../` 穿越与目录外绝对路径）；
+/// 2. 文件不存在才算"已完成"（幂等，重复调用安全）；
+/// 3. 存在的文件再走一次 `canonicalize` 校验（挡住符号链接指向目录外）；
+/// 4. 删除失败只计数，不影响调用方。
+pub fn delete_copied_files(data_dir: &Path, stored_paths: &[String]) -> (usize, usize) {
+    let root = attachments_dir_of(data_dir);
+    let root_lex = lexical_normalize(&root);
+    let mut removed = 0usize;
+    let mut failed = 0usize;
+
+    for stored in stored_paths {
+        let candidate = resolve_stored_path(data_dir, stored);
+
+        // 第 1 道：纯路径判断，**不依赖文件是否存在**
+        if !lexical_normalize(&candidate).starts_with(&root_lex) {
+            failed += 1;
+            log::warn!("附件副本路径越界（词法检查），已跳过删除：{stored}");
+            continue;
+        }
+
+        // 第 2 道：不存在就算已完成
+        if !candidate.exists() {
+            removed += 1;
+            continue;
+        }
+
+        // 第 3 道：解析符号链接后再比一次
+        match ensure_inside_dir(&root, &candidate) {
+            Ok(abs) => match std::fs::remove_file(&abs) {
+                Ok(()) => removed += 1,
+                Err(e) => {
+                    failed += 1;
+                    log::warn!("附件副本删除失败（保留文件，不影响已完成的删除）：{e}");
+                }
+            },
+            Err(e) => {
+                failed += 1;
+                log::warn!("附件副本路径越界（符号链接检查），已跳过删除：{stored}（{e}）");
+            }
+        }
+    }
+    (removed, failed)
+}
+
+/// 词法层面折叠 `..` 与 `.`（不访问文件系统）。
+///
+/// 为什么需要它：`canonicalize` 要求路径**存在**，所以"记录里写了越界路径、
+/// 而那个文件恰好不存在"的情况没法用它判断。若此时先判"文件不存在 ⇒ 已完成"，
+/// 就会把越界路径记成"已清理"——虽然没删到目录外的东西，但统计失真，
+/// 也掩盖了数据库被改坏的事实。因此先做词法归一化，再做存在性与符号链接检查。
+fn lexical_normalize(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// 判断一个文件名是否是 Lumen 自己生成的副本（`<uuid><扩展名>`）。
+///
+/// 孤儿清理**只动这种命名的文件**：用户手动放进附件目录的任何东西都不属于
+/// Lumen 的管理范围，即使数据库没有引用也不能删。
+fn looks_like_managed_copy(file_name: &str) -> bool {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    uuid::Uuid::parse_str(&stem).is_ok()
 }
 
 /// 计算文件 SHA-256；失败时返回 None（不阻断添加流程）
@@ -417,6 +553,141 @@ pub async fn attachment_check(
         }));
     }
     Ok(out)
+}
+
+/// 孤儿附件清理结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrphanCleanupResult {
+    /// 受控目录里扫描到的文件数（只统计顶层文件）
+    pub scanned: i64,
+    /// 数据库仍引用、保留下来的文件数
+    pub kept: i64,
+    /// 已删除的无引用副本数
+    pub removed: i64,
+    /// 被跳过的文件数（命名不属于 Lumen 管理范围，或删除失败）
+    pub skipped: i64,
+    /// 实际删掉的文件名，供用户核对
+    pub removed_files: Vec<String>,
+}
+
+/// 清理受控附件目录里**数据库已无引用**的副本文件（整改任务书 §6.5）。
+///
+/// 这个命令处理的是"永久删除任务时删文件失败""程序被强制结束"等情况下
+/// 留下的孤儿文件。两个硬约束：
+///
+/// 1. **只删文件名形如 `<uuid><扩展名>` 的文件**——那是 Lumen 唯一会创建的形态；
+///    用户自己丢进这个目录的东西一律不碰（`skipped` 会如实计数）。
+/// 2. **绝不碰受控目录之外的任何文件**：路径比较用的是 `canonicalize` 之后的结果。
+///
+/// 数据库读取失败时直接返回错误、**不删任何东西**——宁可留下孤儿文件，
+/// 也不能在"不知道哪些还被引用"的情况下开始删。
+#[tauri::command]
+pub async fn attachment_cleanup_orphans(
+    state: State<'_, AppState>,
+) -> AppResult<OrphanCleanupResult> {
+    cleanup_orphans_impl(&state.db).await
+}
+
+/// 孤儿清理的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn cleanup_orphans_impl(db: &Db) -> AppResult<OrphanCleanupResult> {
+    let data_dir = db.data_dir().to_path_buf();
+    let root = attachments_dir_of(&data_dir);
+
+    // 先把"仍被引用的相对路径"读全。任何错误都在这里返回，
+    // 不允许在引用集合不完整的情况下继续。
+    let referenced: Vec<(String,)> = sqlx::query_as(
+        "SELECT stored_path FROM attachments
+         WHERE storage_mode = 'copied' AND stored_path IS NOT NULL",
+    )
+    .fetch_all(db.pool())
+    .await?;
+    let referenced: std::collections::HashSet<String> = referenced
+        .into_iter()
+        // 统一成"相对数据目录、正斜杠"的形式再比较，
+        // 这样老数据里的绝对路径与新写的相对路径能对上同一个文件
+        .map(|(p,)| relative_stored_path(&data_dir, &resolve_stored_path(&data_dir, &p)))
+        .collect();
+
+    if !root.is_dir() {
+        // 目录不存在 ⇒ 没有孤儿，也没什么可清理的
+        return Ok(OrphanCleanupResult {
+            scanned: 0,
+            kept: 0,
+            removed: 0,
+            skipped: 0,
+            removed_files: Vec::new(),
+        });
+    }
+
+    let mut scanned = 0i64;
+    let mut kept = 0i64;
+    let mut removed = 0i64;
+    let mut skipped = 0i64;
+    let mut removed_files: Vec<String> = Vec::new();
+
+    let entries = std::fs::read_dir(&root).map_err(|e| {
+        AppError::new(
+            crate::error::ErrorCode::Io,
+            format!("无法读取附件目录：{e}"),
+        )
+    })?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // 只处理顶层**文件**：子目录、符号链接等一律跳过
+        if !path.is_file() {
+            skipped += 1;
+            continue;
+        }
+        scanned += 1;
+
+        let Some(name) = path.file_name().map(|s| s.to_string_lossy().to_string()) else {
+            skipped += 1;
+            continue;
+        };
+        if !looks_like_managed_copy(&name) {
+            // 不是 Lumen 生成的命名，不属于管理范围
+            skipped += 1;
+            continue;
+        }
+
+        let rel = relative_stored_path(&data_dir, &path);
+        if referenced.contains(&rel) {
+            kept += 1;
+            continue;
+        }
+
+        // 再走一次越界校验：这是删除前的最后一道闸
+        match ensure_inside_dir(&root, &path) {
+            Ok(abs) => match std::fs::remove_file(&abs) {
+                Ok(()) => {
+                    removed += 1;
+                    removed_files.push(name);
+                }
+                Err(e) => {
+                    skipped += 1;
+                    log::warn!("孤儿附件删除失败：{}：{e}", abs.display());
+                }
+            },
+            Err(e) => {
+                skipped += 1;
+                log::warn!("孤儿附件路径越界，已跳过：{}（{e}）", path.display());
+            }
+        }
+    }
+
+    if removed > 0 {
+        log::info!("已清理 {removed} 个无引用的附件副本文件");
+    }
+
+    Ok(OrphanCleanupResult {
+        scanned,
+        kept,
+        removed,
+        skipped,
+        removed_files,
+    })
 }
 
 #[cfg(test)]

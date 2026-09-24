@@ -20,6 +20,7 @@ import type {
   PurgeResult,
   SoftDeleteResult,
   Task,
+  TaskCount,
   TaskQuery,
   TodayOverview,
   UpdateTaskInput,
@@ -34,6 +35,7 @@ export const CMD = {
   taskUpdate: 'task_update',
   taskGet: 'task_get',
   taskList: 'task_list',
+  taskCount: 'task_count',
   taskToggleDone: 'task_toggle_done',
   taskSoftDelete: 'task_soft_delete',
   taskRestore: 'task_restore',
@@ -162,6 +164,10 @@ export const getTask = (id: string): Promise<Task> => call<Task>(CMD.taskGet, { 
 /** 查询任务列表 */
 export const listTasks = (query: TaskQuery = {}): Promise<Task[]> =>
   call<Task[]>(CMD.taskList, { query })
+
+/** 符合条件的任务总数（与列表共用同一套筛选条件，整改任务书 §10） */
+export const countTasks = (query: TaskQuery = {}): Promise<TaskCount> =>
+  call<TaskCount>(CMD.taskCount, { query })
 
 /** 完成 / 撤销完成（只影响本次，不涉及重复范围，§5） */
 export const toggleTaskDone = (id: string, done: boolean): Promise<Task> =>

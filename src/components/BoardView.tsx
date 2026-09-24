@@ -18,8 +18,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
+import { PAGE_SIZE } from '../lib/store'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
-import type { Task, TaskStatus } from '../lib/types'
+import type { Task, TaskQuery, TaskStatus } from '../lib/types'
 import { Icon } from './Icons'
 
 function errText(e: unknown): string {
@@ -45,17 +46,25 @@ export function BoardView({ onEdit }: BoardViewProps) {
   const [dragging, setDragging] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null)
   const [busy, setBusy] = useState(false)
+  /** 当前条件下的总条数（后端 count）——看板同样不得静默只显示一部分 */
+  const [total, setTotal] = useState(0)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   const reload = useCallback(async () => {
     setLoading(true)
     try {
       // 看板不显示归档任务；回收站中的也不显示
-      const list = await ipc.listTasks({
+      const q: TaskQuery = {
         statuses: ['todo', 'doing', 'waiting', 'done'],
         sortBy: 'manual',
-        limit: 500,
-      })
+      }
+      // 与列表同一个策略：按页取，总数单独查（§4.2 不得静默截断）
+      const [list, count] = await Promise.all([
+        ipc.listTasks({ ...q, limit: PAGE_SIZE, offset: 0 }),
+        ipc.countTasks(q),
+      ])
       setTasks(list)
+      setTotal(count.total)
       setError(null)
     } catch (e) {
       setError(errText(e))
@@ -63,6 +72,26 @@ export function BoardView({ onEdit }: BoardViewProps) {
       setLoading(false)
     }
   }, [])
+
+  const loadMore = async () => {
+    if (loadingMore || tasks.length >= total) return
+    setLoadingMore(true)
+    try {
+      const rows = await ipc.listTasks({
+        statuses: ['todo', 'doing', 'waiting', 'done'],
+        sortBy: 'manual',
+        limit: PAGE_SIZE,
+        offset: tasks.length,
+      })
+      const seen = new Set(tasks.map((t) => t.id))
+      const fresh = rows.filter((t) => !seen.has(t.id))
+      setTasks((cur) => [...cur, ...fresh])
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     void reload()
@@ -119,6 +148,26 @@ export function BoardView({ onEdit }: BoardViewProps) {
           <span className="selectable">{error}</span>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
             <Icon name="close" size={14} />
+          </button>
+        </div>
+      )}
+
+      {/*
+        看板同样不得静默只显示一部分（§4.2）。看板会把每张卡片都渲染出来，
+        所以这里按页加载，并把"还有多少没显示"写在界面上。
+      */}
+      {!loading && total > tasks.length && (
+        <div className="board__more">
+          <span>
+            已显示 {tasks.length} / {total} 条。条数很多时建议用列表视图查看全部。
+          </span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+          >
+            {loadingMore ? '正在加载…' : `加载更多（还有 ${total - tasks.length} 条）`}
           </button>
         </div>
       )}

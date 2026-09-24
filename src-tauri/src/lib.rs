@@ -268,6 +268,7 @@ pub fn run() {
             commands::task_update,
             commands::task_get,
             commands::task_list,
+            commands::task_count,
             commands::task_toggle_done,
             commands::task_soft_delete,
             commands::task_restore,
@@ -342,6 +343,7 @@ pub fn run() {
             attachments::attachment_remove,
             attachments::attachment_reveal,
             attachments::attachment_check,
+            attachments::attachment_cleanup_orphans,
             // ---- 重复系列（§5）----
             recurrence_service::recurring_create,
             recurrence_service::recurring_preview,

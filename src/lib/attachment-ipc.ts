@@ -30,12 +30,22 @@ export interface AttachmentCheck {
   path: string
 }
 
+/** 孤儿附件清理结果（第二轮整改任务书 §6.5） */
+export interface OrphanCleanupResult {
+  scanned: number
+  kept: number
+  removed: number
+  skipped: number
+  removedFiles: string[]
+}
+
 export const ATT_CMD = {
   add: 'attachment_add',
   list: 'attachment_list',
   remove: 'attachment_remove',
   reveal: 'attachment_reveal',
   check: 'attachment_check',
+  cleanupOrphans: 'attachment_cleanup_orphans',
 } as const
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -79,3 +89,12 @@ export const attachmentReveal = (id: string): Promise<string> => call(ATT_CMD.re
 
 export const attachmentCheck = (taskId: string): Promise<AttachmentCheck[]> =>
   call(ATT_CMD.check, { taskId })
+
+/**
+ * 扫描并清理受控附件目录里数据库已无引用的副本文件。
+ *
+ * 只会删除"位于受控目录内、命名是 Lumen 生成的 UUID 形式、数据库无引用"的文件；
+ * 引用模式的原文件与用户自己放进目录的内容都不会被触碰。
+ */
+export const attachmentCleanupOrphans = (): Promise<OrphanCleanupResult> =>
+  call(ATT_CMD.cleanupOrphans)

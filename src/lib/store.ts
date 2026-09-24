@@ -24,6 +24,15 @@ import { todayRange } from './datetime'
 /** 列表加载状态（§3：空列表、加载中、失败都要有明确状态） */
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 
+/**
+ * 一页加载多少条（第二轮整改任务书 §4.3 建议 100～300）。
+ *
+ * 为什么必须分页：整改前列表固定 `limit: 500` 且没有任何"加载更多"，
+ * 于是第 501 条之后的任务**数据库里有、界面上永远看不到**。
+ * 这不是性能问题，是数据可见性问题。
+ */
+export const PAGE_SIZE = 200
+
 /** 界面反馈消息 */
 export interface Toast {
   id: string
@@ -42,6 +51,20 @@ interface AppStore {
   loadState: LoadState
   /** 加载失败时的可读原因 */
   loadError: string | null
+  /**
+   * 当前筛选条件下的**总条数**（后端 `task_count`，与列表同一套条件）。
+   *
+   * 注意它与 `tasks.length` 的区别：后者只是"已经加载了多少条"。
+   * 破坏性操作的确认数量（如清空回收站）必须用这个值，
+   * 否则会出现"确认删 500 项、实际删掉 1200 项"（§5）。
+   */
+  totalCount: number
+  /** 是否还有未加载的任务 */
+  hasMore: boolean
+  /** 正在加载下一页（界面据此禁用按钮，避免重复请求） */
+  loadingMore: boolean
+  /** 下一页的 offset，等于已加载条数 */
+  nextOffset: number
   overview: TodayOverview | null
   appInfo: AppInfo | null
   dataPaths: DataPaths | null
@@ -63,6 +86,8 @@ interface AppStore {
   // ---------------------------- 动作 ------------------------------
   init: () => Promise<void>
   reload: () => Promise<void>
+  /** 加载下一页并追加（不改动 offset，供滚动到底部或「加载更多」调用） */
+  loadMore: () => Promise<void>
   refreshOverview: () => Promise<void>
   setView: (v: ViewId) => void
   setSearch: (s: string) => void
@@ -106,7 +131,8 @@ export function buildQuery(s: {
     search: s.search.trim() || null,
     // 默认只显示未归档；「已完成」与「回收站」视图覆盖此设置
     statuses: s.statusFilter.length > 0 ? s.statusFilter : ['todo', 'doing', 'waiting', 'done'],
-    limit: 500,
+    // 这里**不设 limit**：分页由调用方在每次请求时明确给出
+    // （整改前写死 500，导致第 501 条之后的任务界面永远看不到）。
   }
 
   const today = todayRange()
@@ -179,11 +205,54 @@ export function buildQuery(s: {
   return q
 }
 
+/**
+ * 批量取子任务进度。
+ *
+ * 失败时返回空表而不是抛错：进度只是辅助信息，主数据仍然可用（§10）。
+ * 列表页批量取一次，而不是让每张卡片各查一次。
+ */
+async function fetchProgress(
+  tasks: Task[],
+): Promise<Record<string, { total: number; done: number; percent: number | null }>> {
+  if (tasks.length === 0) return {}
+  try {
+    const { subtaskProgressBatch } = await import('./organize-ipc')
+    const rows = await subtaskProgressBatch(tasks.map((t) => t.id))
+    return Object.fromEntries(
+      rows.map((p) => [p.taskId, { total: p.total, done: p.done, percent: p.percent }]),
+    )
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * 搜索输入的防抖时长（毫秒）。
+ *
+ * 250ms 是"打字时不会每敲一个字都查一次库"与"停手就能看到结果"之间的折中。
+ */
+export const SEARCH_DEBOUNCE_MS = 250
+
+/** 待执行的搜索刷新（模块级：同一时刻只允许一个） */
+let searchReloadTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleSearchReload() {
+  if (searchReloadTimer !== null) clearTimeout(searchReloadTimer)
+  searchReloadTimer = setTimeout(() => {
+    searchReloadTimer = null
+    void useApp.getState().reload()
+  }, SEARCH_DEBOUNCE_MS)
+}
+
 export const useApp = create<AppStore>((set, get) => ({
   tasks: [],
   progressMap: {},
   loadState: 'idle',
   loadError: null,
+  totalCount: 0,
+  hasMore: false,
+  loadingMore: false,
+  nextOffset: 0,
   overview: null,
   appInfo: null,
   dataPaths: null,
@@ -213,27 +282,57 @@ export const useApp = create<AppStore>((set, get) => ({
     const s = get()
     set({ loadState: 'loading', loadError: null })
     try {
-      const tasks = await ipc.listTasks(buildQuery(s))
+      const query = buildQuery(s)
+      // 列表与总数**同时**取，且用同一套条件（§10 要求条件完全一致）：
+      // 总数决定"还有没有更多"，不能靠"这一页是否满"来猜。
+      const [tasks, count] = await Promise.all([
+        ipc.listTasks({ ...query, limit: PAGE_SIZE, offset: 0 }),
+        ipc.countTasks(query),
+      ])
 
-      // 批量取子任务进度。失败不应让整个列表报错——
-      // 进度只是辅助信息，主数据仍然可用。
-      let progressMap: Record<string, { total: number; done: number; percent: number | null }> = {}
-      if (tasks.length > 0) {
-        try {
-          const { subtaskProgressBatch } = await import('./organize-ipc')
-          const rows = await subtaskProgressBatch(tasks.map((t) => t.id))
-          progressMap = Object.fromEntries(
-            rows.map((p) => [p.taskId, { total: p.total, done: p.done, percent: p.percent }]),
-          )
-        } catch {
-          progressMap = {}
-        }
-      }
-
-      set({ tasks, progressMap, loadState: 'ready', loadError: null })
+      set({
+        tasks,
+        progressMap: await fetchProgress(tasks),
+        totalCount: count.total,
+        hasMore: tasks.length < count.total,
+        nextOffset: tasks.length,
+        loadingMore: false,
+        loadState: 'ready',
+        loadError: null,
+      })
     } catch (e) {
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
       set({ loadState: 'error', loadError: msg })
+    }
+  },
+
+  loadMore: async () => {
+    const s = get()
+    // 已经在加载、或已经没有更多时什么都不做：
+    // 滚动触发会连续调用，这里不加锁会打出重复请求（§4.5 禁止新旧结果混在一起）
+    if (s.loadingMore || !s.hasMore) return
+    set({ loadingMore: true })
+    try {
+      const rows = await ipc.listTasks({
+        ...buildQuery(s),
+        limit: PAGE_SIZE,
+        offset: s.nextOffset,
+      })
+      const seen = new Set(s.tasks.map((t) => t.id))
+      const fresh = rows.filter((t) => !seen.has(t.id))
+      const tasks = [...s.tasks, ...fresh]
+      set({
+        tasks,
+        progressMap: { ...s.progressMap, ...(await fetchProgress(fresh)) },
+        nextOffset: tasks.length,
+        // 以**总数**为准判断是否还有更多；但如果这一页一条新的都没拿到
+        // （并发删除等），必须停下来，否则会无限请求同一页。
+        hasMore: fresh.length > 0 && tasks.length < s.totalCount,
+        loadingMore: false,
+      })
+    } catch (e) {
+      set({ loadingMore: false })
+      get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     }
   },
 
@@ -252,7 +351,16 @@ export const useApp = create<AppStore>((set, get) => ({
     void get().reload()
   },
 
-  setSearch: (s) => set({ search: s }),
+  setSearch: (s) => {
+    set({ search: s })
+    // 输入即刷新（防抖），而不是只在回车时刷新。
+    //
+    // 为什么必须这样：分页之后 `tasks` 与 `totalCount` 是**同一套条件**下的结果，
+    // 如果条件变了而结果没跟着变，界面就会拿旧的 totalCount 去算"还有多少条"，
+    // 于是出现"搜索框里写着 A、列表和计数还是全量"的自相矛盾状态。
+    // 任务书 §4.5 要求：条件一变就必须 offset 归零、列表换成新结果。
+    scheduleSearchReload()
+  },
 
   setStatusFilter: (s) => {
     set({ statusFilter: s })
@@ -374,8 +482,10 @@ export const useApp = create<AppStore>((set, get) => ({
   pushToast: (kind, text) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     set({ toasts: [...get().toasts, { id, kind, text }] })
-    // 错误停留更久，给用户时间读完恢复建议
-    window.setTimeout(() => get().dismissToast(id), kind === 'error' ? 6000 : 3000)
+    // 错误停留更久，给用户时间读完恢复建议。
+    // 用 globalThis 而不是 window：store 是纯状态机，不该依赖浏览器全局
+    // （单元测试在 Node 环境里跑，那里没有 window）。
+    globalThis.setTimeout(() => get().dismissToast(id), kind === 'error' ? 6000 : 3000)
   },
 
   pushReminder: (text, taskId) => {

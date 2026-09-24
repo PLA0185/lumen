@@ -4120,3 +4120,45 @@ body[data-print='on'] .app {
 
 
 
+
+/* =============================================================================
+   分页出口（第二轮整改任务书 §4）
+   =============================================================================
+   分页本身是数据可见性问题，不是性能问题：整改前列表写死 500 条且没有
+   "加载更多"，第 501 条之后的任务数据库里有、界面上永远看不到。
+   所以这里必须始终明确告诉用户"已显示多少 / 一共多少"。 */
+
+.loadmore {
+  max-width: 900px;
+  margin: 14px auto 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.loadmore__note {
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+.loadmore__done {
+  max-width: 900px;
+  margin: 14px auto 32px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--c-text-3);
+}
+
+/* 看板的分页提示条：看板不适合海量任务，必须如实说明"这里只有一部分" */
+.board__more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--c-text-2);
+}

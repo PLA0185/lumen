@@ -340,6 +340,16 @@ pub struct PurgeResult {
     pub purged: i64,
 }
 
+/// 符合条件的任务总数（整改任务书 §10）。
+///
+/// 与 `task_list` 共用同一套筛选条件，因此它就是"这个视图里一共有多少条"，
+/// 与"当前已经加载了多少条"是两件事——分页与破坏性操作确认都必须看它。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCount {
+    pub total: i64,
+}
+
 /// 删除操作的执行结果，便于 UI 提示"可在回收站恢复"
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

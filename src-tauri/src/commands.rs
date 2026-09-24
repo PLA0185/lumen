@@ -12,7 +12,7 @@ use tauri::State;
 use crate::db::{to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 use crate::models::{
-    BulkActionInput, CreateTaskInput, PurgeResult, SoftDeleteResult, Task, TaskQuery,
+    BulkActionInput, CreateTaskInput, PurgeResult, SoftDeleteResult, Task, TaskCount, TaskQuery,
     TodayOverview, UpdateTaskInput,
 };
 
@@ -653,30 +653,65 @@ pub async fn task_restore(state: State<'_, AppState>, id: String) -> AppResult<T
 /// 永久删除（仅限回收站内的任务）。
 ///
 /// 安全约束：必须先软删除，避免误触造成不可恢复的数据丢失。
+///
+/// 附件（整改任务书 §6）：`attachments.task_id` 是 `ON DELETE CASCADE`，
+/// 记录会随任务一起消失；但 copied 模式的**实体文件**不会自己走，
+/// 所以这里在事务前取出路径、提交后再删文件（顺序理由见 `attachments` 模块注释）。
 #[tauri::command]
 pub async fn task_purge(state: State<'_, AppState>, id: String) -> AppResult<PurgeResult> {
-    let db = &state.db;
-    let t = get_task_row(db, &id).await?;
+    purge_task_impl(&state.db, &id).await
+}
+
+/// 单个永久删除的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn purge_task_impl(db: &Db, id: &str) -> AppResult<PurgeResult> {
+    let t = get_task_row(db, id).await?;
     if t.deleted_at.is_none() {
         return Err(
             AppError::conflict("只能永久删除回收站中的任务").with_hint("请先将其移入回收站")
         );
     }
+
+    // 1) 事务前取出要清理的副本路径
+    let copies = crate::attachments::copied_paths_of_task(db, id).await?;
+
+    // 2) 删除任务（附件记录随 CASCADE 一起删除）
     sqlx::query("DELETE FROM tasks WHERE id = ?1")
-        .bind(&id)
+        .bind(id)
         .execute(db.pool())
         .await?;
+
+    // 3) 提交之后再删文件：失败只记日志，不回滚已经完成的永久删除
+    let (removed, failed) = crate::attachments::delete_copied_files(db.data_dir(), &copies);
+    if removed + failed > 0 {
+        log::info!("永久删除任务后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
+    }
     Ok(PurgeResult { purged: 1 })
 }
 
 /// 清空回收站。
+///
+/// 与单个永久删除同样的附件处理顺序（整改任务书 §6.4）。
 #[tauri::command]
 pub async fn task_purge_all_deleted(state: State<'_, AppState>) -> AppResult<PurgeResult> {
-    let db = &state.db;
+    purge_all_deleted_impl(&state.db).await
+}
+
+/// 清空回收站的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn purge_all_deleted_impl(db: &Db) -> AppResult<PurgeResult> {
+    // 1) 事务前取出所有回收站任务的副本路径
+    let copies = crate::attachments::copied_paths_in_trash(db).await?;
+
+    // 2) 删除
     let n = sqlx::query("DELETE FROM tasks WHERE deleted_at IS NOT NULL")
         .execute(db.pool())
         .await?
         .rows_affected() as i64;
+
+    // 3) 提交后清理文件
+    let (removed, failed) = crate::attachments::delete_copied_files(db.data_dir(), &copies);
+    if removed + failed > 0 {
+        log::info!("清空回收站后清理附件副本：成功 {removed} 个，跳过或失败 {failed} 个");
+    }
     Ok(PurgeResult { purged: n })
 }
 
@@ -686,10 +721,31 @@ pub async fn task_list(state: State<'_, AppState>, query: TaskQuery) -> AppResul
     list_tasks_impl(&state.db, query).await
 }
 
-/// 列表查询的实现（与 Tauri 解耦，便于集成测试与报告导出直接调用）。
-pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> {
-    let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM tasks WHERE 1 = 1");
+/// 统计符合条件的任务总数（整改任务书 §10）。
+///
+/// 与 `task_list` **共用同一套筛选条件**（`apply_task_filters`），
+/// 所以"界面显示的总数"和"列表能翻到的条数"永远一致。
+/// 回收站清空的确认数量也取自这里（§5），而不是当前已加载的列表长度。
+#[tauri::command]
+pub async fn task_count(state: State<'_, AppState>, query: TaskQuery) -> AppResult<TaskCount> {
+    let total = count_tasks_impl(&state.db, &query).await?;
+    Ok(TaskCount { total })
+}
 
+/// 计数实现（同样与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn count_tasks_impl(db: &Db, query: &TaskQuery) -> AppResult<i64> {
+    let mut b = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM tasks WHERE 1 = 1");
+    apply_task_filters(&mut b, query)?;
+    let n: i64 = b.build_query_scalar().fetch_one(db.pool()).await?;
+    Ok(n)
+}
+
+/// 列表与计数**共用**的筛选条件构造（整改任务书 §10.1）。
+///
+/// 为什么必须共用：count 与 list 的条件一旦漂移，界面就会出现
+/// "显示 1200、列表却只有 1137"这种自相矛盾的状态，而且**不会报错**。
+/// 两份 where 子句迟早会漂移，所以只保留一份实现。
+fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppResult<()> {
     // 删除状态
     if query.deleted_only {
         b.push(" AND deleted_at IS NOT NULL");
@@ -822,7 +878,41 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
             .push(" AND status NOT IN ('done', 'archived')");
     }
 
-    // 排序
+    Ok(())
+}
+
+/// 列表查询的实现（与 Tauri 解耦，便于集成测试与报告导出直接调用）。
+pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> {
+    let limit = query.limit.unwrap_or(300).clamp(1, PAGE_MAX);
+    let offset = query.offset.unwrap_or(0).max(0);
+    run_task_query(db, &query, limit, offset).await
+}
+
+/// 查询执行的公共部分：筛选 + 全序排序 + limit/offset。
+///
+/// 抽出来是为了让"列表分页"（小 limit）与"报告全量"（大 limit）走**同一份**
+/// 筛选与排序代码——它们唯一该有的差别就是取的条数。
+async fn run_task_query(
+    db: &Db,
+    query: &TaskQuery,
+    limit: i64,
+    offset: i64,
+) -> AppResult<Vec<Task>> {
+    let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM tasks WHERE 1 = 1");
+    apply_task_filters(&mut b, query)?;
+    push_task_order(&mut b, query)?;
+
+    b.push(" LIMIT ").push_bind(limit);
+    if offset > 0 {
+        b.push(" OFFSET ").push_bind(offset);
+    }
+
+    let rows = b.build_query_as::<Task>().fetch_all(db.pool()).await?;
+    Ok(rows)
+}
+
+/// 排序子句（列表与报告共用）。
+fn push_task_order(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppResult<()> {
     let desc = query.sort_desc.unwrap_or(false);
     let order = match query.sort_by.as_deref().unwrap_or("manual") {
         "manual" => "is_pinned DESC, sort_order ASC, created_at DESC",
@@ -872,15 +962,7 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
     // 于是**分页翻页时会重复或漏项**——全量报告导出正好依赖分页，
     // 因此这里统一追加一个唯一键作为最终排序依据，得到确定的全序。
     b.push(", id ASC");
-
-    let limit = query.limit.unwrap_or(300).clamp(1, PAGE_MAX);
-    b.push(" LIMIT ").push_bind(limit);
-    if let Some(off) = query.offset {
-        b.push(" OFFSET ").push_bind(off.max(0));
-    }
-
-    let rows = b.build_query_as::<Task>().fetch_all(db.pool()).await?;
-    Ok(rows)
+    Ok(())
 }
 
 /// 读取单个任务（含已删除的，用于回收站详情）。
@@ -915,8 +997,11 @@ pub async fn task_report(
 
 /// 报告数据的分页大小。
 ///
+/// 当前实现一次取全量（见 `report_all_impl` 的说明），这个常量保留下来
+/// 只作为"报告以页为单位传输"时的参考值，以及给测试说明历史语义。
 /// 500 是个折中：一次 SQLite 查询 + 一次标签 IN 查询都在毫秒级，
 /// 同时把单次 `IN (...)` 的参数个数控制在安全范围（SQLite 默认变量上限 999）。
+#[allow(dead_code)]
 const REPORT_PAGE_SIZE: i64 = 500;
 
 /// 报告数据的总量安全上限。
@@ -928,13 +1013,17 @@ pub const REPORT_MAX_ROWS: i64 = 100_000;
 
 /// 取**完整**报告数据（整改任务书 §7）。
 ///
-/// 原实现固定 `limit = 1000`，超过 1000 条的任务会被**静默丢弃**——
-/// 对"导出归档"这种用途不可接受。
+/// ## 两轮改动的原因
 ///
-/// 现在的做法是**分页读取直到取完**：
-/// - 每页 500 条，`limit/offset` 递进，直到某页返回不足 500 条；
-/// - 每页各自解析归属名称，避免把所有 id 拼成一个超长 `IN (...)`；
-/// - 返回值里带上 `truncated`，让界面能如实告诉用户"还有多少没导出"。
+/// - 最初实现固定 `limit = 1000`：超过 1000 条的任务被**静默丢弃**，
+///   对"导出归档"不可接受 → 第一轮改成"按 500 条一页读到取完"。
+/// - 但 OFFSET 分页在深分页时是 O(n²)：第二轮的 10 万条实测中，
+///   单次导出耗时 **56 秒**（每页都要对全表重新排序再跳过 offset 行）。
+///   而报告本来就是"全都要"，分页毫无收益 → 本轮改成**一次取全量**。
+///
+/// `REPORT_MAX_ROWS + 1` 这个 "+1" 是截断判断的关键：
+/// 只有**确实读到了第 100001 条**才说明还有没导出的，
+/// 恰好 100000 条时不会误报（§7.1 的原始缺陷）。
 #[tauri::command]
 pub async fn task_report_all(
     state: State<'_, AppState>,
@@ -945,35 +1034,16 @@ pub async fn task_report_all(
 
 /// 全量报告的实现（与 Tauri 解耦，便于集成测试直接调用）。
 pub async fn report_all_impl(db: &Db, query: TaskQuery) -> AppResult<ReportPage> {
-    let mut rows: Vec<TaskReportRow> = Vec::new();
-    let mut offset: i64 = 0;
-    let mut truncated = false;
+    // 排序仍然与列表一致（用户选了什么顺序，报告就是什么顺序），
+    // 只是不再分页——避免深分页把导出拖成分钟级。
+    let mut tasks = run_task_query(db, &query, REPORT_MAX_ROWS + 1, 0).await?;
 
-    loop {
-        let page_query = TaskQuery {
-            limit: Some(REPORT_PAGE_SIZE),
-            offset: Some(offset),
-            // 分页必须按稳定顺序：sort_order 可能重复，再带上 created_at 兜底，
-            // 否则翻页时可能出现重复或漏项
-            sort_by: query.sort_by.clone().or_else(|| Some("manual".into())),
-            sort_desc: Some(query.sort_desc.unwrap_or(false)),
-            ..query.clone()
-        };
-        let batch = list_tasks_impl(db, page_query).await?;
-        let n = batch.len() as i64;
-        rows.extend(build_report_rows(db, batch).await?);
-
-        if n < REPORT_PAGE_SIZE {
-            break;
-        }
-        offset += n;
-
-        if rows.len() as i64 >= REPORT_MAX_ROWS {
-            truncated = true;
-            break;
-        }
+    let truncated = tasks.len() as i64 > REPORT_MAX_ROWS;
+    if truncated {
+        tasks.truncate(REPORT_MAX_ROWS as usize);
     }
 
+    let rows = build_report_rows(db, tasks).await?;
     let total = rows.len() as i64;
     Ok(ReportPage {
         rows,
@@ -995,12 +1065,19 @@ pub struct ReportPage {
 
 /// 给一批任务补上项目/分类/标签名称。
 ///
-/// 抽成独立函数是为了让"单页"与"分页全量"两条路径共用同一段逻辑，
+/// 抽成独立函数是为了让"单页"与"全量"两条路径共用同一段逻辑，
 /// 不会出现一处改了另一处忘了改。
+///
+/// **标签按批查询**：报告现在一次取全量（可能 10 万条），
+/// 一次性拼 10 万个 id 会超过 SQLite 的变量上限（默认 999），
+/// 所以这里按 `TAG_QUERY_BATCH` 分块，每块都是一个走主键的小查询。
 async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskReportRow>> {
     if tasks.is_empty() {
         return Ok(Vec::new());
     }
+
+    // 每批多少个 id（远低于 SQLite 默认 999 个变量的上限）
+    const TAG_QUERY_BATCH: usize = 500;
 
     // 项目与分类都是小表，整表取出后在内存里映射，避免拼接超长 IN 列表
     let projects: Vec<(String, String)> =
@@ -1014,26 +1091,26 @@ async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskRepor
     let project_map: std::collections::HashMap<String, String> = projects.into_iter().collect();
     let category_map: std::collections::HashMap<String, String> = categories.into_iter().collect();
 
-    // 标签只查这批任务（单页最多 500 个 id，远低于 SQLite 变量上限）
-    let mut b = QueryBuilder::<Sqlite>::new(
-        "SELECT tt.task_id AS task_id, t.name AS name
-         FROM task_tags tt JOIN tags t ON t.id = tt.tag_id
-         WHERE t.deleted_at IS NULL AND tt.task_id IN (",
-    );
-    let mut sep = b.separated(", ");
-    for t in &tasks {
-        sep.push_bind(t.id.clone());
-    }
-    sep.push_unseparated(")");
-    b.push(" ORDER BY t.sort_order ASC, t.name ASC");
-
-    let tag_rows = b.build().fetch_all(db.pool()).await?;
     let mut tag_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    for r in tag_rows {
-        let task_id: String = r.try_get("task_id")?;
-        let name: String = r.try_get("name")?;
-        tag_map.entry(task_id).or_default().push(name);
+    for chunk in tasks.chunks(TAG_QUERY_BATCH) {
+        let mut b = QueryBuilder::<Sqlite>::new(
+            "SELECT tt.task_id AS task_id, t.name AS name
+             FROM task_tags tt JOIN tags t ON t.id = tt.tag_id
+             WHERE t.deleted_at IS NULL AND tt.task_id IN (",
+        );
+        let mut sep = b.separated(", ");
+        for t in chunk {
+            sep.push_bind(t.id.clone());
+        }
+        sep.push_unseparated(")");
+        b.push(" ORDER BY t.sort_order ASC, t.name ASC");
+
+        for r in b.build().fetch_all(db.pool()).await? {
+            let task_id: String = r.try_get("task_id")?;
+            let name: String = r.try_get("name")?;
+            tag_map.entry(task_id).or_default().push(name);
+        }
     }
 
     Ok(tasks
