@@ -82,16 +82,37 @@ impl Provider {
 
     /// 默认模型。
     ///
-    /// 这些是调研时（2026-09-23）官方文档列出的模型 ID。
-    /// 旧名如 `deepseek-chat`、`claude-3-5-sonnet` 已不存在，
-    /// 因此这里不把它们作为默认值。
+    /// 三家的情况**不一样**，不能一律填一个字符串：
+    ///
+    /// - **DeepSeek**：`deepseek-flash`，官方文档明确列出（2026-09-24 核实）。
+    /// - **Claude**：`claude-sonnet-5`，官方文档明确列出且自述为
+    ///   "best combination of speed and intelligence"。
+    /// - **OpenAI**：**留空**。核实过程中 OpenAI 的全部官方域名在本机返回
+    ///   HTTP 403（Cloudflare），拿不到官方一手模型清单；能查到的旁证
+    ///   （Microsoft Learn 的 Azure OpenAI 文档）里 `gpt-6-astra` 是 **Azure**
+    ///   的模型 ID，并不等于 OpenAI 平台上同名可用。
+    ///   整改任务书 §3.5 明确"默认模型不得填写不存在、已下线、内部名称或
+    ///   **未经验证**的模型"，所以这里宁可留空，让用户点「拉取模型列表」
+    ///   从自己的账号读真实 ID（`GET /v1/models`），或手动填写。
     pub fn default_model(self) -> &'static str {
         match self {
             Self::DeepSeek => "deepseek-flash",
-            Self::OpenAI => "gpt-6-astra",
+            Self::OpenAI => "",
             Self::Claude => "claude-sonnet-5",
             Self::Custom => "",
         }
+    }
+
+    /// 该提供商是否使用 OpenAI 的 **Responses API**（而不是 Chat Completions）。
+    ///
+    /// 为什么 OpenAI 单独走 Responses：官方把新能力（严格 json_schema、
+    /// 推理项等）优先放在 Responses 上，微软官方文档也写明
+    /// "Recommended: Send tool-calling requests to the Responses API"。
+    /// 而 **Chat Completions 仍是 DeepSeek 与自定义兼容服务的正确协议**，
+    /// 因此两者在代码里彻底分开实现（整改任务书 §3.2 / §3.4），
+    /// 而不是"注释说一套、实际跑另一套"。
+    pub fn uses_openai_responses(self) -> bool {
+        matches!(self, Self::OpenAI)
     }
 
     /// 是否使用 Anthropic 风格协议
@@ -197,11 +218,20 @@ impl ProviderConfig {
                 .with_hint("例如 https://api.deepseek.com"));
         }
         // 明文 HTTP 只允许本机（本地模型常见），其它地址必须用 HTTPS，
-        // 否则 API Key 会在网络上明文传输
+        // 否则 API Key 会在网络上明文传输。
+        //
+        // 注意 IPv6 字面量要单独处理：`http://[::1]:11434/v1` 如果按 `:` 切分，
+        // 第一个冒号会把主机名切成 `[`，于是 ::1 反而被判定为"非本机"而拒绝
+        // ——这是真实存在的漏洞（由 `invalid_base_url_is_rejected_at_validation`
+        // 这条测试发现），因此这里显式剥掉方括号。
         if u.starts_with("http://") {
             let host_part = u.trim_start_matches("http://");
-            let host = host_part.split(['/', ':']).next().unwrap_or("");
-            let is_local = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
+            let host = if let Some(rest) = host_part.strip_prefix('[') {
+                rest.split(']').next().unwrap_or("")
+            } else {
+                host_part.split(['/', ':']).next().unwrap_or("")
+            };
+            let is_local = matches!(host, "localhost" | "127.0.0.1" | "::1");
             if !is_local {
                 return Err(AppError::validation(
                     "出于安全考虑，非本机地址必须使用 https://",
@@ -374,12 +404,147 @@ fn map_net_err(e: reqwest::Error) -> AppError {
     }
 }
 
+/// 把服务商返回的错误正文处理成**可安全展示**的片段（整改任务书 §10）。
+///
+/// 为什么不能直接截 400 字丢给用户：
+/// 1. 第三方（尤其是中转/代理服务）经常把**整个请求**回显在错误里，
+///    那会把用户的提示词、任务内容一起显示出来，甚至写进日志；
+/// 2. 有些网关会把收到的 `Authorization` 头原样回显，等于把密钥印在界面上；
+/// 3. 反向代理返回的 HTML 错误页既没有信息量又很长。
+///
+/// 处理策略：
+/// - 先剥掉 HTML 标签（只留文本）；
+/// - 再把形如密钥的片段打码（`sk-...`、`Bearer xxx`、`api-key: xxx`、
+///   长 base64/hex 串）；
+/// - 折叠空白，限制长度（UI 与日志用同一个长度，避免两处不一致）。
+///
+/// 注意：这**不是**"隐藏错误原因"——用户仍能看到服务商说了什么，
+/// 只是看不到可能属于自己或他人的机密。
+pub fn sanitize_provider_error(body: &str, limit: usize) -> String {
+    let mut s = body.to_string();
+
+    // 1) HTML 错误页：只保留标签之间的文字
+    if s.contains('<') && s.contains('>') {
+        let mut out = String::with_capacity(s.len());
+        let mut in_tag = false;
+        for ch in s.chars() {
+            match ch {
+                '<' => in_tag = true,
+                '>' => {
+                    in_tag = false;
+                    out.push(' ');
+                }
+                c if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        s = out;
+    }
+
+    // 2) 打码疑似密钥。用简单扫描而不是正则，避免引入额外依赖与回溯风险。
+    s = redact_secrets(&s);
+
+    // 3) 折叠空白并截断
+    let mut cleaned = String::with_capacity(s.len());
+    let mut last_space = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !last_space {
+                cleaned.push(' ');
+            }
+            last_space = true;
+        } else {
+            cleaned.push(ch);
+            last_space = false;
+        }
+    }
+    let trimmed = cleaned.trim();
+    if trimmed.chars().count() <= limit {
+        trimmed.to_string()
+    } else {
+        let head: String = trimmed.chars().take(limit).collect();
+        format!("{head}…（已截断）")
+    }
+}
+
+/// 把疑似密钥的片段替换成 `***`。
+///
+/// 覆盖常见形态：
+/// - `sk-` / `sk-proj-` 开头的 OpenAI 风格 key
+/// - `sk-ant-` 开头的 Anthropic key
+/// - 任意 `Bearer <token>`
+/// - `api-key: <token>` / `x-api-key: <token>` / `authorization: <token>`
+/// - 长度 ≥ 32 的纯字母数字串（很多网关会裸回显 token）
+fn redact_secrets(input: &str) -> String {
+    const MARKERS: [&str; 6] = [
+        "sk-ant-",
+        "sk-proj-",
+        "sk-",
+        "Bearer ",
+        "bearer ",
+        "api-key",
+    ];
+
+    let mut out = String::with_capacity(input.len());
+    let bytes: Vec<char> = input.chars().collect();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // 命中前缀标记：把紧随其后的 token 打码
+        let rest: String = bytes[i..].iter().take(16).collect();
+        if let Some(m) = MARKERS.iter().find(|m| rest.starts_with(**m)) {
+            out.push_str(m);
+            i += m.chars().count();
+            // 跳过冒号/等号/空格，然后吃掉连续的 token 字符
+            while i < bytes.len() && matches!(bytes[i], ' ' | ':' | '=' | '"' | '\'') {
+                out.push(bytes[i]);
+                i += 1;
+            }
+            let mut eaten = 0;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], '-' | '_' | '.'))
+            {
+                i += 1;
+                eaten += 1;
+            }
+            if eaten > 0 {
+                out.push_str("***");
+            }
+            continue;
+        }
+
+        // 裸的长 token：连续 ≥32 个字母数字（不含普通单词里的短串）
+        if bytes[i].is_ascii_alphanumeric() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+                i += 1;
+            }
+            let run: String = bytes[start..i].iter().collect();
+            if run.len() >= 32 {
+                out.push_str("***");
+            } else {
+                out.push_str(&run);
+            }
+            continue;
+        }
+
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
 /// 按 HTTP 状态码与响应体翻译错误。
 ///
 /// 关键区分：**计费与配额类错误重试无效**，要直接告诉用户去充值/提额，
 /// 而不是让他反复重试。
+///
+/// 整改任务书 §10：回显给用户的第三方正文一律走 [`sanitize_provider_error`]，
+/// 不直接透传原文。
+/// 按 HTTP 状态码与响应体翻译错误。
 fn map_http_error(provider: Provider, status: u16, body: &str) -> AppError {
-    let snippet: String = body.chars().take(400).collect();
+    // UI 与日志共用同一份处理结果：出现过"界面干净、日志里却躺着密钥"的情况
+    // 就说明两处处理不一致，因此这里只算一次。
+    let snippet = sanitize_provider_error(body, 300);
     match status {
         401 | 403 => AppError::new(crate::error::ErrorCode::Unauthorized, "API Key 无效或没有权限")
             .with_hint(format!(
@@ -395,6 +560,12 @@ fn map_http_error(provider: Provider, status: u16, body: &str) -> AppError {
         404 => AppError::validation("接口地址不存在（HTTP 404）").with_hint(format!(
             "请检查 Base URL 是否正确——注意 DeepSeek 的地址不含 /v1。\n服务商返回：{snippet}"
         )),
+        // 529 是 Anthropic 特有的 overloaded_error，属于"对方太忙"，可重试
+        529 => AppError::new(
+            crate::error::ErrorCode::Network,
+            "服务商负载过高（HTTP 529 overloaded）",
+        )
+        .with_hint("这是服务商侧的过载保护，稍后重试即可"),
         500..=599 => AppError::new(
             crate::error::ErrorCode::Network,
             format!("服务商暂时不可用（HTTP {status}）"),
@@ -414,17 +585,26 @@ fn map_http_error(provider: Provider, status: u16, body: &str) -> AppError {
 
 /// 拼出对话端点 URL。
 ///
-/// DeepSeek 无 `/v1`，OpenAI 的 base 已含 `/v1`，Anthropic 用 `/v1/messages`。
+/// 三家的路径规则**确实不同**（2026-09-24 逐条核实）：
+/// - DeepSeek：base `https://api.deepseek.com`（**不带 `/v1`**）→ `/chat/completions`
+/// - OpenAI：base `https://api.openai.com/v1` → `/responses`
+/// - Claude：base `https://api.anthropic.com` → `/v1/messages`
+/// - Custom：OpenAI 兼容 → `/chat/completions`
 fn endpoint(cfg: &ProviderConfig) -> String {
     let base = cfg.base_url.trim_end_matches('/');
     match cfg.provider {
         Provider::Claude => format!("{base}/v1/messages"),
-        // DeepSeek 与 OpenAI 兼容：base 之后直接跟 /chat/completions
+        Provider::OpenAI => format!("{base}/responses"),
         _ => format!("{base}/chat/completions"),
     }
 }
 
-/// 构造 OpenAI 风格（DeepSeek / OpenAI / Custom）的请求体
+/// 构造 OpenAI 风格（DeepSeek / Custom）的 **Chat Completions** 请求体。
+///
+/// 注意：**OpenAI 自己不走这里**（它走 Responses，见
+/// [`build_openai_responses_body`]）。这个函数只服务 DeepSeek 与自定义
+/// OpenAI 兼容服务——曾经的实现对三者共用同一份请求体，注释里却提到
+/// Responses 的响应结构，属于"说的和做的不是一套"，整改任务书 §3.4 要求拆开。
 fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
 
@@ -449,11 +629,52 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
     });
 
     if req.json_output {
-        // DeepSeek 只支持 json_object；OpenAI 的 chat/completions 也接受该形式。
-        // 真正的 json_schema 严格模式只在 OpenAI Responses 上可用，
-        // 而本项目统一走 chat/completions，因此这里用 json_object +
-        // 提示词约束，并在解析层做结构校验（§6 要求结构校验）。
+        // DeepSeek 支持 `response_format: {"type":"json_object"}`，
+        // 但官方明确警告：**提示词里必须出现 "json" 字样**，否则可能生成
+        // 无限空白流。这一点在提示词模板里已经保证（见 ai_features）。
+        // 严格 schema 只有 Responses 的 `text.format` 支持，因此这里用
+        // json_object + 解析层的结构校验（§6 要求结构校验）。
         body["response_format"] = serde_json::json!({ "type": "json_object" });
+    }
+
+    body
+}
+
+/// 构造 **OpenAI Responses API**（`POST /v1/responses`）的请求体。
+///
+/// 与 Chat Completions 的字段差异（逐条对照官方/Microsoft 文档核实）：
+/// | 关注点 | Chat Completions | Responses |
+/// | --- | --- | --- |
+/// | 输入 | `messages` | `input`（数组，元素仍是 `{role, content}`） |
+/// | 系统提示 | `messages[0].role = "system"` | **顶层 `instructions`** |
+/// | 输出上限 | `max_tokens` | **`max_output_tokens`** |
+/// | JSON 输出 | `response_format.type` | **`text.format.type`** |
+fn build_openai_responses_body(req: &ChatRequest) -> serde_json::Value {
+    let input: Vec<serde_json::Value> = req
+        .messages
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .collect();
+
+    let max_tokens = req
+        .max_output_tokens
+        .unwrap_or(req.config.max_output_tokens)
+        .clamp(1, MAX_OUTPUT_TOKENS_CAP);
+
+    let mut body = serde_json::json!({
+        "model": req.config.model,
+        "input": input,
+        "max_output_tokens": max_tokens,
+        "stream": false,
+    });
+
+    if let Some(sys) = req.system.as_ref().filter(|s| !s.trim().is_empty()) {
+        body["instructions"] = serde_json::json!(sys);
+    }
+
+    if req.json_output {
+        body["text"] = serde_json::json!({ "format": { "type": "json_object" } });
     }
 
     body
@@ -509,7 +730,106 @@ fn build_anthropic_body(req: &ChatRequest) -> serde_json::Value {
 // 各 provider 的响应解析
 // =============================================================================
 
-/// 解析 OpenAI 风格响应
+/// 解析 **OpenAI Responses API** 的响应。
+///
+/// 结构与 Chat Completions 完全不同，不能靠 `choices[0].message.content`：
+/// - 文本在 `output` 数组里的 `message` 项，其 `content` 是块数组，
+///   取 `type == "output_text"` 的 `text` 拼接；
+/// - 部分部署会直接给一个便捷字段 `output_text`，一并兼容；
+/// - 截断看 `status == "incomplete"`（`incomplete_details.reason` 通常是
+///   `max_output_tokens`），而不是 Chat Completions 的 `finish_reason`；
+/// - 用量字段是 `input_tokens` / `output_tokens`，
+///   缓存命中在 `input_tokens_details.cached_tokens`。
+fn parse_openai_responses_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
+    let mut text = String::new();
+
+    if let Some(arr) = v.get("output").and_then(|o| o.as_array()) {
+        for item in arr {
+            if item.get("type").and_then(|t| t.as_str()) != Some("message") {
+                // reasoning / function_call 等块对当前用途无意义
+                continue;
+            }
+            if let Some(blocks) = item.get("content").and_then(|c| c.as_array()) {
+                for b in blocks {
+                    if b.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                        if let Some(t) = b.get("text").and_then(|x| x.as_str()) {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 官方 SDK 的便捷聚合字段，部分兼容实现只给这个
+    if text.trim().is_empty() {
+        if let Some(t) = v.get("output_text").and_then(|x| x.as_str()) {
+            text.push_str(t);
+        }
+    }
+    // 被安全策略拒绝时官方会给 refusal 块，明确告诉用户而不是"空内容"
+    let refused = v
+        .get("output")
+        .and_then(|o| o.as_array())
+        .map(|arr| {
+            arr.iter().any(|item| {
+                item.get("content")
+                    .and_then(|c| c.as_array())
+                    .map(|blocks| {
+                        blocks
+                            .iter()
+                            .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("refusal"))
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
+    if text.trim().is_empty() {
+        return Err(AppError::new(
+            crate::error::ErrorCode::Internal,
+            if refused {
+                "模型拒绝了这次请求"
+            } else {
+                "模型返回了空内容"
+            },
+        )
+        .with_hint(if refused {
+            "内容可能触发了服务商的安全策略。请调整提示词后重试"
+        } else {
+            "可重试一次；若持续出现，请检查模型名是否为该账号可用的模型（设置里可拉取模型列表）"
+        }));
+    }
+
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("");
+    let incomplete_reason = v
+        .get("incomplete_details")
+        .and_then(|d| d.get("reason"))
+        .and_then(|r| r.as_str())
+        .unwrap_or("");
+
+    let usage = v.get("usage").map(|u| TokenUsage {
+        input_tokens: u.get("input_tokens").and_then(|x| x.as_i64()),
+        output_tokens: u.get("output_tokens").and_then(|x| x.as_i64()),
+        cache_hit_tokens: u
+            .get("input_tokens_details")
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|x| x.as_i64()),
+        cache_miss_tokens: None,
+    });
+
+    Ok(ChatResponse {
+        text,
+        model: v
+            .get("model")
+            .and_then(|m| m.as_str())
+            .unwrap_or("")
+            .to_string(),
+        usage,
+        truncated: status == "incomplete" || incomplete_reason == "max_output_tokens",
+    })
+}
+
+/// 解析 OpenAI 风格（DeepSeek / Custom 的 Chat Completions）响应
 fn parse_openai_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
     let choice = v
         .get("choices")
@@ -626,23 +946,38 @@ pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResp
 
     let client = build_client(cfg.timeout_seconds)?;
     let url = endpoint(cfg);
-    let (body, is_anthropic) = if cfg.provider.is_anthropic_style() {
-        (build_anthropic_body(req), true)
-    } else {
-        (build_openai_body(req), false)
+
+    // 三条协议分支彻底分开：Anthropic Messages / OpenAI Responses /
+    // OpenAI 兼容 Chat Completions。请求体与响应解析成对出现，
+    // 不会出现"注释说 Responses、实际发 Chat Completions"的情况。
+    enum Wire {
+        Anthropic,
+        OpenAiResponses,
+        OpenAiChat,
+    }
+    let (body, wire) = match cfg.provider {
+        Provider::Claude => (build_anthropic_body(req), Wire::Anthropic),
+        Provider::OpenAI => (
+            build_openai_responses_body(req),
+            Wire::OpenAiResponses,
+        ),
+        _ => (build_openai_body(req), Wire::OpenAiChat),
     };
 
     let mut rb = client.post(&url).json(&body);
 
-    if is_anthropic {
-        // Anthropic 用 x-api-key，**不是** Bearer；
-        // 且 anthropic-version 是必填头。
-        rb = rb
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json");
-    } else {
-        rb = rb.header("authorization", format!("Bearer {api_key}"));
+    match wire {
+        Wire::Anthropic => {
+            // Anthropic 用 x-api-key，**不是** Bearer；
+            // 且 anthropic-version 是必填头。
+            rb = rb
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json");
+        }
+        _ => {
+            rb = rb.header("authorization", format!("Bearer {api_key}"));
+        }
     }
 
     let resp = rb.send().await.map_err(map_net_err)?;
@@ -659,10 +994,10 @@ pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResp
         .await
         .map_err(|e| AppError::internal(format!("解析服务商响应失败：{e}")))?;
 
-    if is_anthropic {
-        parse_anthropic_response(&json)
-    } else {
-        parse_openai_response(&json)
+    match wire {
+        Wire::Anthropic => parse_anthropic_response(&json),
+        Wire::OpenAiResponses => parse_openai_responses_response(&json),
+        Wire::OpenAiChat => parse_openai_response(&json),
     }
 }
 
@@ -907,7 +1242,7 @@ mod provider_matrix_tests {
             Case {
                 p: Provider::OpenAI,
                 anthropic_style: false,
-                endpoint_suffix: "/chat/completions",
+                endpoint_suffix: "/responses",
                 system_in_messages: true,
             },
             Case {
@@ -994,12 +1329,11 @@ mod tests {
     }
 
     #[test]
-    fn openai_endpoint_keeps_v1() {
+    fn openai_endpoint_uses_responses_api() {
+        // 整改任务书 §3.2/§3.4：OpenAI 走官方推荐的 Responses API，
+        // 与 DeepSeek/Custom 的 Chat Completions 彻底分开。
         let c = cfg(Provider::OpenAI);
-        assert_eq!(
-            endpoint(&c),
-            "https://api.openai.com/v1/chat/completions"
-        );
+        assert_eq!(endpoint(&c), "https://api.openai.com/v1/responses");
     }
 
     /// Claude 走 /v1/messages，不是 /chat/completions
@@ -1014,7 +1348,7 @@ mod tests {
         let mut c = cfg(Provider::OpenAI);
         c.base_url = "https://api.openai.com/v1/".into();
         assert!(!endpoint(&c).contains("//v1"));
-        assert_eq!(endpoint(&c), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(endpoint(&c), "https://api.openai.com/v1/responses");
     }
 
     // ------------------------- 请求体差异 -------------------------
@@ -1253,6 +1587,405 @@ mod tests {
 
         let cl = Provider::Claude.default_model();
         assert!(!cl.contains("3-5-sonnet"), "claude-3-5-sonnet 已是旧名");
+        assert_eq!(cl, "claude-sonnet-5", "Claude 默认应是官方推荐的通用模型");
+    }
+
+    /// 整改任务书 §3.5：默认模型不得是**未经验证**的名字。
+    ///
+    /// OpenAI 的官方文档在核实环境里不可达（全部域名 403），
+    /// `gpt-6-astra` 只能从 Microsoft 的 Azure 文档旁证，无法确认在
+    /// OpenAI 平台上同名可用。因此这里锁死"OpenAI 默认模型必须为空"，
+    /// 谁要是再凭印象填一个"听起来对"的 ID，这条测试就会红。
+    #[test]
+    fn openai_default_model_is_empty_until_verified() {
+        assert_eq!(
+            Provider::OpenAI.default_model(),
+            "",
+            "OpenAI 的默认模型未获官方确认，必须留空让用户拉取模型列表或手动填写"
+        );
+        assert_ne!(Provider::OpenAI.default_model(), "gpt-6-astra");
+    }
+
+    // =====================================================================
+    // 整改任务书 §3.7：三家协议的关键差异逐条锁死
+    // =====================================================================
+
+    /// 三家的对话端点路径规则各不相同，写错就是 404 或打错协议
+    #[test]
+    fn endpoints_match_each_provider_protocol() {
+        let deepseek = cfg(Provider::DeepSeek);
+        assert_eq!(
+            endpoint(&deepseek),
+            "https://api.deepseek.com/chat/completions",
+            "DeepSeek 的 base 不带 /v1，路径直接跟 /chat/completions"
+        );
+
+        let openai = cfg(Provider::OpenAI);
+        assert_eq!(
+            endpoint(&openai),
+            "https://api.openai.com/v1/responses",
+            "OpenAI 走 Responses API，而不是 chat/completions"
+        );
+
+        let claude = cfg(Provider::Claude);
+        assert_eq!(
+            endpoint(&claude),
+            "https://api.anthropic.com/v1/messages",
+            "Anthropic 是 /v1/messages"
+        );
+
+        let mut custom = cfg(Provider::Custom);
+        custom.base_url = "http://127.0.0.1:11434/v1".into();
+        assert_eq!(
+            endpoint(&custom),
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "自定义兼容服务走 Chat Completions"
+        );
+    }
+
+    /// OpenAI 用 Responses 的字段名，DeepSeek/Custom 用 Chat Completions 的——
+    /// 两者不能混（用错字段名服务商直接 400）
+    #[test]
+    fn request_bodies_differ_between_responses_and_chat_completions() {
+        let req = |p: Provider| ChatRequest {
+            config: cfg(p),
+            system: Some("系统提示".into()),
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "你好".into(),
+            }],
+            json_output: true,
+            max_output_tokens: Some(128),
+        };
+
+        // --- OpenAI Responses ---
+        let oa = build_openai_responses_body(&req(Provider::OpenAI));
+        assert!(oa.get("input").is_some(), "Responses 用 input");
+        assert!(oa.get("messages").is_none(), "Responses 不应出现 messages");
+        assert_eq!(oa["instructions"], "系统提示", "system 走顶层 instructions");
+        assert_eq!(oa["max_output_tokens"], 128, "输出上限字段名是 max_output_tokens");
+        assert!(oa.get("max_tokens").is_none(), "Responses 不接受 max_tokens");
+        assert_eq!(
+            oa["text"]["format"]["type"], "json_object",
+            "JSON 输出走 text.format"
+        );
+        assert!(oa.get("response_format").is_none());
+
+        // --- DeepSeek / Custom 的 Chat Completions ---
+        let ds = build_openai_body(&req(Provider::DeepSeek));
+        assert!(ds.get("messages").is_some(), "Chat Completions 用 messages");
+        assert_eq!(ds["messages"][0]["role"], "system", "system 放进 messages");
+        assert_eq!(ds["max_tokens"], 128, "Chat Completions 用 max_tokens");
+        assert!(ds.get("max_output_tokens").is_none());
+        assert_eq!(
+            ds["response_format"]["type"], "json_object",
+            "JSON 输出走 response_format"
+        );
+        assert!(ds.get("text").is_none());
+
+        // --- Anthropic ---
+        let cl = build_anthropic_body(&req(Provider::Claude));
+        assert_eq!(cl["system"], "系统提示", "Anthropic 的 system 是顶层字段");
+        assert!(cl["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| m["role"] != "system"), "Anthropic 的 messages 里不能有 system");
+        assert_eq!(cl["max_tokens"], 128, "Anthropic 的 max_tokens 必填");
+        assert_eq!(cl["output_config"]["format"]["type"], "json_schema");
+    }
+
+    /// 四类请求头：Bearer / x-api-key + anthropic-version
+    #[test]
+    fn auth_headers_match_provider_requirements() {
+        // Anthropic 用 x-api-key 且必须带 anthropic-version
+        assert!(Provider::Claude.is_anthropic_style());
+        assert!(!Provider::Claude.uses_openai_responses());
+
+        // 其余三家都走 Bearer
+        for p in [Provider::DeepSeek, Provider::OpenAI, Provider::Custom] {
+            assert!(!p.is_anthropic_style(), "{:?} 不该用 x-api-key", p);
+        }
+
+        // OpenAI 是唯一走 Responses 的
+        assert!(Provider::OpenAI.uses_openai_responses());
+        for p in [Provider::DeepSeek, Provider::Claude, Provider::Custom] {
+            assert!(!p.uses_openai_responses(), "{:?} 不该走 Responses", p);
+        }
+    }
+
+    /// OpenAI Responses 的响应解析：文本在 output[].content[].output_text
+    #[test]
+    fn parse_openai_responses_extracts_text_and_usage() {
+        let v = serde_json::json!({
+            "id": "resp_1",
+            "model": "some-model",
+            "status": "completed",
+            "output": [
+                { "type": "reasoning", "summary": [] },
+                { "type": "message", "role": "assistant", "content": [
+                    { "type": "output_text", "text": "第一段" },
+                    { "type": "output_text", "text": "第二段" }
+                ]}
+            ],
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": 34,
+                "input_tokens_details": { "cached_tokens": 100 }
+            }
+        });
+        let r = parse_openai_responses_response(&v).expect("应解析成功");
+        assert_eq!(r.text, "第一段第二段", "应拼接所有 output_text 块");
+        assert_eq!(r.model, "some-model");
+        assert!(!r.truncated);
+        let u = r.usage.unwrap();
+        assert_eq!(u.input_tokens, Some(120));
+        assert_eq!(u.output_tokens, Some(34));
+        assert_eq!(u.cache_hit_tokens, Some(100), "缓存命中取 input_tokens_details");
+    }
+
+    /// 截断状态：OpenAI Responses 看 status=incomplete，而不是 finish_reason
+    #[test]
+    fn openai_responses_truncation_is_detected() {
+        let v = serde_json::json!({
+            "model": "m",
+            "status": "incomplete",
+            "incomplete_details": { "reason": "max_output_tokens" },
+            "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "被截断的内容" }] }]
+        });
+        let r = parse_openai_responses_response(&v).unwrap();
+        assert!(r.truncated, "status=incomplete 必须被识别为截断");
+    }
+
+    /// 空响应：不能当成成功（否则上层会拿到空字符串继续跑）
+    #[test]
+    fn empty_responses_are_errors_not_successes() {
+        // OpenAI Responses：没有任何文本块
+        let v = serde_json::json!({
+            "status": "completed",
+            "output": [{ "type": "message", "content": [] }]
+        });
+        let e = parse_openai_responses_response(&v).unwrap_err();
+        assert!(
+            e.message.contains("空内容"),
+            "应明确报空内容，实际：{}",
+            e.message
+        );
+
+        // Chat Completions：choices 里 content 为空
+        let v = serde_json::json!({
+            "choices": [{ "message": { "content": "   " }, "finish_reason": "stop" }]
+        });
+        assert!(parse_openai_response(&v).is_err(), "空内容必须报错");
+
+        // Anthropic：content 数组里没有 text 块
+        let v = serde_json::json!({ "content": [{ "type": "thinking" }] });
+        assert!(parse_anthropic_response(&v).is_err());
+    }
+
+    /// 模型拒绝（refusal）要说清楚，不能和"空内容"混为一谈
+    #[test]
+    fn openai_responses_refusal_has_specific_message() {
+        let v = serde_json::json!({
+            "status": "completed",
+            "output": [{ "type": "message", "content": [
+                { "type": "refusal", "refusal": "我不能帮助这个请求" }
+            ]}]
+        });
+        let e = parse_openai_responses_response(&v).unwrap_err();
+        assert!(e.message.contains("拒绝"), "实际：{}", e.message);
+    }
+
+    /// Anthropic 的 stop_reason=refusal / model_context_window_exceeded
+    /// 与 max_tokens 一样都属于"没正常说完"，至少要能识别 max_tokens
+    #[test]
+    fn anthropic_stop_reasons_are_handled() {
+        let mk = |reason: &str| {
+            serde_json::json!({
+                "model": "claude-sonnet-5",
+                "stop_reason": reason,
+                "content": [{ "type": "text", "text": "内容" }],
+                "usage": { "input_tokens": 5, "output_tokens": 7,
+                           "cache_read_input_tokens": 2, "cache_creation_input_tokens": 1 }
+            })
+        };
+        assert!(parse_anthropic_response(&mk("max_tokens")).unwrap().truncated);
+        assert!(!parse_anthropic_response(&mk("end_turn")).unwrap().truncated);
+
+        let r = parse_anthropic_response(&mk("end_turn")).unwrap();
+        let u = r.usage.unwrap();
+        assert_eq!(u.input_tokens, Some(5));
+        assert_eq!(u.cache_hit_tokens, Some(2));
+        assert_eq!(u.cache_miss_tokens, Some(1));
+    }
+
+    /// DeepSeek 的 usage 含缓存字段，且 finish_reason=length 表示截断
+    #[test]
+    fn deepseek_usage_and_finish_reason_are_parsed() {
+        let v = serde_json::json!({
+            "model": "deepseek-flash",
+            "choices": [{ "message": { "content": "好的" }, "finish_reason": "length" }],
+            "usage": {
+                "prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30,
+                "prompt_cache_hit_tokens": 6, "prompt_cache_miss_tokens": 4
+            }
+        });
+        let r = parse_openai_response(&v).unwrap();
+        assert!(r.truncated, "finish_reason=length 应判定为截断");
+        let u = r.usage.unwrap();
+        assert_eq!(u.input_tokens, Some(10));
+        assert_eq!(u.output_tokens, Some(20));
+        assert_eq!(u.cache_hit_tokens, Some(6));
+        assert_eq!(u.cache_miss_tokens, Some(4));
+    }
+
+    /// HTTP 错误码分类：401 / 429 / 5xx / 529 各自的语义与可重试性
+    #[test]
+    fn http_errors_are_classified_for_each_status() {
+        use crate::error::ErrorCode;
+
+        let cases = [
+            (401u16, ErrorCode::Unauthorized),
+            (403, ErrorCode::Unauthorized),
+            (402, ErrorCode::QuotaExceeded),
+            (429, ErrorCode::RateLimited),
+            (500, ErrorCode::Network),
+            (503, ErrorCode::Network),
+            (529, ErrorCode::Network), // Anthropic 特有的 overloaded
+        ];
+        for (status, expect) in cases {
+            let e = map_http_error(Provider::Claude, status, r#"{"error":"x"}"#);
+            assert!(
+                matches!(e.code, c if format!("{c:?}") == format!("{expect:?}")),
+                "HTTP {status} 应映射为 {expect:?}，实际 {:?}",
+                e.code
+            );
+        }
+
+        // 400 是参数问题，属于用户可修正的校验错误
+        let e = map_http_error(Provider::DeepSeek, 400, "bad model");
+        assert!(matches!(e.code, ErrorCode::Validation));
+        assert!(e.hint.unwrap().contains("bad model"), "应带上服务商说明");
+    }
+
+    /// §10：第三方错误正文必须脱敏后再展示
+    #[test]
+    fn provider_error_bodies_are_sanitized() {
+        // 1) Bearer token 被回显
+        let s = sanitize_provider_error("Unauthorized: Bearer sk-abcdef1234567890abcdef", 300);
+        assert!(!s.contains("sk-abcdef1234567890abcdef"), "密钥必须被打码：{s}");
+        assert!(s.contains("***"));
+        assert!(s.contains("Unauthorized"), "但错误原因要保留");
+
+        // 2) 裸的 OpenAI 风格 key
+        let s = sanitize_provider_error("invalid api_key: sk-proj-AAAABBBBCCCCDDDDEEEEFFFF", 300);
+        assert!(!s.contains("AAAABBBBCCCCDDDDEEEEFFFF"), "实际：{s}");
+
+        // 3) 裸的长 token（很多中转会直接回显）
+        let long = "a".repeat(40);
+        let s = sanitize_provider_error(&format!("token {long} rejected"), 300);
+        assert!(!s.contains(&long), "长 token 必须被打码：{s}");
+
+        // 4) HTML 错误页被剥成文本
+        let s = sanitize_provider_error(
+            "<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>",
+            300,
+        );
+        assert!(!s.contains('<') && !s.contains('>'), "HTML 标签应被剥掉：{s}");
+        assert!(s.contains("502 Bad Gateway"));
+
+        // 5) 超长正文被截断且明示
+        let s = sanitize_provider_error(&"字".repeat(1000), 100);
+        assert!(s.contains("已截断"));
+        assert!(s.chars().count() <= 120);
+
+        // 6) 正常短错误原样保留（不能把有用信息也吃掉）
+        let s = sanitize_provider_error("model not found", 300);
+        assert_eq!(s, "model not found");
+
+        // 7) 换行与多余空白被折叠
+        let s = sanitize_provider_error("a\n\n   b\t\tc", 300);
+        assert_eq!(s, "a b c");
+    }
+
+    /// API Key 未配置时必须给出明确的"未配置"错误，而不是发一个没头的请求
+    #[tokio::test]
+    async fn missing_api_key_is_reported_before_request() {
+        let c = cfg(Provider::DeepSeek);
+        // 测试环境没有凭据管理器里的 key，因此这里必然走到 NotConfigured
+        let req = ChatRequest {
+            config: c.clone(),
+            system: None,
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+            json_output: false,
+            max_output_tokens: None,
+        };
+        let err = chat(&c, &req).await.unwrap_err();
+        assert!(
+            matches!(err.code, crate::error::ErrorCode::NotConfigured),
+            "应报未配置，实际 {:?}：{}",
+            err.code,
+            err.message
+        );
+    }
+
+    /// 错误的 Base URL 必须在校验阶段就被拒绝（而不是发出请求后 404）
+    #[test]
+    fn invalid_base_url_is_rejected_at_validation() {
+        let mut c = cfg(Provider::OpenAI);
+        // OpenAI 的默认模型现在故意留空，这里先给一个值，
+        // 保证断言只针对 Base URL 这一项。
+        c.model = "some-model".into();
+
+        c.base_url = "not a url".into();
+        assert!(c.validate().is_err());
+
+        c.base_url = "ftp://api.openai.com/v1".into();
+        assert!(c.validate().is_err(), "非 http(s) 协议必须拒绝");
+
+        // 非本机的 http 必须拒绝（避免明文发密钥）
+        c.base_url = "http://api.example.com/v1".into();
+        assert!(c.validate().is_err(), "非本机的 http 必须拒绝");
+
+        // localhost / 127.0.0.1 / ::1 的 http 允许（本地模型）
+        for local in [
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:11434/v1",
+            "http://[::1]:11434/v1",
+        ] {
+            c.base_url = local.into();
+            assert!(c.validate().is_ok(), "{local} 属于本机地址，应当允许");
+        }
+    }
+
+    /// 超时与输出上限必须被夹到合理区间（§9：后端是最终校验层）
+    #[test]
+    fn timeout_and_output_limits_are_clamped() {
+        let mut c = cfg(Provider::DeepSeek);
+        c.timeout_seconds = 0;
+        c.max_output_tokens = 0;
+        c.normalize();
+        assert_eq!(c.timeout_seconds, 60, "0 应被换成安全默认值");
+        assert_eq!(c.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
+
+        c.timeout_seconds = 100_000;
+        c.max_output_tokens = 10_000_000;
+        c.normalize();
+        assert_eq!(c.timeout_seconds, 60, "超大超时应回落默认值");
+        assert_eq!(c.max_output_tokens, DEFAULT_MAX_OUTPUT_TOKENS);
+
+        // 边界内的值保持不动
+        c.timeout_seconds = 120;
+        c.max_output_tokens = 4096;
+        c.normalize();
+        assert_eq!(c.timeout_seconds, 120);
+        assert_eq!(c.max_output_tokens, 4096);
+
+        // 归一化之后必须能通过校验
+        assert!(c.validate().is_ok());
     }
 
     #[test]

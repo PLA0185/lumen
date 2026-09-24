@@ -42,6 +42,16 @@ const TICK: Duration = Duration::from_secs(30);
 /// 单次 tick 最多发出的提醒数，防止异常数据导致一次性弹满屏幕
 const MAX_PER_TICK: i64 = 20;
 
+/// 提醒被停用的原因（对应 `reminders.disabled_reason`，migration 0005）。
+///
+/// 为什么要区分：如果只有一个 `is_enabled`，就没法回答"这条提醒是用户自己关的，
+/// 还是系统因为缺少依赖时间临时停用的"。前者任何自动逻辑都不许重新打开，
+/// 后者在时间恢复后应当自动恢复——混在一起就会出现
+/// "用户关掉的提醒被系统偷偷打开"或"时间补回来了提醒却永久不再触发"。
+pub const DISABLED_BY_USER: &str = "user";
+/// 系统原因：相对提醒依赖的 planned_at / due_at 为空
+pub const DISABLED_MISSING_BASE_TIME: &str = "missing_base_time";
+
 /// 提醒类型（与数据库 CHECK 约束一致）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +102,9 @@ pub struct Reminder {
     pub is_enabled: i64,
     pub fired_at: Option<String>,
     pub snoozed_until: Option<String>,
+    /// 停用原因：NULL=启用中 / `user`=用户主动关闭 /
+    /// `missing_base_time`=系统因缺少依赖时间临时停用（migration 0005）
+    pub disabled_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -638,14 +651,32 @@ pub async fn reminder_check_missed(
     Ok(n)
 }
 
-/// 任务时间变更后重算其"相对型"提醒的绝对时刻。
+/// 任务时间变更后重算其"相对型"提醒的绝对时刻（自带事务）。
 ///
 /// 这是 §4.3「重算待提醒项」的核心：用户改了截止时间，
 /// 所有"到期前 30 分钟"的提醒都必须跟着走，否则会在错误时间响起。
+///
+/// **任务时间与提醒时刻必须原子更新**（整改任务书 §5）：本函数会自己开一个
+/// 事务；而 `task_update` 这类"改任务的同时要重算提醒"的场景，必须改用
+/// [`recompute_task_reminders_tx`]，让两步落在同一个事务里，
+/// 否则一旦重算失败就会出现"任务时间是新值、提醒时刻还是旧值"的静默不一致。
 pub async fn recompute_task_reminders(db: &crate::db::Db, task_id: &str) -> AppResult<i64> {
+    let mut tx = db.pool().begin().await?;
+    let updated = recompute_task_reminders_tx(&mut tx, task_id).await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// 在调用方给定的事务里重算提醒（整改任务书 §5.3）。
+///
+/// 事务版本与独立版本共用同一段逻辑，避免两处实现漂移。
+pub async fn recompute_task_reminders_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    task_id: &str,
+) -> AppResult<i64> {
     let row = sqlx::query("SELECT planned_at, due_at FROM tasks WHERE id = ?1")
         .bind(task_id)
-        .fetch_optional(db.pool())
+        .fetch_optional(&mut **tx)
         .await?;
     let Some(row) = row else { return Ok(0) };
     let planned: Option<String> = row.try_get("planned_at")?;
@@ -655,7 +686,7 @@ pub async fn recompute_task_reminders(db: &crate::db::Db, task_id: &str) -> AppR
         "SELECT * FROM reminders WHERE task_id = ?1 AND kind <> 'custom'",
     )
     .bind(task_id)
-    .fetch_all(db.pool())
+    .fetch_all(&mut **tx)
     .await?;
 
     let now = to_db_time(utc_now());
@@ -670,31 +701,54 @@ pub async fn recompute_task_reminders(db: &crate::db::Db, task_id: &str) -> AppR
             planned.as_deref(),
             due.as_deref(),
         )?;
+        let auto_disabled = r.disabled_reason.as_deref() == Some(DISABLED_MISSING_BASE_TIME);
 
         match new_at {
-            Some(at) if at != r.remind_at => {
-                // 时间变了：重置 fired_at，让提醒在新时刻重新生效。
-                // 若不清空，用户改完时间后提醒将永远不会再触发。
-                sqlx::query(
-                    "UPDATE reminders SET remind_at = ?1, fired_at = NULL, updated_at = ?2 WHERE id = ?3",
-                )
-                .bind(&at)
-                .bind(&now)
-                .bind(&r.id)
-                .execute(db.pool())
-                .await?;
-                updated += 1;
+            Some(at) => {
+                if auto_disabled {
+                    // 依赖时间补回来了：自动恢复启用（§6 的产品规则）。
+                    // 注意只恢复"系统停用"的，用户自己关的绝不碰。
+                    sqlx::query(
+                        "UPDATE reminders SET remind_at = ?1, is_enabled = 1, disabled_reason = NULL,
+                                              fired_at = NULL, updated_at = ?2
+                         WHERE id = ?3",
+                    )
+                    .bind(&at)
+                    .bind(&now)
+                    .bind(&r.id)
+                    .execute(&mut **tx)
+                    .await?;
+                    updated += 1;
+                } else if at != r.remind_at {
+                    // 时间变了：重置 fired_at，让提醒在新时刻重新生效。
+                    // 若不清空，用户改完时间后提醒将永远不会再触发。
+                    // `is_enabled` 与 `disabled_reason` 保持原样：
+                    // 用户主动关掉的提醒，只更新时间、不擅自打开。
+                    sqlx::query(
+                        "UPDATE reminders SET remind_at = ?1, fired_at = NULL, updated_at = ?2 WHERE id = ?3",
+                    )
+                    .bind(&at)
+                    .bind(&now)
+                    .bind(&r.id)
+                    .execute(&mut **tx)
+                    .await?;
+                    updated += 1;
+                }
             }
-            Some(_) => {}
             None => {
                 // 依赖的时间字段被清空了：停用该提醒并保留记录，
                 // 而不是删除——用户重新填上时间后它还能被恢复。
+                // 只有"当前是启用状态"的才需要改；已经是用户停用的保持不动。
                 if r.is_enabled == 1 {
-                    sqlx::query("UPDATE reminders SET is_enabled = 0, updated_at = ?1 WHERE id = ?2")
-                        .bind(&now)
-                        .bind(&r.id)
-                        .execute(db.pool())
-                        .await?;
+                    sqlx::query(
+                        "UPDATE reminders SET is_enabled = 0, disabled_reason = ?1, updated_at = ?2
+                         WHERE id = ?3",
+                    )
+                    .bind(DISABLED_MISSING_BASE_TIME)
+                    .bind(&now)
+                    .bind(&r.id)
+                    .execute(&mut **tx)
+                    .await?;
                     updated += 1;
                 }
             }
@@ -736,11 +790,17 @@ pub async fn reminder_list_pending(
     Ok(out)
 }
 
-/// 供 `task_update` 调用后触发的重算包装（避免 organize 模块依赖细节）
-pub async fn on_task_time_changed(db: &crate::db::Db, task_id: &str) {
-    if let Err(e) = recompute_task_reminders(db, task_id).await {
-        log::warn!("重算任务 {task_id} 的提醒失败：{e}");
-    }
+/// 供"任务时间变化后重算提醒"的调用方使用（自带事务）。
+///
+/// **错误必须向上传播**（整改任务书 §5.4）：曾经这里是
+/// `if let Err(e) = ... { log::warn!(...) }`，也就是"写条日志然后假装成功"，
+/// 结果库里会出现"任务时间是新值、提醒时刻还是旧值"，而界面上显示保存成功。
+/// 对数据一致性来说这不是合法的恢复策略，因此现在返回 `AppResult`。
+///
+/// 注意：`task_update` **不**走这里——它在自己的事务里调用
+/// [`recompute_task_reminders_tx`]，保证两步原子。
+pub async fn on_task_time_changed(db: &crate::db::Db, task_id: &str) -> AppResult<i64> {
+    recompute_task_reminders(db, task_id).await
 }
 
 #[cfg(test)]

@@ -495,18 +495,21 @@ pub async fn update_task_impl(db: &Db, id: &str, input: UpdateTaskInput) -> AppR
         return Err(AppError::not_found("任务", id));
     }
 
-    tx.commit().await?;
-
-    // §4.3：「重算待提醒项」。用户改了计划/截止时间后，所有相对型提醒
+    // §4.3「重算待提醒项」：用户改了计划/截止时间后，所有相对型提醒
     // （如"到期前 30 分钟"）都必须跟着移动，否则会在错误时间响起。
-    // 只在时间字段可能变化时才重算，避免无谓的写操作。
+    //
+    // 整改任务书 §5：这一步必须与上面的 UPDATE **在同一个事务里**完成。
+    // 原来的写法是先 commit、再调用重算且把错误吞掉，于是可能出现
+    // "任务截止时间 = 新值、提醒触发时间 = 旧值"而界面还显示保存成功。
     if input.planned_at.is_some()
         || input.due_at.is_some()
         || input.clear_planned_at
         || input.clear_due_at
     {
-        crate::reminders::on_task_time_changed(db, id).await;
+        crate::reminders::recompute_task_reminders_tx(&mut tx, id).await?;
     }
+
+    tx.commit().await?;
 
     get_task_row(db, id).await
 }
@@ -1165,6 +1168,9 @@ pub async fn task_reschedule(
         compute_rescheduled_at(existing.planned_at.as_deref(), existing.has_planned_time, target);
 
     let now = to_db_time(utc_now());
+    // 改期同样要保证"任务时间与提醒时刻一起落库"（整改任务书 §5）：
+    // 放进一个事务，任何一步失败都整体回滚，而不是留下半新半旧的状态。
+    let mut tx = db.pool().begin().await?;
     sqlx::query(
         "UPDATE tasks SET planned_at = ?1, has_planned_time = ?2, updated_at = ?3 WHERE id = ?4",
     )
@@ -1172,11 +1178,13 @@ pub async fn task_reschedule(
     .bind(has_time as i64)
     .bind(&now)
     .bind(&id)
-    .execute(db.pool())
+    .execute(&mut *tx)
     .await?;
 
     // 改了计划时间，相对型提醒必须跟着走（§4.3）
-    crate::reminders::on_task_time_changed(db, &id).await;
+    crate::reminders::recompute_task_reminders_tx(&mut tx, &id).await?;
+
+    tx.commit().await?;
 
     get_task_row(db, &id).await
 }

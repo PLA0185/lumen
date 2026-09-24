@@ -1125,8 +1125,10 @@ pub async fn edit_instance_impl(
             }
             q.bind(task_id.clone()).execute(db.pool()).await?;
 
-            // 时间变了要重算相对型提醒（§4.3）
-            crate::reminders::on_task_time_changed(db, &task_id).await;
+            // 时间变了要重算相对型提醒（§4.3）。
+            // 整改任务书 §5：这里同样不能吞掉错误——重算失败必须让整个
+            // "只改这一次"的操作失败，而不是留下时间与提醒不一致的实例。
+            crate::reminders::on_task_time_changed(db, &task_id).await?;
 
             return Ok(ScopeActionResult {
                 affected: 1,
