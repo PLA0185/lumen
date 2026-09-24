@@ -40,6 +40,14 @@ const PAGE_SIZE = 500
  */
 export const REPORT_MAX_CHARS = 20_000_000
 
+/**
+ * 单次导出的**行数**上限（第三轮收口任务书 §17）。
+ *
+ * 与字符上限一起构成两道闸：只看字符数时，"10 万条极短标题"仍能造出十万个
+ * DOM 节点把界面拖死；只看行数时，"1 万条 2 万字段落"又能把内存打满。
+ */
+export const REPORT_MAX_ROWS = 100_000
+
 export interface ReportProgress {
   /** 已经写入 DOM 的行数 */
   loaded: number
@@ -316,6 +324,23 @@ export async function buildPrintDocument(
     if (page.length === 0) break
 
     for (const row of page) {
+      // **逐行**检查两道上限，而不是一页渲染完再看（第三轮收口任务书 §17）。
+      // 按页检查时，"一页 500 条 × 每条 20 万字符"会先被整个塞进 DOM，
+      // 上限就形同虚设。
+      const cost = reportRowChars(row)
+      if (stats.total + 1 > REPORT_MAX_ROWS) {
+        truncated = true
+        truncatedNote = `任务数量超过单次导出上限（${REPORT_MAX_ROWS} 条），剩余部分未包含`
+        break
+      }
+      if (exceedsCharLimit(chars.total + cost)) {
+        truncated = true
+        truncatedNote = `内容总长度超过单次导出上限（约 ${Math.round(
+          REPORT_MAX_CHARS / 1_000_000,
+        )} 百万字符），剩余任务未包含`
+        break
+      }
+
       const t = row.task
       stats.total += 1
       if (t.status === 'done') {
@@ -334,14 +359,8 @@ export async function buildPrintDocument(
     offset += page.length
     onProgress?.({ loaded: stats.total, total: total || stats.total })
 
-    // 字符上限：比行数更贴近真实的内存压力（任务书 §7.4）
-    if (exceedsCharLimit(chars.total)) {
-      truncated = true
-      truncatedNote = `内容总长度超过单次导出上限（约 ${Math.round(
-        REPORT_MAX_CHARS / 1_000_000,
-      )} 百万字符），剩余任务未包含`
-      break
-    }
+    // 已经因为上限停下（或用户取消）就不再继续取下一页
+    if (truncated) break
     if (page.length < PAGE_SIZE) break
   }
 
