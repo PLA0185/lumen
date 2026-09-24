@@ -1,14 +1,29 @@
 """Lumen 第三轮整改的实机验收（《Lumen 第三轮整改任务书》§12）。
 
-## 默认只跑隔离 profile，碰到生产目录直接拒绝（§24/§25/§26）
+## 只跑隔离 profile：碰到生产目录**一律拒绝**，没有任何绕过开关（§24/§25/§26/§29）
 
-**这个脚本默认只在隔离 profile 上跑；检测到生产数据目录就打印错误并 `exit 1`。**
+**这个脚本没有任何绕过开关。** 检测到当前实例的数据目录是生产目录时，
+无条件打印拒绝说明并 `exit 1`，**不做任何写操作**。
+（此前存在的 `--allow-production` 已在收口整改 §26 中**删除**：参数本身、
+`PRODUCTION_WARNING` / `PRODUCTION_WARNING_TAIL` 两段警告文案、
+以及所有分支里对它的使用，全部去掉，没有留下任何"显式传参就能放行"的出口。）
 
 它会在真实数据库上造数、删数（2000 条分页数据 + 回收站删除范围实验），
 所以脚本做的第一件事就是通过后端命令 `app_data_paths` 读出**当前实例**的数据目录，
-规范化之后（`os.path.normcase(os.path.abspath(...))`，大小写与尾部分隔符差异不算不同）
+**先解析掉 junction/symlink 别名再比较**（`os.path.normcase(os.path.realpath(...))`，
+`realpath` 会把目录联接解析成它真正指向的目录、并抹平尾部分隔符），
 与默认生产目录 `%APPDATA%\\com.pla0185.lumen` 比较；命中就停下，
 **不写任何数据、不造任何数据**。
+
+为什么必须解析别名（§29）：只要把 `C:\\Temp\\fake-test` 做成指向生产目录的
+**junction**，旧写法 `abspath + normcase` 就会把它当成"另一个目录"而放行——
+别名与真身必须被判成同一个目录。同理，读不到 `app_data_paths`（IPC 抛错）
+或返回的 `dataDir` 为空时也**拒绝**：拿不到证据就按最坏情况处理，
+保守到底，绝不放行。
+
+判定逻辑集中在不依赖 CDP/网络的两个函数里（`is_production_data_dir` 与
+`decide_profile`），并有隐藏自测入口 `--self-test-profile-check` 覆盖 §29 的九种情形
+（含**真的建一个 junction 别名再删掉**），不启动应用也能跑。
 
 `ZZR3-` 前缀、`finally` 里按 id 清理、`window.confirm` 全程接管（默认拒绝）
 都只是**第二层**防护——它们保证的是"失败时能收拾干净"，
@@ -33,15 +48,21 @@ python tools/verify_remediation3.py --expect-data-dir $test
 ```
 
 不设 `LUMEN_TEST_DATA_DIR` 时应用会用默认的 `%APPDATA%\\com.pla0185.lumen`，
-那时本脚本会直接拒绝运行。
+那时本脚本会直接拒绝运行——**没有"我知道有风险"的开关**，
+要跑就只能把应用起在隔离目录上。
 
 命令行参数：
 
 - `--expect-data-dir <path>`（可选）：显式声明本次期望的数据目录，
   与实例实际用的是同一个目录才继续，否则拒绝运行（双保险：防止"以为在隔离目录、
-  实际连到了生产实例"）。
-- `--allow-production`（可选，**危险**）：只有显式传这个参数才允许在生产目录上跑，
-  开头打印大写警告、结束时再提醒一次。默认绝对不允许。
+  实际连到了生产实例"）。比较同样走 `realpath`，所以"期望目录写成 junction 别名"
+  不会假失败。
+- `--self-test-profile-check`（隐藏，不写"-h"里）：只跑上面那两个判定函数的自测，
+  覆盖 §29 的九种情形（含真的建 junction 别名），**不连 CDP、不碰应用**，
+  全过 exit 0、有任一不过 exit 1。
+
+**没有任何允许在生产目录上跑的开关**：`--allow-production` 已随 §26 整改删除，
+再把脚本改成"能显式放行生产目录"属于回退，不要这样做。
 
 退出码：全部断言通过为 0；profile 校验不通过、或有断言失败为 1
 （末尾打印 `X/Y 项通过`）。
@@ -70,9 +91,10 @@ python tools/verify_remediation3.py --expect-data-dir $test
 > 第 1 条（隔离 profile）是**第一层**防护，由本脚本在造任何数据之前强制；
 > 第 2~7 条是**第二层**：即使真的跑起来了，也要保证"删的范围 = 确认的范围"、失败能收拾干净。
 
-1. **隔离 profile 强制**（§24/§25/§26，见上方"默认只跑隔离 profile"）：
-   启动后第一件事就是读 `app_data_paths` 并与默认生产目录规范化比较，
-   命中就打印错误 + `exit 1`，**不写任何数据**；`--allow-production` 是唯一出口且必须显式传。
+1. **隔离 profile 强制**（§24/§25/§26，见上方"只跑隔离 profile"）：
+   启动后第一件事就是读 `app_data_paths`，把实例实际目录**解析别名后**（`realpath`）
+   与默认生产目录比较，命中就打印错误 + `exit 1`，**不写任何数据**。
+   **没有任何出口**：`--allow-production` 已删除；读不到 / 读到空值也一律拒绝。
 2. 造出来的任务标题一律带唯一前缀 `ZZR3-`，结束时在 `finally` 里**逐个按 id** 永久删除；
    **绝不调用 `task_purge_all_deleted` / 「清空回收站」**——那会删掉用户自己回收站里的任务。
    （前缀 + finally 只能保证"自己造的自己收拾"，不能保证"没在别人的库上造"——
@@ -92,13 +114,15 @@ python tools/verify_remediation3.py --expect-data-dir $test
    不会伪造数据去改凭据管理器。
 7. §12.3 会在**数据目录**的 `attachments/` 里临时建联接与对照文件，`finally` 里逐个清掉
    （联接用 `os.rmdir` 只删链接自身，绝不用 `shutil.rmtree`）。
-   隔离 profile 下动的是测试目录；一旦 `--allow-production` 跑在生产目录上，
-   动的就是用户真实的 `attachments/`——这也是第 1 条存在的理由。
+   隔离 profile 下动的是测试目录；脚本已经**不可能**在生产目录上跑起来
+   （第 1 条没有任何绕过开关），这也是第 1 条存在的理由。
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 import re
@@ -180,7 +204,7 @@ def run_section(name: str, fn, *args) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 隔离 profile 强制（§24/§25/§26）：造任何数据之前的**第一件事**
+# 隔离 profile 强制（§24/§25/§26/§29）：造任何数据之前的**第一件事**，且**无绕过开关**
 # ---------------------------------------------------------------------------
 
 # Tauri 的 bundle id，同时也是默认数据目录名（src-tauri/tauri.conf.json 的 identifier）
@@ -197,10 +221,10 @@ def default_production_data_dir() -> Path:
 
 
 def normalize_dir(path: object) -> str:
-    """把目录路径规范化成可直接比较的字符串。
+    """把目录路径规范化成可直接比较的字符串（**不解析链接**）。
 
-    - `normcase`：Windows 下抹平大小写与分隔符差异（`C:/Temp/A` 与 `c:\\temp\\a` 是同一个目录）；
-    - `abspath` → `normpath`：相对路径按 cwd 展开，并去掉尾部分隔符与 `.` / `..`。
+    - `abspath` → `normpath`：相对路径按 cwd 展开，并去掉尾部分隔符与 `.` / `..`；
+    - `normcase`：Windows 下抹平大小写与分隔符差异（`C:/Temp/A` 与 `c:\\temp\\a` 是同一个目录）。
     """
     if path is None:
         return ""
@@ -210,16 +234,73 @@ def normalize_dir(path: object) -> str:
     return os.path.normcase(os.path.abspath(text))
 
 
-def is_production_data_dir(path: object, default_dir: object) -> bool:
-    """`path` 是否就是默认生产目录（规范化后比较；大小写、尾部分隔符差异不算不同）。
+def canonical_dir(path: object) -> str:
+    """规范化 **+ 解析 junction/symlink** 之后的比较键（§29）。
 
-    纯函数，不碰文件系统、不依赖运行环境——可以单独用 `python -c` 喂样例验证。
-    路径为空时返回 False（"拿不到"由调用方按**拒绝**处理，不能靠这里放行）。
+    比 `normalize_dir` 多一步 `os.path.realpath`：它会把目录联接（junction）与
+    符号链接解析成**真正指向的目录**，于是"别名"和"真身"得到同一个键——
+    这正是旧写法 `abspath + normcase` 漏掉的那一步（`C:\\Temp\\fake-test`
+    做成指向生产目录的 junction 时，旧写法会把它当成另一个目录而放行）。
+
+    `realpath` 对**不存在**的路径也会尽力解析（逐段解析已存在的部分），
+    所以"生产目录还没建出来"时同样成立；实在解析不动时退化成规范化路径。
     """
-    actual = normalize_dir(path)
+    normalized = normalize_dir(path)
+    if not normalized:
+        return ""
+    return os.path.normcase(os.path.realpath(normalized))
+
+
+def is_production_data_dir(path: object, default_dir: object) -> bool:
+    """`path` 是否就是默认生产目录——**解析别名之后**比较（§29）。
+
+    纯函数（只用 `os.path`，不连 CDP、不碰网络、不写盘），可以单独喂样例验证。
+    下列情形返回 True：生产目录本身、大小写变体、尾部带分隔符变体、
+    以及**通过 junction/symlink 指向生产目录的临时路径**；
+    普通临时目录（真实目录，不是链接）与相似名（`…lumen-backup`）返回 False。
+
+    `path` 为空 / 拿不到时返回 False——"拿不到"必须由调用方按**拒绝**处理
+    （见 `decide_profile` 的 `read-failed` / `empty-data-dir`），不能靠这里放行。
+    """
+    actual = canonical_dir(path)
     if not actual:
         return False
-    return actual == normalize_dir(default_dir)
+    return actual == canonical_dir(default_dir)
+
+
+# decide_profile 的原因码：只有 PROFILE_OK 放行，其余一律拒绝
+PROFILE_OK = "ok"  # 允许继续
+PROFILE_READ_FAILED = "read-failed"  # app_data_paths 读取失败
+PROFILE_EMPTY_DATA_DIR = "empty-data-dir"  # 后端没返回 dataDir
+PROFILE_PRODUCTION = "production"  # 命中了生产目录（含 junction/symlink 别名）
+PROFILE_EXPECT_MISMATCH = "expect-mismatch"  # 与 --expect-data-dir 不一致
+
+
+def decide_profile(
+    actual: object,
+    default_dir: object,
+    expect_dir: object = None,
+    *,
+    read_failed: bool = False,
+) -> tuple[bool, str]:
+    """隔离 profile 的**纯判定**：返回 `(是否放行, 原因码)`。
+
+    抽成纯函数是为了能在不启动应用的情况下自测（§29）：CDP 那段只负责把
+    `app_data_paths` 的结果喂进来、再按原因码打印人话，判定本身只看参数。
+
+    顺序即优先级：读取失败 / 空值 → 生产目录 → 与期望目录不一致。
+    前两条是**保守拒绝**（拿不到证据就不放行），第三条是双保险。
+    """
+    if read_failed:
+        return False, PROFILE_READ_FAILED
+    if not str(actual or "").strip().strip('"'):
+        return False, PROFILE_EMPTY_DATA_DIR
+    if is_production_data_dir(actual, default_dir):
+        return False, PROFILE_PRODUCTION
+    if expect_dir and str(expect_dir).strip().strip('"'):
+        if canonical_dir(actual) != canonical_dir(expect_dir):
+            return False, PROFILE_EXPECT_MISMATCH
+    return True, PROFILE_OK
 
 
 PRODUCTION_REFUSAL = """
@@ -234,7 +315,9 @@ PRODUCTION_REFUSAL = """
 按钮的 async 流程随后弹出的是**原生**确认框，无头环境自动接受，
 用户回收站里原有的 **18 条任务被永久删除**，无法恢复。
 那次事故说明：destructive 验收就不该碰生产目录。
-所以这里在**造任何数据之前**停下——没有写任何数据，也没有造任何数据。
+
+**这里没有任何绕过开关**：判定为生产目录就无条件退出，
+不写任何数据、不造任何数据（原来的 `--allow-production` 已删除）。
 
 正确的启动方式（环境变量必须在**启动 Lumen 之前**设置，应用是启动时读它的）：
 
@@ -245,34 +328,20 @@ PRODUCTION_REFUSAL = """
    # 在**同一个窗口**里启动 Lumen，然后：
    python tools/verify_remediation3.py --expect-data-dir $test
 
-确实要在生产目录上跑（危险，后果自负）时才显式加参数：
-   python tools/verify_remediation3.py --allow-production
+注意：`{env_name}` 指向的目录**本身**也不能是指向生产目录的 junction/symlink——
+判定会解析别名，别名指向生产目录时同样在这里被拒绝。
 ============================================================
 """
 
-PRODUCTION_WARNING = """
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!! 警告：--allow-production 已启用 —— 本次验收跑在【生产数据目录】上！
-!!   {actual}
-!! 脚本会在这个库里创建约 {seed} 条 `{prefix}` 开头的任务并真的永久删除一部分；
-!! 中途失败或清理失败都会留下残留数据，需要人工按前缀 `{prefix}` 清理。
-!! 正常情况下不该这样跑：请改用 {env_name} 指向隔离目录。
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-"""
-
-PRODUCTION_WARNING_TAIL = (
-    "!! 再次提醒：本次是在【生产数据目录】上跑的（--allow-production）：{actual}\n"
-    "!! 若上方有 ❌ 或中断，请检查是否有残留的 `ZZR3-` 数据。"
-)
-
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """命令行参数：默认只跑隔离 profile，`--allow-production` 是唯一出口。"""
+    """命令行参数：只跑隔离 profile，**没有**允许生产目录的开关（§26）。"""
     parser = argparse.ArgumentParser(
         prog="verify_remediation3.py",
         description=(
             "Lumen 第三轮整改的实机验收（§12）。"
-            "默认只跑隔离 profile：数据目录一旦是 %APPDATA%\\com.pla0185.lumen 就直接拒绝运行。"
+            "只跑隔离 profile：数据目录一旦是 %APPDATA%\\com.pla0185.lumen"
+            "（或指向它的 junction/symlink 别名）就直接拒绝运行，没有任何绕过开关。"
         ),
         epilog=(
             "隔离 profile 的启动方式：先设 $env:LUMEN_TEST_DATA_DIR=<一次性目录> 与 "
@@ -287,9 +356,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="显式声明本次期望的数据目录；与实例实际用的目录不一致就拒绝运行（双保险）。",
     )
     parser.add_argument(
-        "--allow-production",
+        "--self-test-profile-check",
         action="store_true",
-        help="允许在生产数据目录上运行。危险：会真的创建并删除数据；默认绝对不允许。",
+        help=argparse.SUPPRESS,  # 隐藏：仅供本脚本自测，正常验收不会用到
     )
     return parser.parse_args(argv)
 
@@ -298,43 +367,55 @@ def verify_isolated_profile(main_win: ui.Target, args: argparse.Namespace) -> tu
     """启动即校验 profile，返回 `(是否继续, 实例实际的数据目录)`。
 
     这条检查是脚本做的**第一件事**，在造任何数据之前执行；返回 False 时调用方必须
-    直接结束，不得再做任何写操作。
+    直接结束，不得再做任何写操作。判定本身在纯函数 `decide_profile` 里
+    （可被 `--self-test-profile-check` 覆盖），这里只负责取数、打印、返回。
     """
-    print("===== 隔离 profile 校验（§24/§25/§26：第一件事）=====", flush=True)
+    print("===== 隔离 profile 校验（§24/§25/§26/§29：第一件事）=====", flush=True)
     env_hint = os.environ.get(TEST_DATA_DIR_ENV)
     print(
         f"   脚本环境里的 {TEST_DATA_DIR_ENV} = {env_hint!r}"
         f"（应用侧在**启动时**读它，这里只作提示，判定一律以实例实际目录为准）",
         flush=True,
     )
-    print(f"   默认生产目录（%APPDATA%）：{default_production_data_dir()}", flush=True)
+    default_dir = default_production_data_dir()
+    print(f"   默认生产目录（%APPDATA%，判定时会解析 junction/symlink）：{default_dir}", flush=True)
 
-    # 读**当前实例**的数据目录：这是唯一的判定依据
+    # 读**当前实例**的数据目录：这是唯一的判定依据。
+    # 读不到 = 拿不到证据，按最坏情况处理（reject），不放行。
+    read_failed = False
+    read_error = ""
+    actual = ""
     try:
         paths = main_win.eval(invoke_js("app_data_paths", {})) or {}
+        actual = str(paths.get("dataDir") or "")
     except Exception as e:  # noqa: BLE001
-        print(
-            f"❌ 拒绝运行：读不到 app_data_paths（{type(e).__name__}: {e}）。"
-            "无法证明当前实例跑在隔离 profile 上，按最坏情况处理。",
-            flush=True,
-        )
-        return False, ""
+        read_failed = True
+        read_error = f"{type(e).__name__}: {e}"
 
-    actual = str(paths.get("dataDir") or "")
-    if not actual:
-        print(
-            "❌ 拒绝运行：app_data_paths 没有返回 dataDir，"
-            "无法证明当前实例跑在隔离 profile 上。",
-            flush=True,
-        )
-        return False, ""
+    allowed, reason = decide_profile(
+        actual, default_dir, args.expect_data_dir, read_failed=read_failed
+    )
 
-    default_dir = default_production_data_dir()
-    print(f"   实例实际数据目录：{actual}", flush=True)
+    if reason != PROFILE_PRODUCTION:
+        print(f"   实例实际数据目录：{actual!r}", flush=True)
 
-    # ---- 第一关：是不是生产目录 ----
-    if is_production_data_dir(actual, default_dir):
-        if not args.allow_production:
+    if not allowed:
+        # 三种拒绝各自的说明；**都不写任何数据**
+        if reason == PROFILE_READ_FAILED:
+            print(
+                f"❌ 拒绝运行：读不到 app_data_paths（{read_error}）。"
+                "无法证明当前实例跑在隔离 profile 上，按最坏情况处理。",
+                flush=True,
+            )
+            return False, ""
+        if reason == PROFILE_EMPTY_DATA_DIR:
+            print(
+                "❌ 拒绝运行：app_data_paths 没有返回 dataDir，"
+                "无法证明当前实例跑在隔离 profile 上（空值一律按拒绝处理）。",
+                flush=True,
+            )
+            return False, ""
+        if reason == PROFILE_PRODUCTION:
             print(
                 PRODUCTION_REFUSAL.format(
                     actual=actual,
@@ -345,34 +426,274 @@ def verify_isolated_profile(main_win: ui.Target, args: argparse.Namespace) -> tu
                 flush=True,
             )
             return False, actual
+        # 只剩 expect 不一致：这条是双保险，说明"连到的不是预期那个实例"
         print(
-            PRODUCTION_WARNING.format(
-                actual=actual,
-                seed=SEED,
-                prefix=ANY_PREFIX,
-                env_name=TEST_DATA_DIR_ENV,
-            ),
+            "❌ 拒绝运行：实例实际的数据目录与 --expect-data-dir 不一致。\n"
+            f"   实例实际：{actual}（规范化并解析别名后：{canonical_dir(actual)}）\n"
+            f"   期望目录：{args.expect_data_dir}（同上：{canonical_dir(args.expect_data_dir)}）\n"
+            "   （多半是连到了另一个实例，或启动 Lumen 时忘了设 "
+            f"{TEST_DATA_DIR_ENV}；请确认连的是预期那个实例再跑。）",
             flush=True,
         )
-    else:
-        print(f"✅ 已确认隔离 profile：{actual}（不是生产目录 {default_dir}）", flush=True)
+        return False, actual
 
-    # ---- 第二关：与 --expect-data-dir 声明的目录是否一致 ----
+    print(f"✅ 已确认隔离 profile：{actual}（解析别名后不是生产目录 {default_dir}）", flush=True)
     if args.expect_data_dir:
-        if normalize_dir(actual) != normalize_dir(args.expect_data_dir):
-            print(
-                "❌ 拒绝运行：实例实际的数据目录与 --expect-data-dir 不一致。\n"
-                f"   实例实际：{actual}\n"
-                f"   期望目录：{args.expect_data_dir}\n"
-                "   （多半是连到了另一个实例，或启动 Lumen 时忘了设 "
-                f"{TEST_DATA_DIR_ENV}；请确认连的是预期那个实例再跑。）",
-                flush=True,
-            )
-            return False, actual
         print(f"✅ 已确认数据目录与 --expect-data-dir 一致：{actual}", flush=True)
 
     print("", flush=True)
     return True, actual
+
+
+# ---------------------------------------------------------------------------
+# 判定函数的自测（隐藏入口 `--self-test-profile-check`）：覆盖 §29 的九种情形
+# ---------------------------------------------------------------------------
+
+def run_profile_check_selftest() -> int:
+    """只跑生产目录判定的自测，返回退出码（全过 0，有失败 1）。
+
+    只用 `os.path` / `tempfile` / `cmd /C mklink`：**不连 CDP、不读应用、
+    不写生产数据**，应用没在跑时也能执行。junction 别名会在系统临时目录里
+    **真的建出来**，用完逐个 `os.rmdir` 删掉（只删链接自身，绝不跟随目标），
+    确认删干净之后才删沙箱。
+    """
+    print("===== 生产目录判定自测（--self-test-profile-check，§29）=====", flush=True)
+    real_default = default_production_data_dir()
+    print(f"   本机默认生产目录：{real_default}（存在={real_default.is_dir()}）", flush=True)
+
+    root = Path(tempfile.mkdtemp(prefix="lumen-profile-selftest-"))
+    print(f"   沙箱（系统临时目录，自测结束即删除）：{root}", flush=True)
+
+    # 沙箱里伪造一套"生产目录"体系：默认目录、相似名目录、普通临时目录
+    prod_root = root / "prod-root"
+    fake_default = prod_root / DEFAULT_DATA_DIR_NAME
+    fake_default.mkdir(parents=True)
+    plain = root / "plain-temp"
+    plain.mkdir()
+    other = root / "other-temp"
+    other.mkdir()
+    similar_backup = prod_root / (DEFAULT_DATA_DIR_NAME + "-backup")
+    similar_backup.mkdir()
+
+    links: list[Path] = []
+    case_failures: list[str] = []
+    cleanup_problems: list[str] = []
+    stats = {"total": 0}
+
+    def case(title: str, got: object, want: object, detail: str = "") -> None:
+        ok = got == want
+        stats["total"] += 1
+        if not ok:
+            case_failures.append(title)
+        print(
+            f"{'✅' if ok else '❌'} {title}\n"
+            f"      实际 {got!r} / 期望 {want!r}" + (f"\n      {detail}" if detail else ""),
+            flush=True,
+        )
+
+    def make_alias(name: str, target: Path) -> Path:
+        """真的建一个目录联接（普通用户权限即可），并打印真实命令与返回码。"""
+        link = root / name
+        rc, out = make_junction(link, target)
+        print(
+            f'   $ cmd /C mklink /J "{link}" "{target}"\n'
+            f"     rc={rc}" + (f"，输出：{out}" if out else ""),
+            flush=True,
+        )
+        ok = rc == 0 and os.path.lexists(link)
+        if not ok:
+            case_failures.append(f"junction 创建失败：{name}")
+            print(f"❌ junction 创建失败（{name}）—— 别名用例不成立", flush=True)
+        else:
+            links.append(link)
+        return link
+
+    try:
+        alias = make_alias("fake-test", fake_default)  # 指向沙箱里的"生产目录"
+        alias_real = make_alias("fake-test-real", real_default)  # 指向本机真实生产目录
+        alias_plain = make_alias("fake-plain", plain)  # 指向普通临时目录（非生产）
+        alias_parent = make_alias("fake-parent", prod_root)  # 指向生产目录的**父目录**
+
+        # ---- ① 真实生产目录 ----
+        case(
+            "① 真实生产目录本身 → 判为生产（拒绝）",
+            is_production_data_dir(fake_default, fake_default),
+            True,
+        )
+        case(
+            "①b 本机真实 %APPDATA% 生产目录 → 判为生产（拒绝）",
+            is_production_data_dir(real_default, real_default),
+            True,
+            detail=f"{real_default}",
+        )
+
+        # ---- ② 大小写变体 ----
+        case(
+            "② 大小写变体（整条路径转大写）→ 判为生产（拒绝）",
+            is_production_data_dir(str(fake_default).upper(), fake_default),
+            True,
+            detail=str(fake_default).upper(),
+        )
+
+        # ---- ③ 尾分隔符变体 ----
+        for suffix, label in (("\\", "反斜杠"), ("/", "正斜杠")):
+            case(
+                f"③ 尾分隔符变体（结尾多一个{label}）→ 判为生产（拒绝）",
+                is_production_data_dir(str(fake_default) + suffix, fake_default),
+                True,
+                detail=repr(str(fake_default) + suffix),
+            )
+
+        # ---- ④ junction 别名（真的建出来了）----
+        case(
+            "④ junction 别名 → 生产目录 → 判为生产（拒绝；旧 abspath 写法会放行）",
+            is_production_data_dir(alias, fake_default),
+            True,
+            detail=f"{alias} → {fake_default}",
+        )
+        case(
+            "④b junction 别名 → 本机真实生产目录 → 判为生产（拒绝）",
+            is_production_data_dir(alias_real, real_default),
+            True,
+            detail=f"{alias_real} → {real_default}",
+        )
+        case(
+            "④c 别名走完整判定（decide_profile）同样拒绝，且传 --expect-data-dir 也改不了结论",
+            decide_profile(str(alias), fake_default, expect_dir=str(alias)),
+            (False, PROFILE_PRODUCTION),
+        )
+        case(
+            "④d junction 出现在路径**前缀**里（假父目录 + 生产目录名）→ 判为生产（拒绝）",
+            is_production_data_dir(alias_parent / DEFAULT_DATA_DIR_NAME, fake_default),
+            True,
+            detail=f"{alias_parent}\\{DEFAULT_DATA_DIR_NAME}",
+        )
+
+        # ---- ⑤ 普通临时目录（真实目录，不是链接）----
+        case(
+            "⑤ 普通临时目录（真实目录，不是链接）→ 放行",
+            decide_profile(str(plain), fake_default),
+            (True, PROFILE_OK),
+        )
+        case(
+            "⑤b 普通临时目录不被判为生产目录",
+            is_production_data_dir(plain, fake_default),
+            False,
+        )
+
+        # ---- ⑥ app_data_paths 读取失败 → 拒绝（保守）----
+        case(
+            "⑥ app_data_paths 读取失败（拿不到证据）→ 拒绝（read-failed）",
+            decide_profile(None, fake_default, read_failed=True),
+            (False, PROFILE_READ_FAILED),
+        )
+
+        # ---- ⑦ dataDir 为空 → 拒绝（保守）----
+        for empty in ("", "   ", '""'):
+            case(
+                f"⑦ dataDir 为空（{empty!r}）→ 拒绝（empty-data-dir）",
+                decide_profile(empty, fake_default),
+                (False, PROFILE_EMPTY_DATA_DIR),
+            )
+
+        # ---- ⑧ 与 --expect-data-dir 不一致 → 拒绝 ----
+        case(
+            "⑧ --expect-data-dir 与实例实际目录不一致 → 拒绝（expect-mismatch）",
+            decide_profile(str(plain), fake_default, expect_dir=str(other)),
+            (False, PROFILE_EXPECT_MISMATCH),
+            detail=f"实际 {plain} / 期望 {other}",
+        )
+        case(
+            "⑧b --expect-data-dir 一致 → 放行",
+            decide_profile(str(plain), fake_default, expect_dir=str(plain)),
+            (True, PROFILE_OK),
+        )
+        case(
+            "⑧c 期望目录写成别名、实例报的是真身 → 视为一致（realpath 也用在期望比较上）",
+            decide_profile(str(plain), fake_default, expect_dir=str(alias_plain)),
+            (True, PROFILE_OK),
+            detail=f"{alias_plain} → {plain}",
+        )
+
+        # ---- ⑨ 相似名（…lumen-backup）→ 放行 ----
+        case(
+            "⑨ 相似名目录（com.pla0185.lumen-backup）→ 放行（不是生产目录）",
+            decide_profile(str(similar_backup), fake_default),
+            (True, PROFILE_OK),
+            detail=f"{similar_backup}",
+        )
+        case(
+            "⑨b 本机真实生产目录的相似名（真路径 + -backup）→ 放行",
+            is_production_data_dir(str(real_default) + "-backup", real_default),
+            False,
+        )
+
+        # ---- ⑩ 附：确认绕过开关真的没了 ----
+        stderr_buf = io.StringIO()
+        exit_code: object = None
+        try:
+            with contextlib.redirect_stderr(stderr_buf):
+                parse_args(["--allow-production"])
+        except SystemExit as e:
+            exit_code = e.code
+        tail = (stderr_buf.getvalue().strip().splitlines() or [""])[-1]
+        case(
+            "⑩ 绕过开关已删除：`--allow-production` 被 argparse 拒绝（SystemExit 2）",
+            exit_code,
+            2,
+            detail=f"argparse 输出：{tail}",
+        )
+        leftovers = [
+            name
+            for name in ("PRODUCTION_WARNING", "PRODUCTION_WARNING_TAIL")
+            if name in globals()
+        ]
+        if hasattr(parse_args([]), "allow_production"):
+            leftovers.append("args.allow_production")
+        case(
+            "⑩b 旧符号确实不存在（PRODUCTION_WARNING / PRODUCTION_WARNING_TAIL / allow_production）",
+            leftovers,
+            [],
+        )
+    finally:
+        # 先删 junction：**只能** os.rmdir（只删链接自身），
+        # 并确认删干净之后才允许递归删沙箱——Windows 上 rmtree 会跟着目录联接
+        # 进目标目录删文件（§12.3 那条断言防的就是这件事）。
+        left_links: list[Path] = []
+        for link in links:
+            try:
+                if os.path.lexists(link):
+                    os.rmdir(link)
+                    print(f"   已删除 junction（os.rmdir，只删链接自身）：{link}", flush=True)
+            except OSError as e:  # noqa: BLE001
+                left_links.append(link)
+                print(f"⚠️ junction 未删除，请手工清理：{link} —— {e}", flush=True)
+        if left_links:
+            cleanup_problems.append(
+                f"树里仍有 {len(left_links)} 个目录联接，已放弃递归删除沙箱：{root}"
+            )
+            print(
+                f"⚠️ 沙箱保留不删（树里还有链接，递归删除可能跟随链接）：{root}",
+                flush=True,
+            )
+        else:
+            shutil.rmtree(root, ignore_errors=True)
+            print(f"   沙箱已删除：{root}（仍然存在={root.exists()}）", flush=True)
+            if root.exists():
+                cleanup_problems.append(f"沙箱未能删净：{root}")
+
+    total = stats["total"]
+    passed = total - len(case_failures)
+    print(f"\n===== 自测 {passed}/{total} 项通过 =====", flush=True)
+    for name in case_failures:
+        print(f"❌ {name}", flush=True)
+    for text in cleanup_problems:
+        print(f"⚠️ 清理未完成：{text}", flush=True)
+    if passed == total and not cleanup_problems:
+        print("结论：判定符合 §29 的九种情形（含真实 junction 别名）。", flush=True)
+        return 0
+    print("结论：自测**未通过**，不要拿这套判定去跑破坏性验收。", flush=True)
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -1284,6 +1605,11 @@ def section_ai_key_status(main_win: ui.Target) -> None:
 
 def main() -> int:
     args = parse_args()
+
+    # 隐藏自测入口：只跑判定函数的用例，**不连 CDP、不碰应用**（§29）
+    if args.self_test_profile_check:
+        return run_profile_check_selftest()
+
     print(f"连接主窗口（调试端口 {PORT}）…", flush=True)
     main_win = ui.connect(PORT, want="main")
     print("已连接。\n", flush=True)
@@ -1291,11 +1617,9 @@ def main() -> int:
     # ---- 第一件事：确认不是生产 profile。不通过就立刻退出，绝不造任何数据 ----
     ok, data_dir = verify_isolated_profile(main_win, args)
     if not ok:
-        if args.allow_production:
-            # 走了 --allow-production 却仍被拒（例如 --expect-data-dir 不一致）
-            print(PRODUCTION_WARNING_TAIL.format(actual=data_dir or "（未知）"), flush=True)
         print(
-            "\n已退出（退出码 1）：未执行任何写操作、未创建任何任务、未改动任何数据。",
+            "\n已退出（退出码 1）：未执行任何写操作、未创建任何任务、未改动任何数据。"
+            "（本脚本没有任何允许在生产目录上跑的开关。）",
             flush=True,
         )
         return 1
@@ -1369,9 +1693,6 @@ def main() -> int:
             print(f"• {text}", flush=True)
 
     print(f"\n本次运行的 profile：{data_dir or '（未知）'}", flush=True)
-    if args.allow_production:
-        # --allow-production 要"结束时再提醒一次"，不是只在开头吼一句
-        print(PRODUCTION_WARNING_TAIL.format(actual=data_dir or "（未知）"), flush=True)
 
     return 0 if passed == len(results) else 1
 
