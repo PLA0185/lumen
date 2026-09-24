@@ -45,6 +45,10 @@
   git grep -l "minisign encrypted secret key"
   ```
 
+  > 最后一条会命中**本文件**和 `docs/remediation-report.md` —— 那两处只是把这句话当成
+  > 自查模式写了下来，命中它们是正常的。要判定是不是真泄露，看命中处**有没有跟着
+  > 一大段 base64 与 `untrusted comment:` 行**；只有说明文字就是安全的。
+
 - 更新签名私钥存放在仓库之外（`%USERPROFILE%\.tauri\lumen-updater.key`），
   密码在同目录的 `lumen-updater-password.txt`；**丢了就再也发不了更新**。
 
