@@ -629,6 +629,125 @@ async fn failed_reminder_recompute_rolls_back_task_update() {
 }
 
 // =============================================================================
+// 报告全量导出（整改任务书 §7.5）
+// =============================================================================
+
+/// 验收：1201 条任务必须**全部**进入报告，不能只给 1000 条。
+///
+/// 旧实现固定 `limit = 1000`（后端 `PAGE_MAX`），多出来的部分静默消失，
+/// 而且界面不提示——对"导出归档"这种用途不可接受。
+#[tokio::test]
+async fn report_export_returns_all_rows_beyond_page_limit() {
+    let (state, dir) = setup("report-all").await;
+    let db = &state.db;
+
+    // 造 1201 条：直接 SQL 批量插入，避免 1201 次 IPC 级调用拖慢测试
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    let mut tx = db.pool().begin().await.unwrap();
+    for i in 0..1201i64 {
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, priority, created_at, updated_at, sort_order,
+                                is_pinned, is_favorite, has_planned_time, has_due_time,
+                                actual_minutes, occurrence_kind, is_exception, period_type)
+             VALUES (?1, ?2, 'todo', 0, ?3, ?3, ?4, 0, 0, 0, 0, 0, 'single', 0, 'none')",
+        )
+        .bind(format!("bulk-{i:05}"))
+        .bind(format!("批量任务 {i:05}"))
+        .bind(&now)
+        .bind(i as f64 + 1.0)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    // 先确认单页确实只有 1000 条（说明"分页"这件事不是多余的）
+    let single = list_tasks_impl(
+        db,
+        TaskQuery {
+            limit: Some(1000),
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(single.len(), 1000, "单页上限应仍是 1000");
+
+    // 全量报告：必须拿到 1201 条
+    let page = crate::commands::report_all_impl(
+        db,
+        TaskQuery {
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("全量报告应成功");
+
+    assert_eq!(page.total, 1201, "必须导出全部 1201 条，而不是 1000 条");
+    assert_eq!(page.rows.len(), 1201);
+    assert!(!page.truncated, "1201 远未触及总量上限，不应标记截断");
+
+    // 抽查首尾都在，且没有重复（分页最容易在这一步出错）
+    let titles: std::collections::HashSet<&str> =
+        page.rows.iter().map(|r| r.task.title.as_str()).collect();
+    assert_eq!(titles.len(), 1201, "分页结果不应出现重复项");
+    assert!(titles.contains("批量任务 00000"));
+    assert!(titles.contains("批量任务 01200"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 分页必须按稳定顺序翻页：sort_order 相同时不能出现重复或漏项
+#[tokio::test]
+async fn report_pagination_is_stable_with_equal_sort_orders() {
+    let (state, dir) = setup("report-stable").await;
+    let db = &state.db;
+
+    let now = crate::db::to_db_time(crate::db::utc_now());
+    let mut tx = db.pool().begin().await.unwrap();
+    // 全部用同一个 sort_order，专门制造"排序不稳定"的条件
+    for i in 0..1200i64 {
+        sqlx::query(
+            "INSERT INTO tasks (id, title, status, priority, created_at, updated_at, sort_order,
+                                is_pinned, is_favorite, has_planned_time, has_due_time,
+                                actual_minutes, occurrence_kind, is_exception, period_type)
+             VALUES (?1, ?2, 'todo', 0, ?3, ?3, 0, 0, 0, 0, 0, 0, 'single', 0, 'none')",
+        )
+        .bind(format!("same-{i:05}"))
+        .bind(format!("同序任务 {i:05}"))
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let page = crate::commands::report_all_impl(
+        db,
+        TaskQuery {
+            statuses: vec!["todo".into()],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let ids: std::collections::HashSet<&str> =
+        page.rows.iter().map(|r| r.task.id.as_str()).collect();
+    assert_eq!(page.total, 1200);
+    assert_eq!(
+        ids.len(),
+        1200,
+        "sort_order 全相同时分页仍不得重复或漏项（实际 {} 条）",
+        ids.len()
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// =============================================================================
 // 复制任务
 // =============================================================================
 

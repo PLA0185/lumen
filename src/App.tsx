@@ -80,7 +80,7 @@ export default function App() {
     restore,
     purge,
     purgeAll,
-    reportRows,
+    reportRowsAll,
     dismissToast,
     pushToast,
     pushReminder,
@@ -342,10 +342,13 @@ export default function App() {
   /**
    * 导出流程（顺序很重要）：
    * 1. 先让用户选保存位置；
-   * 2. 取报告数据并切到打印视图（WebView2 打印的是**当前页面**）；
-   * 3. 等两帧 + 一点余量，确保表格布局与字体都已就绪，
+   * 2. **分页取全量报告数据**（§7：超过 1000 条也不许静默截断）；
+   * 3. 切到打印视图（WebView2 打印的是**当前页面**）；
+   * 4. 等两帧 + 一点余量，确保表格布局与字体都已就绪，
    *    否则可能出现"导出的 PDF 是上一个界面"或半张空白；
-   * 4. 调后端 PrintToPdf，最后无论成败都恢复界面。
+   * 5. 调后端 PrintToPdf，最后无论成败都恢复界面。
+   *
+   * 全程由 `exporting` 锁住按钮，避免用户连点产生多个导出流程（§7.4）。
    */
   const doExportPdf = useCallback(async () => {
     setExporting(true)
@@ -359,13 +362,15 @@ export default function App() {
       })
       if (typeof target !== 'string') return
 
-      const rows = await reportRows()
-      if (rows.length === 0) {
+      // 分页取全量（后端按 500 条一页读到取完）
+      const page = await reportRowsAll()
+      // 任务多时这一步会有可感知的耗时，先给用户一个"正在准备"的反馈
+      if (page.rows.length === 0) {
         pushToast('info', '当前范围内没有任务，未生成 PDF')
         return
       }
       setPrintData({
-        rows,
+        rows: page.rows,
         scopeTitle: meta.title,
         filterNote: search.trim() ? `搜索「${search.trim()}」` : undefined,
       })
@@ -376,14 +381,20 @@ export default function App() {
       await new Promise<void>((r) => window.setTimeout(r, 180))
 
       await ipc.exportPdf(target)
-      pushToast('success', `已导出 ${rows.length} 条任务到 ${target}`)
+      // 显示**真实**导出条数（§7.5）；被安全上限截断时必须如实说明
+      pushToast(
+        page.truncated ? 'info' : 'success',
+        page.truncated
+          ? `已导出 ${page.total} 条到 ${target}；任务数量超过单次导出上限，剩余部分未包含`
+          : `已导出 ${page.total} 条任务到 ${target}`,
+      )
     } catch (e) {
       pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
     } finally {
       setPrintData(null)
       setExporting(false)
     }
-  }, [meta.title, pushToast, reportRows, search])
+  }, [meta.title, pushToast, reportRowsAll, search])
 
   return (
     <>

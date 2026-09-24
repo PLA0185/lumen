@@ -43,6 +43,7 @@ export const CMD = {
   taskDuplicate: 'task_duplicate',
   taskReorder: 'task_reorder',
   taskReport: 'task_report',
+  taskReportAll: 'task_report_all',
   exportPdf: 'export_pdf',
   todayOverview: 'today_overview',
   setRemindersPaused: 'set_reminders_paused',
@@ -226,6 +227,21 @@ export interface TaskReportRow {
 /** 取报告数据：与列表同一套筛选语义，额外带项目/分类/标签名称 */
 export const taskReport = (query: TaskQuery): Promise<TaskReportRow[]> =>
   call<TaskReportRow[]>(CMD.taskReport, { query })
+
+/**
+ * 取**完整**报告数据（分页读取，不受单页上限限制）。
+ *
+ * 整改任务书 §7：报告/归档类导出不能静默截断。后端按 500 条一页连续读取
+ * 直到取完，`truncated` 为真表示碰到了总量安全上限（界面必须如实告知）。
+ */
+export interface ReportPage {
+  rows: TaskReportRow[]
+  total: number
+  truncated: boolean
+}
+
+export const taskReportAll = (query: TaskQuery): Promise<ReportPage> =>
+  call<ReportPage>(CMD.taskReportAll, { query })
 
 /**
  * 把主窗口当前页面导出为 PDF。

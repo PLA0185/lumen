@@ -788,6 +788,11 @@ pub async fn list_tasks_impl(db: &Db, query: TaskQuery) -> AppResult<Vec<Task>> 
         }
     };
     b.push(" ORDER BY ").push(order);
+    // 上面每一种排序都可能出现并列（同一个 sort_order、同一个 created_at、
+    // 同一个标题……）。并列时 SQLite 不保证行的相对顺序稳定，
+    // 于是**分页翻页时会重复或漏项**——全量报告导出正好依赖分页，
+    // 因此这里统一追加一个唯一键作为最终排序依据，得到确定的全序。
+    b.push(", id ASC");
 
     let limit = query.limit.unwrap_or(300).clamp(1, PAGE_MAX);
     b.push(" LIMIT ").push_bind(limit);
@@ -824,11 +829,99 @@ pub async fn task_report(
     state: State<'_, AppState>,
     query: TaskQuery,
 ) -> AppResult<Vec<TaskReportRow>> {
-    let tasks = task_list(state.clone(), query).await?;
+    // 单页查询（上限受 PAGE_MAX 约束，保留给需要分页的小场景）
+    let tasks = list_tasks_impl(&state.db, query).await?;
+    build_report_rows(&state.db, tasks).await
+}
+
+/// 报告数据的分页大小。
+///
+/// 500 是个折中：一次 SQLite 查询 + 一次标签 IN 查询都在毫秒级，
+/// 同时把单次 `IN (...)` 的参数个数控制在安全范围（SQLite 默认变量上限 999）。
+const REPORT_PAGE_SIZE: i64 = 500;
+
+/// 报告数据的总量安全上限。
+///
+/// 报告是"把当前筛选结果全部导出"，所以不能像列表那样截断；
+/// 但仍要有个上限，避免有人对着几十万条任务点导出把内存打满。
+/// 到这个量级时会在结果里如实说明"已截断到 N 条"，而不是静默少给。
+pub const REPORT_MAX_ROWS: i64 = 100_000;
+
+/// 取**完整**报告数据（整改任务书 §7）。
+///
+/// 原实现固定 `limit = 1000`，超过 1000 条的任务会被**静默丢弃**——
+/// 对"导出归档"这种用途不可接受。
+///
+/// 现在的做法是**分页读取直到取完**：
+/// - 每页 500 条，`limit/offset` 递进，直到某页返回不足 500 条；
+/// - 每页各自解析归属名称，避免把所有 id 拼成一个超长 `IN (...)`；
+/// - 返回值里带上 `truncated`，让界面能如实告诉用户"还有多少没导出"。
+#[tauri::command]
+pub async fn task_report_all(
+    state: State<'_, AppState>,
+    query: TaskQuery,
+) -> AppResult<ReportPage> {
+    report_all_impl(&state.db, query).await
+}
+
+/// 全量报告的实现（与 Tauri 解耦，便于集成测试直接调用）。
+pub async fn report_all_impl(db: &Db, query: TaskQuery) -> AppResult<ReportPage> {
+    let mut rows: Vec<TaskReportRow> = Vec::new();
+    let mut offset: i64 = 0;
+    let mut truncated = false;
+
+    loop {
+        let page_query = TaskQuery {
+            limit: Some(REPORT_PAGE_SIZE),
+            offset: Some(offset),
+            // 分页必须按稳定顺序：sort_order 可能重复，再带上 created_at 兜底，
+            // 否则翻页时可能出现重复或漏项
+            sort_by: query.sort_by.clone().or_else(|| Some("manual".into())),
+            sort_desc: Some(query.sort_desc.unwrap_or(false)),
+            ..query.clone()
+        };
+        let batch = list_tasks_impl(db, page_query).await?;
+        let n = batch.len() as i64;
+        rows.extend(build_report_rows(db, batch).await?);
+
+        if n < REPORT_PAGE_SIZE {
+            break;
+        }
+        offset += n;
+
+        if rows.len() as i64 >= REPORT_MAX_ROWS {
+            truncated = true;
+            break;
+        }
+    }
+
+    let total = rows.len() as i64;
+    Ok(ReportPage {
+        rows,
+        total,
+        truncated,
+    })
+}
+
+/// 完整报告的分页结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportPage {
+    pub rows: Vec<TaskReportRow>,
+    /// 实际取到的条数（界面用它显示"真实导出条数"，§7.5）
+    pub total: i64,
+    /// 是否因为触及 `REPORT_MAX_ROWS` 而提前结束
+    pub truncated: bool,
+}
+
+/// 给一批任务补上项目/分类/标签名称。
+///
+/// 抽成独立函数是为了让"单页"与"分页全量"两条路径共用同一段逻辑，
+/// 不会出现一处改了另一处忘了改。
+async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskReportRow>> {
     if tasks.is_empty() {
         return Ok(Vec::new());
     }
-    let db = &state.db;
 
     // 项目与分类都是小表，整表取出后在内存里映射，避免拼接超长 IN 列表
     let projects: Vec<(String, String)> =
@@ -842,7 +935,7 @@ pub async fn task_report(
     let project_map: std::collections::HashMap<String, String> = projects.into_iter().collect();
     let category_map: std::collections::HashMap<String, String> = categories.into_iter().collect();
 
-    // 标签只查这批任务
+    // 标签只查这批任务（单页最多 500 个 id，远低于 SQLite 变量上限）
     let mut b = QueryBuilder::<Sqlite>::new(
         "SELECT tt.task_id AS task_id, t.name AS name
          FROM task_tags tt JOIN tags t ON t.id = tt.tag_id

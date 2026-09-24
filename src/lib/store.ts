@@ -82,6 +82,8 @@ interface AppStore {
   purgeAll: () => Promise<void>
   /** 取打印 / PDF 报告数据（与当前列表同一套筛选条件） */
   reportRows: () => Promise<ipc.TaskReportRow[]>
+  /** 取**完整**报告数据（分页读全，§7 要求不得静默截断） */
+  reportRowsAll: () => Promise<ipc.ReportPage>
 
   pushToast: (kind: Toast['kind'], text: string) => void
   /** 提醒条：不自动消失，并带「打开任务」跳转 */
@@ -354,6 +356,19 @@ export const useApp = create<AppStore>((set, get) => ({
     const q = buildQuery(get())
     // 报告是给用户留档的，不该像列表那样只取前 500 条
     return ipc.taskReport({ ...q, limit: 1000 })
+  },
+
+  /**
+   * 完整报告数据（§7）。
+   *
+   * 不再自己设 limit：后端按 500 条一页读到取完，超过 1000 条也不会被截断。
+   * 返回的 `truncated` 交给界面提示，而不是悄悄少给用户数据。
+   */
+  reportRowsAll: async () => {
+    const q = buildQuery(get())
+    // 分页由后端负责，这里把单页 limit/offset 清掉，避免影响后端的分页循环
+    const { limit: _limit, offset: _offset, ...rest } = q
+    return ipc.taskReportAll(rest)
   },
 
   pushToast: (kind, text) => {

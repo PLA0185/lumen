@@ -328,6 +328,7 @@ pub fn run() {
             // ---- PDF 导出（§6 中文可读）----
             pdf::export_pdf,
             commands::task_report,
+            commands::task_report_all,
             // ---- 附件受控存储（§4.1）----
             attachments::attachment_add,
             attachments::attachment_list,
