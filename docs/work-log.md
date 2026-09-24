@@ -311,6 +311,134 @@ $ git diff --stat 8aa8d8b..HEAD
 
 ---
 
+---
+
+## 第 10 轮 · 2026-09-24 · 第三轮**收口**整改（基线 `dd950d5`）
+
+> 本轮起点是 `dd950d5`。`8aa8d8b → dd950d5` 那 7 个提交属于**上一轮**，
+> 不能拿来充当本轮的完成证据——本轮提交全部落在 `dd950d5..HEAD` 区间内。
+
+复审又找出一批"看着闭环、其实还能被绕过"的点，其中两个是数据破坏级。
+
+### 做了
+
+**P0-① 永久删除改为"精确 ID 快照"两阶段（§2/§3/§4/§5/§6）**
+
+上一轮用"确认时数量 == 执行时数量"防并发多删。**数量相等不代表集合相同**：
+
+```text
+确认时 = {A}，count = 1
+执行前：A 被恢复、B 被移入且同样命中筛选
+执行时 = {B}，count 仍然是 1   ← 校验通过，用户确认删 A、后端删掉 B
+```
+
+现在拆两阶段：`task_prepare_purge_deleted(query)` 返回 `{ taskIds, count }`（当前命中的**精确**集合）；
+`task_commit_purge_deleted(query, taskIds)` **只删这批 ID**，并在同一事务内先核对集合是否仍是这一批。
+
+- commit 顺序严格为：`BEGIN` → 重新取命中集合与 `taskIds` **逐个比对** →
+  基于**同一批 ID**、在**同一事务**里查 copied 附件路径 → 只 DELETE 这批 ID → `COMMIT` → 最后才删文件。
+- 集合一旦不同（ID 被恢复、消失、或被别的任务替换）→ 整体回滚，**零任务零附件被删**。
+- 不采用服务端 `operationId → IDs` 会话状态：ID 交给调用方持有、commit 时原样传回，
+  进程重启与窗口刷新都不会让快照失效。
+- 旧命令（只校验数量）保留但标注**已弃用**，前端不再调用。
+
+**P0-② legacy 绝对路径的身份比较不再看大小写（§14/§15/§16）**
+
+库里可能存着第二轮之前写入的**绝对** `stored_path`，盘符/目录大小写与当前 `data_dir` 不同、
+或用 `/` 分隔。原比较走 `strip_prefix`（逐组件精确比较），匹配不上就回退成绝对路径字符串，
+于是**仍被引用的 live 副本被判定为孤儿并删除**。新增 `normalize_managed_identity()`
+（词法归一化 + Windows 下统一小写与分隔符），只用于"是不是同一个附件"，
+**绝不用来决定 symlink 的删除目标**。
+
+**P1-③ 分页：`fetchProgress` 之后必须再查一次代数（§9/§10）**
+
+原写法 `set({ tasks, progressMap: await fetchProgress(tasks) })` 把代数检查放在 `await` **之前**，
+留下窗口：检查通过 → 挂起 → 用户切条件且新结果落地 → 旧结果返回并覆盖。
+现在 `await` 之后再查一次，`reload` 与 `loadMore` 都改了。
+
+**P1-④ 看板响应跨窗口变化（§12/§13）**
+
+看板原先没接 `bus.onTasksChanged`，别的窗口删任务后继续用旧 offset 翻页会漏项/重复。
+现在把分页与代际作废抽成不依赖 DOM 的状态机 `src/lib/board-paging.ts`
+（`createBoardPaging` + 纯函数 `nextBoardState`），组件用 `useSyncExternalStore` 读快照；
+外部变化时代数 +1、清空已加载页、重载第一页；在飞的 `loadMore` 结果被丢弃且不会卡在「正在加载…」。
+
+**P1-⑤ 报告：两道上限逐行检查 + 真正可取消（§17~§21）**
+
+新增 `REPORT_MAX_ROWS`（10 万行），与字符上限一起构成两道闸；检查点从"一页渲染完"
+提前到**每一行 append 之前**（按页检查时"500 条 × 每条 20 万字符"会先被整个塞进 DOM，上限形同虚设）；
+「取消导出」是真取消（每次取下一页、写下一行之前都会问，取消后不写出文件）；
+**导出期间数据变化即中止**（否则会交付一份前半旧、后半新的自相矛盾报告）。
+
+**P2-⑥ updater `-Status` 变成完整健康码（§22/§23）**
+
+原来只有"私钥与密文**同时**缺失"才非零、**解密失败只打印不改码**。现在四项独立计分
+（私钥存在 / 密文存在 / 能解密 / 无 legacy 明文），任一不达标即 `exit 1`。
+
+**P2-⑦ 破坏性验收必须跑隔离 profile（§24/§25/§26）**
+
+上一轮那次误删 18 条数据的教训。应用侧：设置 `LUMEN_TEST_DATA_DIR` 即改用该目录
+（只认环境变量，不接受命令行参数）。脚本侧：**造任何数据之前**先读 `app_data_paths`，
+规范化比较后若是生产目录就打印拒绝说明并 `exit 1`，**一个写操作都不发**；
+新增 `--expect-data-dir` 与 `--allow-production`（后者必须显式传、首尾各警告一次）。
+confirm 接管、`ZZR3-` 前缀、按 id 清理全部保留，但降级为第二层。
+
+### 没做到
+
+| 项 | 说明 |
+| --- | --- |
+| **隔离 profile 下的实机验收没跑** | 应用侧开关与脚本拒绝逻辑都做完并各自验证过，但**没有真的在隔离 profile 下跑过完整验收**——A/B/C/D 四段断言在新代码下没有实机证据。这是 §24~§26 的核心要求，**如实记为未验证** |
+| **keyset / cursor 分页仍未做** | 与上一轮相同。看板还有个已知边界：`reload` 不作废在飞的 `loadMore`，拖拽后的重载与在飞翻页重叠时可能带进一条过时任务，下次重载即修正 |
+| **文件级 symlink 未实测** | 本机与 CI 都没有 `SeCreateSymbolicLinkPrivilege`，仍只用 junction 覆盖同一段代码路径 |
+| **报表四组压力数据没跑** | 100000 短文本 / 10000×20k 描述 / 10000×20k 备注 / 多标签 |
+| **updater `-Build` / `-Clear` 未跑** | `-Build` 会真的触发 `pnpm tauri build`；本轮只验证 `-Status` 的六种场景 |
+| **"数据变化即取消导出"没有端到端验证** | 逻辑与接线都在，但没在真实导出过程中制造一次并发写入来观察它中止 |
+| **没有发布新版本** | 用户机器上仍是 0.3.0 |
+
+### 新发现问题
+
+1. **"数量一致"很容易被当成"集合一致"**：上一轮就在这里闭环失败。凡是"确认一个集合、
+   之后按它执行"的动作，都必须把**身份**带下去，数量只能当快速失败的预检。
+2. **`await` 之后的守卫会漏**：只在 `await` 前检查代数是"看着对、其实有窗口"的典型写法。
+3. **上限检查的位置决定它是不是摆设**：按页检查与按行检查，在极端数据下完全不同。
+4. **`path.is_file()` 会跟随链接**：本轮又在孤儿清理上踩到一次。
+
+### 怎么验证的
+
+```powershell
+pnpm typecheck        # 通过
+pnpm test             # 125 passed（第 9 轮 113）
+pnpm build / lint     # 通过 / 0 problems
+cargo fmt --check     # 通过
+cargo test --lib      # 333 passed（第 9 轮 331）
+cargo clippy --all-targets --all-features -- -D warnings   # 通过（无豁免）
+```
+
+**新增的自动化回归**
+
+- Rust（+2，`remediation2_e2e.rs`）：
+  `commit_purge_refuses_when_count_is_same_but_identity_set_changed`（回收站 3 条 → prepare →
+  **恢复 1 条再补 1 条、数量仍是 3** → commit 报冲突、零删除、确认过的那条仍在；
+  **这正是上一轮"只校验数量"能通过的场景**）与
+  `commit_purge_deletes_exactly_the_confirmed_ids_and_their_copies`（集合变化被拒时
+  **附件文件原封不动**；重新确认后记录与副本一起清理）。
+- Rust（+2，`attachments.rs`）：`normalize_managed_identity` 的大小写/分隔符/`.`/`..` 变体、
+  `legacy_absolute_stored_path_with_different_case_is_still_referenced`。
+- 前端（+11，`board-paging.test.ts`）：外部删除后重载再翻页**无重复无遗漏**、
+  在飞 `loadMore` 被丢弃且不卡住、`countTasks`/`listTasks` 之间发生外部变化则整份作废、
+  空页停下、过期 `loadMore` 不擦掉新一代 loading、卸载后不回写。
+- 前端（+2，`store.pagination.test.ts`）：两阶段删除原样带上确认时的 ID；冲突时提示并刷新。
+- **突变验证**：看板去掉 `generation += 1` 红 2 项、去掉 `loadMore` 最后一次代数检查红 3 项；
+  附件改回旧写法则 legacy 测试红（live 文件确实被删）——证明这些测试不是摆设。
+
+### 相关文档
+
+- `tools/verify_remediation3.py` —— 实机验收脚本（现在默认只跑隔离 profile）
+- `src/lib/board-paging.ts` —— 看板分页状态机（不依赖 DOM，可直接单测）
+- `docs/remediation-report.md` —— 「第三轮收口」章节
+
+---
+
 ## 第 8 轮 · 2026-09-24 · 第二轮整改（按《Lumen 第二轮整改任务书》）
 
 上一轮把"看起来实现了"提到"数据语义明确、异常不静默出错"，这一轮处理复审后剩下的

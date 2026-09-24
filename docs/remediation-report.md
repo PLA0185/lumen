@@ -968,3 +968,106 @@ JS 不留行数组；进度显示"准备中 X/Y"；**行数之外再加总字符
 ## 11. 提交记录（第三轮）
 
 见 `docs/work-log.md` 第 9 轮的提交清单与 GitHub Actions 记录。
+
+---
+---
+
+# 第三轮收口
+
+> 依据：《Lumen 第三轮收口整改任务书》
+> 复审基线：`dd950d5`（第三轮整改后的 HEAD）
+> 本章同样是**追加**，不修改上面任何历史结论。
+
+## 0. 先承认：第三轮有三处"闭环"其实还能被绕过
+
+| 第三轮的自评 | 收口复审的结论 | 当时为什么会漏 |
+| --- | --- | --- |
+| §1 并发一致性 ✅ 完成 | **不成立**：只校验了"确认时数量 == 执行时数量"。**数量相等不代表集合相同**——A 被恢复、B 被移入且同样命中筛选时 count 不变，于是用户确认删 A、后端删掉 B | 把"数量"当成了"集合"的等价物。要防的是**身份**漂移，数量只是它的一个投影 |
+| §2 附件清理 ✅ 完成 | **不成立**：越界与 symlink 都处理了，但**身份比较**没做大小写/分隔符归一化。legacy 绝对路径与当前 `data_dir` 大小写不同时 `strip_prefix` 匹配失败，**仍被引用的 live 副本被当孤儿删除** | 只想了"路径在不在受控目录内"，没想"两条路径说的是不是同一个文件"。Windows 上后者天然要处理大小写与分隔符 |
+| §4 旧请求不污染 ✅ 完成 | **不完整**：代数检查都在 `await` **之前**，而 `fetchProgress` 本身是一次 `await`——检查通过后挂起、期间用户切条件、旧结果回来照样覆盖 | 检查点的位置错了。"过了检查"不等于"写回时仍然成立" |
+
+教训统一成一句：**凡是"确认一个集合、之后按它执行"的动作，带下去的都必须是身份，而不是它的计数；
+凡是跨越 `await` 的守卫，都必须在最后一个 `await` 之后重新确认一次。**
+
+## 1. P0-① 精确 ID 快照（§2~§6）
+
+两阶段：`task_prepare_purge_deleted(query)` → `{ taskIds, count }`；用户确认后
+`task_commit_purge_deleted(query, taskIds)` **只删这批 ID**。
+
+commit 内的顺序（§5 的核心要求）：
+
+```text
+BEGIN
+  1. 重新取当前命中集合，与确认时的 taskIds 逐个比对 —— 不一致就回滚（零删除）
+  2. 基于同一批 taskIds、在同一事务里查 copied 附件路径
+  3. 只 DELETE 这批 taskIds
+COMMIT
+  4. 提交之后才删文件（失败只记日志，不回滚已提交的删除）
+```
+
+- **不用**服务端 `operationId → IDs` 会话状态：ID 交给调用方持有、commit 时原样传回，
+  重启与窗口刷新都不会让快照失效。
+- ID 分批（每批 500）读写以避开 SQLite 变量上限，但**全程在同一事务内**。
+- 旧命令 `task_purge_all_deleted`（只校验数量）保留并标注**已弃用**，前端不再调用。
+
+## 2. P0-② legacy 路径身份归一化（§14~§16）
+
+新增 `normalize_managed_identity(data_dir, stored_or_abs)`：`resolve_stored_path` →
+词法归一化 → Windows 下统一小写与分隔符。孤儿清理的**引用集合**与**扫描 key** 都走它。
+它只用于"是不是同一个附件"的判断，**绝不参与 symlink 的删除目标决策**
+（那条路径仍然只经过 `safe_remove_managed_copy`）。
+
+## 3. P1 分页守卫的位置修正（§9~§11）
+
+`reload` / `loadMore` 在 `fetchProgress` 之后**再查一次** `queryGeneration`。
+测试覆盖"旧 reload 后返回不覆盖新结果""旧 loadMore 不追加进新条件"。
+
+## 4. P1 看板跨窗口同步（§12~§13）
+
+新增 `src/lib/board-paging.ts`：不依赖 DOM 的分页状态机（`createBoardPaging` +
+纯函数 `nextBoardState`），组件用 `useSyncExternalStore` 读快照，
+`bus.onTasksChanged` 时代数 +1、清空已加载页、重载第一页。11 项 vitest 覆盖
+（含"外部删除后重载再翻页无重复无遗漏""在飞 loadMore 被丢弃且不卡在正在加载"）。
+**已知边界**：`reload` 不作废在飞的 `loadMore`，彻底解决要 keyset 分页。
+
+## 5. P1 报告的两道上限与真取消（§17~§21）
+
+`REPORT_MAX_ROWS`（10 万）+ `REPORT_MAX_CHARS`（2000 万字符）**逐行**检查
+（在 append 之前，而不是渲染完一页之后）；「取消导出」通过 `isCancelled` 在每次取页、
+写行之前生效，取消后不写出文件；导出期间 `bus.onTasksChanged` 触发即中止。
+
+## 6. P2 updater 健康码（§22~§23）
+
+四项独立计分（私钥存在 / 密文存在 / 能解密 / 无 legacy 明文），任一不达标 `exit 1`。
+六组场景实测，并用 HEAD 基线脚本对照证明修前场景 1/2/3/3b 都是 `0`。
+
+## 7. P2 破坏性验收的隔离 profile（§24~§26）
+
+- 应用侧：`LUMEN_TEST_DATA_DIR` 环境变量（只认环境变量，不接受命令行参数），
+  启用时打 warn 说明"本次不使用真实数据目录"。
+- 脚本侧：造数据**之前**先读 `app_data_paths` 并规范化比较，是生产目录就
+  打印拒绝说明、`exit 1`、**一个写操作都不发**；`--expect-data-dir` 用于声明期望目录，
+  `--allow-production` 必须显式传且首尾各警告一次。
+- 原先的 confirm 接管 / 前缀 / 按 id 清理降级为**第二层**防护。
+
+## 8. 测试结果（收口轮，本机实跑）
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm typecheck` | ✅ 0 错误 |
+| `pnpm test` | ✅ **125 passed**（第三轮 113） |
+| `pnpm build` / `pnpm lint` | ✅ / 0 problems |
+| `cargo fmt --check` | ✅ |
+| `cargo test --lib` | ✅ **335 passed; 0 failed**（第三轮 331） |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅ 通过（无豁免） |
+
+## 9. 尚未解决（收口轮）
+
+1. **隔离 profile 下的实机验收没跑**：应用侧开关与脚本拒绝逻辑都做完并各自验证过，
+   但 A/B/C/D 四段断言在新代码下**没有实机证据**（§24~§26 的核心要求，不得算已验证）。
+2. **keyset / cursor 分页仍未做**；看板的 `reload` 与在飞 `loadMore` 重叠是已知边界。
+3. **文件级 symlink 未实测**（无管理员权限，仅 junction）。
+4. **报表四组压力数据形态没跑**。
+5. **updater `-Build` / `-Clear` 未跑**；"数据变化即取消导出"没有端到端验证。
+6. 列表虚拟化、大文件拆分、代码签名、本地模型指引：沿用前两轮结论，未做。
+7. **没有发布新版本**：用户机器上仍是 0.3.0。
