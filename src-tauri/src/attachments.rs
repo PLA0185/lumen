@@ -206,6 +206,24 @@ pub async fn copied_paths_of_task(db: &Db, task_id: &str) -> AppResult<Vec<Strin
     Ok(rows.into_iter().map(|(p,)| p).collect())
 }
 
+/// `copied_paths_of_task` 的**事务内**版本（最终收口任务书 §3）。
+///
+/// 单条永久删除要求"校验仍在回收站 → 取副本路径 → 条件 DELETE"全在同一个事务里，
+/// 这样拿到的文件集合一定与真正被删的记录来自同一个数据库快照。
+pub async fn copied_paths_of_task_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    task_id: &str,
+) -> AppResult<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT stored_path FROM attachments
+         WHERE task_id = ?1 AND storage_mode = 'copied' AND stored_path IS NOT NULL",
+    )
+    .bind(task_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(rows.into_iter().map(|(p,)| p).collect())
+}
+
 /// 删除一批受控副本文件，返回 `(已删除, 失败或跳过)`。
 ///
 /// **刻意不返回错误**：调用方按第二轮 §6.4 只记日志，
@@ -574,30 +592,50 @@ pub async fn attachment_list(
 /// 删除附件记录。
 ///
 /// - 引用模式：**只删记录，绝不动原文件**（任务书明确要求）。
-/// - 复制模式：删记录，并删除我们自己的副本（副本在受控目录内，删它不影响用户原件）。
+/// - 复制模式：先删记录，**删成功之后**才删我们自己的副本。
+///
+/// ## 顺序为什么必须是"先 DB、后文件"（最终收口任务书 §23/§24）
+///
+/// 旧实现是反过来的（先删文件、再删记录）。一旦第二步失败，就留下
+/// **"活记录指向一个已经不存在的文件"** —— 用户看到附件还在、点开却打不开，
+/// 而且没有任何机制能自愈。
+///
+/// 反过来做：记录先没了，最坏情况只是留一个没人引用的副本文件，
+/// 那属于 `cleanup_orphans` 能扫掉的孤儿，是可恢复的。
+/// 两者相比，"活记录 → 文件不存在"是**不可接受**的那一种。
 #[tauri::command]
 pub async fn attachment_remove(state: State<'_, AppState>, id: String) -> AppResult<bool> {
-    let a = get_attachment(&state, &id).await?;
+    attachment_remove_impl(&state.db, &id).await
+}
 
+/// `attachment_remove` 的实现（与 Tauri 解耦，便于集成测试直接调用）。
+///
+/// 顺序见上面的说明：**先删数据库记录，成功之后才删副本文件**。
+pub async fn attachment_remove_impl(db: &Db, id: &str) -> AppResult<bool> {
+    let a = get_attachment_row(db, id).await?;
+    let controlled_dir = db.data_dir().join("attachments");
+
+    // 1) 先删数据库记录（失败就直接返回错误，一个文件都不碰）
+    sqlx::query("DELETE FROM attachments WHERE id = ?1")
+        .bind(id)
+        .execute(db.pool())
+        .await?;
+
+    // 2) 记录删掉之后才动文件：失败只记日志，留孤儿给 cleanup_orphans 收拾
     let mut removed_copy = false;
     if a.storage_mode == "copied" {
         if let Some(p) = a.stored_path.as_deref() {
             // 与任务删除、孤儿清理共用同一套安全语义（第三轮任务书 §2.5）：
             // 只删数据库记录指向的那个目录项，绝不跟随符号链接删目标。
-            let abs_candidate = resolve_stored_path(state.db.data_dir(), p);
-            match safe_remove_managed_copy(&attachments_dir(&state), &abs_candidate) {
+            let abs_candidate = resolve_stored_path(db.data_dir(), p);
+            match safe_remove_managed_copy(&controlled_dir, &abs_candidate) {
                 Ok(()) => removed_copy = true,
                 Err(e) => {
-                    log::warn!("附件副本未删除，仅删记录：{e}");
+                    log::warn!("附件记录已删除，但副本文件未能删除（留作孤儿待清理）：{e}");
                 }
             }
         }
     }
-
-    sqlx::query("DELETE FROM attachments WHERE id = ?1")
-        .bind(&id)
-        .execute(state.db.pool())
-        .await?;
 
     log::info!(
         "已删除附件记录「{}」（模式 {}，副本文件{}）",
@@ -610,6 +648,15 @@ pub async fn attachment_remove(state: State<'_, AppState>, id: String) -> AppRes
         }
     );
     Ok(removed_copy)
+}
+
+/// 按 id 读一条附件记录（不带 `State` 的版本，供 impl 与测试使用）。
+pub async fn get_attachment_row(db: &Db, id: &str) -> AppResult<Attachment> {
+    sqlx::query_as::<_, Attachment>("SELECT * FROM attachments WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(db.pool())
+        .await?
+        .ok_or_else(|| AppError::not_found("附件", id))
 }
 
 /// 在文件管理器中定位附件（用户想要"找到这个文件"）
