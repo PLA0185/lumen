@@ -367,9 +367,17 @@ export default function App() {
     cancelExportRef.current = false
     let handle: Awaited<ReturnType<typeof buildPrintDocument>> | null = null
     // 导出期间数据一变就取消：否则会交付一份"前半旧、后半新"的报告（收口任务书 §21）
-    const offTasksChanged = bus.onTasksChanged(() => {
-      cancelExportRef.current = true
-    })
+    //
+    // **必须 includeSelf**（最终收口任务书 §17/§18）：默认的 onTasksChanged 会忽略
+    // 当前窗口自己发出的事件，而"用户在主窗口一边导出、一边顺手新建/删掉一个任务"
+    // 恰恰是最常见的情形——按默认行为那个事件会被丢掉，导出继续用 OFFSET 读到
+    // 一份自相矛盾的数据。
+    const offTasksChanged = bus.onTasksChanged(
+      () => {
+        cancelExportRef.current = true
+      },
+      { includeSelf: true },
+    )
     try {
       const { save } = await import('@tauri-apps/plugin-dialog')
       const stamp = new Date().toISOString().slice(0, 10)
@@ -406,6 +414,15 @@ export default function App() {
         requestAnimationFrame(() => requestAnimationFrame(() => r())),
       )
       await new Promise<void>((r) => window.setTimeout(r, 180))
+
+      // **写文件前的最后一次检查**（最终收口任务书 §19）：
+      // 上面那两次 await（一帧 + 180ms）给了用户点「取消导出」的机会，
+      // 而之前那次检查是在它们之前做的——不在这里再查一次，
+      // 用户点了取消仍然会落下一个 PDF 文件。
+      if (cancelExportRef.current) {
+        pushToast('info', `导出已取消（已生成 ${handle.rows} 条，未写出文件）`)
+        return
+      }
 
       await ipc.exportPdf(target)
       // 显示**真实**导出条数（§7.5）；被上限截断或取消时必须如实说明

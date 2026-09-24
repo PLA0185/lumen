@@ -16,9 +16,25 @@
  * - **分页取数**（每页 500 条），一行渲染完就丢掉，JS 里不留行数组；
  * - 直接构造 DOM 挂到 `document.body`（在 `.app` 之外，打印时主界面隐藏）；
  * - 过程中回报 `已处理 / 总数`，界面据此显示进度（任务书 §7.5 不允许点了没反应）；
- * - 行数之外再加一道**总字符数上限**（任务书 §7.4：不能只看行数），
- *   超了就停下并如实告知"已截断"；
+ * - **每一行写入之前**都判定一次：先看用户有没有点取消，再看两道规模上限
+ *   （`REPORT_MAX_ROWS` 行数、`REPORT_MAX_CHARS` 字符数，任务书 §7.4：不能只看行数）；
  * - 返回 `dispose()`，打印结束后由调用方释放这份 DOM。
+ *
+ * ## 两道闸的边界语义（第四轮收口任务书 §20/§22：代码、注释、测试同一套说法）
+ *
+ * - **行数**：上限的含义是"最多写多少行"——第 `REPORT_MAX_ROWS` 行**写入**，
+ *   第 `REPORT_MAX_ROWS + 1` 行不写，并标记截断；
+ * - **字符**：写入一行**之前**先算"加上这一行会不会超过 `REPORT_MAX_CHARS`"——
+ *   累计**恰好等于**上限的内容可以完整写入，超过才停下并**把这一行排除**（`>` 而非 `>=`）；
+ * - **取消**：优先于两道上限，而且**逐行检查**——用户点了取消最多再写一行就停，
+ *   不必等整页 500 行跑完（§20）。
+ *
+ * 判定本身是纯计算，集中在 `shouldStop()` / `rowGate()` / `consumeRows()` 里，
+ * 构建器与 `report-export.test.ts` 调用的是**同一份实现**，不存在两套说法。
+ *
+ * 因触顶或用完取消而提前结束时，`truncated` 为 true、`truncatedNote` 带中文原因，
+ * 并且**这条原因会如实写进报告的页脚**（同时作为界面提示返回）——
+ * 报告不会假装自己包含了全部内容。
  *
  * 表结构与 CSS 类名与上一版的 `PrintReport` 一致，打印出来还是同一份文档。
  */
@@ -37,6 +53,9 @@ const PAGE_SIZE = 500
  * 任务书 §7.4 要求同时限制行数与总规模：只看行数时，
  * "10000 条 × 20k 描述"这种组合仍然能把内存打满。
  * 2000 万字符大约是几十 MB 文本，已远超正常使用场景。
+ *
+ * 语义（第四轮收口 §22）：写入一行**之前**判断"加上这一行会不会超过上限"，
+ * 累计**恰好等于**上限的内容可以完整写入，超过才停（`>` 而不是 `>=`）。
  */
 export const REPORT_MAX_CHARS = 20_000_000
 
@@ -45,6 +64,9 @@ export const REPORT_MAX_CHARS = 20_000_000
  *
  * 与字符上限一起构成两道闸：只看字符数时，"10 万条极短标题"仍能造出十万个
  * DOM 节点把界面拖死；只看行数时，"1 万条 2 万字段落"又能把内存打满。
+ *
+ * 语义（第四轮收口 §22）：这是"最多写多少行"——第 `REPORT_MAX_ROWS` 行**写入**，
+ * 第 `REPORT_MAX_ROWS + 1` 行不写并标记截断。
  */
 export const REPORT_MAX_ROWS = 100_000
 
@@ -64,7 +86,12 @@ export interface ReportExportOptions {
   filterNote?: string
   /** 进度回调：只带计数，不带行数据 */
   onProgress?: (p: ReportProgress) => void
-  /** 取消标志的读取函数；返回 true 时停止继续取数 */
+  /**
+   * 取消标志的读取函数；返回 true 时停止继续导出（第四轮收口 §20）。
+   *
+   * 构建器在**取下一页之前**与**每一行写入之前**各调用一次，
+   * 所以用户点了取消之后最多再写一行就停，不会等整页 500 行处理完。
+   */
   isCancelled?: () => boolean
 }
 
@@ -73,9 +100,9 @@ export interface ReportExportHandle {
   rows: number
   /** 这次导出预期的总行数（来自 count） */
   total: number
-  /** 是否因为触及上限/被取消而提前结束 */
+  /** 是否因为触及上限/被取消而提前结束（原因见 `truncatedNote`，也写在报告页脚里） */
   truncated: boolean
-  /** 提前结束的原因（给用户看的中文说明） */
+  /** 提前结束的原因（给用户看的中文说明，与报告页脚上的说法一致） */
   truncatedNote?: string
   /** 挂载在 body 上的报告根节点 */
   mount: HTMLElement
@@ -146,9 +173,143 @@ export function reportRowChars(r: TaskReportRow): number {
   )
 }
 
-/** 累计字符数是否已经触顶（触顶就停止继续导出并如实标记截断） */
-export function exceedsCharLimit(chars: number, max: number = REPORT_MAX_CHARS): boolean {
-  return chars >= max
+/** 两道上限的判定输入：已写入多少 + 这一行要占多少 */
+export interface RowLimitState {
+  /** 已经写入 DOM 的行数 */
+  rows: number
+  /** 已经写入的字符数 */
+  chars: number
+  /** 即将写入的这一行占多少字符（`reportRowChars`） */
+  rowCost: number
+}
+
+export interface StopDecision {
+  /** true = 这一行**不写**，导出到此为止 */
+  stop: boolean
+  /** 停止的原因；`stop` 为 false 时不存在 */
+  reason?: 'rows' | 'chars'
+}
+
+/**
+ * 两道上限的判定：**写入这一行之前**问一句"还能不能写"。
+ *
+ * 边界语义（第四轮收口 §22，与模块头注释、单测保持同一套说法）：
+ * - 行数按"最多写多少行"：`rows + 1 > REPORT_MAX_ROWS` 才停，
+ *   所以第 `REPORT_MAX_ROWS` 行写得进去，第 `REPORT_MAX_ROWS + 1` 行不写；
+ * - 字符按"加上这一行会不会超过"：`chars + rowCost > REPORT_MAX_CHARS` 才停，
+ *   所以累计**恰好等于**上限的内容被完整写入，而不是一到上限就停。
+ *
+ * 这是判定上限的**唯一实现**：`buildPrintDocument` 与 `report-export.test.ts`
+ * 调用的是同一份代码。
+ *
+ * 旧版的 `exceedsCharLimit(chars, max) => chars >= max` 表达的是"已经到顶"，
+ * 与本轮统一的"写之前预判"不是同一件事，而且会把恰好等于上限的内容挡在门外，
+ * 因此被本函数取代（不留两套说法）。
+ */
+export function shouldStop({ rows, chars, rowCost }: RowLimitState): StopDecision {
+  if (rows + 1 > REPORT_MAX_ROWS) return { stop: true, reason: 'rows' }
+  if (chars + rowCost > REPORT_MAX_CHARS) return { stop: true, reason: 'chars' }
+  return { stop: false }
+}
+
+/** 停下来的类别：用户取消优先于两道上限 */
+export type StopReason = 'cancelled' | 'rows' | 'chars'
+
+export interface RowGateInput extends RowLimitState {
+  /** 用户是否已经点过取消（每一行写入之前实时读取） */
+  cancelled: boolean
+}
+
+export interface RowGateDecision {
+  stop: boolean
+  reason?: StopReason
+  /**
+   * 停止时给用户看的中文说明。
+   *
+   * `ReportExportHandle.truncatedNote` 与报告页脚用的是**同一份文案**，
+   * 所以界面上看到的和报告里写的不会两样。
+   */
+  note?: string
+}
+
+/** 取消时给用户看的说明 */
+const CANCEL_NOTE = '导出已取消'
+/** 触顶行数上限时的说明 */
+const ROWS_LIMIT_NOTE = `任务数量超过单次导出上限（${REPORT_MAX_ROWS} 条），剩余部分未包含`
+/** 触顶字符上限时的说明 */
+const CHARS_LIMIT_NOTE = `内容总长度超过单次导出上限（约 ${Math.round(
+  REPORT_MAX_CHARS / 1_000_000,
+)} 百万字符），剩余任务未包含`
+
+/**
+ * 逐行的完整闸门：**取消优先于两道上限**。
+ *
+ * 构建器在"取下一页之前"与"写每一行之前"都调用它：前者让取消立刻生效
+ * （不必再发一次 IPC），后者让取消与两道上限都是**逐行**生效的（§20）。
+ */
+export function rowGate({ cancelled, rows, chars, rowCost }: RowGateInput): RowGateDecision {
+  if (cancelled) return { stop: true, reason: 'cancelled', note: CANCEL_NOTE }
+  const limit = shouldStop({ rows, chars, rowCost })
+  if (!limit.stop) return { stop: false }
+  return {
+    stop: true,
+    reason: limit.reason,
+    note: limit.reason === 'rows' ? ROWS_LIMIT_NOTE : CHARS_LIMIT_NOTE,
+  }
+}
+
+export interface ConsumeRowsInput<T> {
+  /** 这一批待写入的行（构建器传当前页） */
+  items: readonly T[]
+  /** 每一行的字符成本（构建器传 `reportRowChars`） */
+  costOf: (item: T) => number
+  /** 进入这一批之前**已经写入**的行数 */
+  rows: number
+  /** 进入这一批之前**已经写入**的字符数 */
+  chars: number
+  /** 取消标志的读取函数：每一行写入之前都会调用一次（§20） */
+  isCancelled?: () => boolean
+  /** 真正写入一行时调用：构建器在这里 append `<tr>`，单测里只记账、不碰 DOM */
+  onWrite: (item: T, index: number) => void
+}
+
+export interface ConsumeRowsResult {
+  /** 这一批实际写入的行数（<= `items.length`） */
+  written: number
+  /** 停下来时的判定（原因 + 中文说明）；整批都写完时为 undefined */
+  stop?: RowGateDecision
+}
+
+/**
+ * 逐行写入一批数据：**每一行之前**都重新判定一次（取消 → 行数上限 → 字符上限）。
+ *
+ * 这是"什么时候该停"的**唯一实现**，`buildPrintDocument` 与单测共用：
+ * 构建器把 `onWrite` 接到 DOM 上，单测传一个只记账的回调，
+ * 于是"取消发生在第几行、一共写了多少行、截断原因是什么"在没有 DOM 的环境里也能被断言。
+ *
+ * 取消逐行检查（§20），所以用户点了取消之后不必等整页 500 行跑完。
+ */
+export function consumeRows<T>(input: ConsumeRowsInput<T>): ConsumeRowsResult {
+  const { items, costOf, rows, chars, isCancelled, onWrite } = input
+  let written = 0
+  let used = 0
+
+  for (const [index, item] of items.entries()) {
+    const cost = costOf(item)
+    const decision = rowGate({
+      cancelled: isCancelled?.() === true,
+      rows: rows + written,
+      chars: chars + used,
+      rowCost: cost,
+    })
+    if (decision.stop) return { written, stop: decision }
+
+    onWrite(item, index)
+    written += 1
+    used += cost
+  }
+
+  return { written }
 }
 
 /** 一个分组（标题 + 表格 + 行数徽标） */
@@ -313,55 +474,68 @@ export async function buildPrintDocument(
   let offset = 0
   let truncated = false
   let truncatedNote: string | undefined
+  /** 逐行循环因为取消/触顶停下后置为 true：外层据此不再取下一页 */
+  let stopped = false
 
   for (;;) {
-    if (isCancelled?.()) {
+    // 取数之前也走同一道闸：用户已经点了取消就不必再发这一次 IPC。
+    // 这样"取页前的取消"与"某一行之前取消"用的是同一份判定（§20/§21）。
+    const beforePage = rowGate({
+      cancelled: isCancelled?.() === true,
+      rows: stats.total,
+      chars: chars.total,
+      rowCost: 0,
+    })
+    if (beforePage.stop) {
+      // 取数之前就停下：直接跳出循环，不必再经过下面的 stopped 判定
       truncated = true
-      truncatedNote = '导出已取消'
+      truncatedNote = beforePage.note
       break
     }
+
     const page = await ipc.taskReport({ ...query, limit: PAGE_SIZE, offset })
     if (page.length === 0) break
 
-    for (const row of page) {
-      // **逐行**检查两道上限，而不是一页渲染完再看（第三轮收口任务书 §17）。
-      // 按页检查时，"一页 500 条 × 每条 20 万字符"会先被整个塞进 DOM，
-      // 上限就形同虚设。
-      const cost = reportRowChars(row)
-      if (stats.total + 1 > REPORT_MAX_ROWS) {
-        truncated = true
-        truncatedNote = `任务数量超过单次导出上限（${REPORT_MAX_ROWS} 条），剩余部分未包含`
-        break
-      }
-      if (exceedsCharLimit(chars.total + cost)) {
-        truncated = true
-        truncatedNote = `内容总长度超过单次导出上限（约 ${Math.round(
-          REPORT_MAX_CHARS / 1_000_000,
-        )} 百万字符），剩余任务未包含`
-        break
-      }
+    // **逐行**判定与写入（第三轮收口任务书 §17 + 第四轮 §20/§22）：
+    // - 取消逐行检查，用户点取消后不必等整页 500 行跑完；
+    // - 两道上限同样逐行判定——按页检查时"一页 500 条 × 每条 20 万字符"
+    //   会先被整个塞进 DOM，上限就形同虚设。
+    // 判定规则全在 consumeRows()/rowGate()/shouldStop() 里（单测调用同一份实现）。
+    const consumed = consumeRows({
+      items: page,
+      costOf: reportRowChars,
+      rows: stats.total,
+      chars: chars.total,
+      isCancelled,
+      onWrite: (row) => {
+        const t = row.task
+        stats.total += 1
+        if (t.status === 'done') {
+          stats.done += 1
+          appendRow(groups.done, row, stats.total)
+        } else if (isOverdue(t)) {
+          stats.overdue += 1
+          stats.open += 1
+          appendRow(groups.overdue, row, stats.total)
+        } else {
+          stats.open += 1
+          appendRow(groups.open, row, stats.total)
+        }
+      },
+    })
 
-      const t = row.task
-      stats.total += 1
-      if (t.status === 'done') {
-        stats.done += 1
-        appendRow(groups.done, row, stats.total)
-      } else if (isOverdue(t)) {
-        stats.overdue += 1
-        stats.open += 1
-        appendRow(groups.overdue, row, stats.total)
-      } else {
-        stats.open += 1
-        appendRow(groups.open, row, stats.total)
-      }
+    if (consumed.stop) {
+      truncated = true
+      truncatedNote = consumed.stop.note
+      stopped = true
     }
 
-    offset += page.length
+    offset += consumed.written
     onProgress?.({ loaded: stats.total, total: total || stats.total })
 
     // 已经因为上限停下（或用户取消）就不再继续取下一页
-    if (truncated) break
-    if (page.length < PAGE_SIZE) break
+    if (stopped) break
+    if (consumed.written < PAGE_SIZE) break
   }
 
   // ---- 回填统计与页脚 ----
@@ -369,9 +543,12 @@ export async function buildPrintDocument(
   statNodes.open.textContent = String(stats.open)
   statNodes.overdue.textContent = String(stats.overdue)
   statNodes.done.textContent = String(stats.done)
-  footer.textContent =
-    `由 Lumen 生成　·　导出时间为 ${generated}　·　共 ${stats.total} 条任务` +
-    (truncated ? '（部分内容因超出上限未包含）' : '')
+  // 截断原因**如实**写进页脚：被用户取消与"触及规模上限"是两回事，
+  // 不能都笼统写成"因超出上限"。这里用的是与 handle.truncatedNote 相同的文案。
+  const summary = `由 Lumen 生成　·　导出时间为 ${generated}　·　共 ${stats.total} 条任务`
+  footer.textContent = truncated
+    ? `${summary}（${truncatedNote ?? '已提前结束'}，本报告仅含已写入的部分）`
+    : summary
 
   if (stats.total === 0) {
     mount.appendChild(el('p', 'report__empty', '当前范围内没有任务。'))

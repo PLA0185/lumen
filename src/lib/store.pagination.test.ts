@@ -15,6 +15,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SubtaskProgress } from './organize-ipc'
 import type { Task } from './types'
 
 class FakeIpcError extends Error {
@@ -35,6 +36,7 @@ const countTasks = vi.fn()
 const purgeAllDeleted = vi.fn()
 const preparePurgeDeleted = vi.fn()
 const commitPurgeDeleted = vi.fn()
+const subtaskProgressBatch = vi.fn()
 
 vi.mock('./ipc', () => ({
   IpcError: FakeIpcError,
@@ -43,6 +45,16 @@ vi.mock('./ipc', () => ({
   purgeAllDeleted: (...args: unknown[]) => purgeAllDeleted(...args),
   preparePurgeDeleted: (...args: unknown[]) => preparePurgeDeleted(...args),
   commitPurgeDeleted: (...args: unknown[]) => commitPurgeDeleted(...args),
+}))
+
+/**
+ * `reload` / `loadMore` 里 `fetchProgress` 调的是**动态** `import('./organize-ipc')`，
+ * 再由它发 `subtask_progress_batch`。这一层不 mock 出来，"恰好卡在 fetchProgress
+ * 那一刻发生条件变化"的时序就没法复现——而那条路径此前完全没有测试卡住
+ * （收口任务书 §9/§10：只卡住 `listTasks` 是不够的）。
+ */
+vi.mock('./organize-ipc', () => ({
+  subtaskProgressBatch: (...args: unknown[]) => subtaskProgressBatch(...args),
 }))
 
 const { useApp, PAGE_SIZE, SEARCH_DEBOUNCE_MS } = await import('./store')
@@ -54,6 +66,14 @@ function makeTasks(from: number, to: number): Task[] {
     out.push({ id: `t-${i}`, title: `任务 ${i}`, status: 'todo' } as unknown as Task)
   }
   return out
+}
+
+/**
+ * 造一批子任务进度行：taskId 与任务 id 一一对应，
+ * 这样断言 `progressMap` 的键就能直接看出"这份进度到底属于哪一批任务"。
+ */
+function progressRows(ids: string[]): SubtaskProgress[] {
+  return ids.map((taskId) => ({ taskId, total: 2, done: 1, percent: 50 }))
 }
 
 /** 把 store 恢复到干净的初始状态 */
@@ -373,6 +393,90 @@ describe('过期请求不得覆盖新条件的结果', () => {
     const s = useApp.getState()
     expect(s.tasks).toHaveLength(6)
     expect(s.tasks.every((t) => Number(t.id.replace('t-', '')) >= 500)).toBe(true)
+  })
+
+  it('reload 卡在 fetchProgress 时条件已变，旧结果不得落地', async () => {
+    // 旧 reload 的进度查询挂在这里，直到我们手动放行
+    const stuckProgress = deferred<SubtaskProgress[]>()
+
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    // 第 1 次 fetchProgress（旧 reload 的那次）挂起；新查询走兜底实现立即返回
+    subtaskProgressBatch.mockImplementationOnce(() => stuckProgress.promise)
+    subtaskProgressBatch.mockImplementation((ids: string[]) =>
+      Promise.resolve(progressRows(ids)),
+    )
+
+    const stale = useApp.getState().reload()
+    // 等它真的卡在 fetchProgress 上：此时**第一次** generation 检查已经通过，
+    // 后面若没有第二次检查，就再没有任何东西能拦住这次写回（这正是要卡住的窗口）
+    await vi.waitFor(() => expect(subtaskProgressBatch).toHaveBeenCalledTimes(1))
+
+    // 用户改条件 → 在飞请求作废，并且新查询完整跑完、结果已经落地
+    useApp.setState({
+      search: '只有一条',
+      queryGeneration: useApp.getState().queryGeneration + 1,
+    })
+    listTasks.mockResolvedValueOnce(makeTasks(500, 505))
+    countTasks.mockResolvedValueOnce({ total: 6 })
+    await useApp.getState().reload()
+    expect(useApp.getState().tasks).toHaveLength(6)
+
+    // 现在才放行旧的 fetchProgress：它属于上一代查询，整份结果都必须被丢弃
+    stuckProgress.resolve(progressRows(makeTasks(1, PAGE_SIZE).map((t) => t.id)))
+    await stale
+
+    const after = useApp.getState()
+    expect(after.tasks.map((t) => t.id)).toEqual(makeTasks(500, 505).map((t) => t.id))
+    expect(Object.keys(after.progressMap)).toEqual(makeTasks(500, 505).map((t) => t.id))
+    expect(after.progressMap).not.toHaveProperty('t-1') // 旧进度没有覆盖新结果
+    expect(after.totalCount).toBe(6) // 没有回退成旧的 1200
+  })
+
+  it('loadMore 卡在 fetchProgress 时条件已变，旧第二页不得混入', async () => {
+    const stuckProgress = deferred<SubtaskProgress[]>()
+
+    // 第一屏：列表、总数、进度都正常返回
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    subtaskProgressBatch
+      // 第 1 次：第一屏 reload 的进度
+      .mockImplementationOnce((ids: string[]) => Promise.resolve(progressRows(ids)))
+      // 第 2 次：loadMore 的进度 —— 挂住，制造"fresh 已算出但还没写回"的窗口
+      .mockImplementationOnce(() => stuckProgress.promise)
+    // 之后（新查询的 reload）走兜底：立即返回
+    subtaskProgressBatch.mockImplementation((ids: string[]) =>
+      Promise.resolve(progressRows(ids)),
+    )
+    await useApp.getState().reload()
+    expect(useApp.getState().tasks).toHaveLength(PAGE_SIZE)
+
+    // 第二页的列表请求已经返回（fresh 已算出），然后卡在 fetchProgress 上
+    countTasks.mockResolvedValueOnce({ total: 1200 })
+    listTasks.mockResolvedValueOnce(makeTasks(PAGE_SIZE + 1, PAGE_SIZE * 2))
+    const pending = useApp.getState().loadMore()
+    await vi.waitFor(() => expect(subtaskProgressBatch).toHaveBeenCalledTimes(2))
+    expect(useApp.getState().loadingMore).toBe(true) // 确实还停在"加载下一页"里
+
+    // 期间用户切了条件，新的 reload 完整落地
+    useApp.setState({
+      search: '只有一条',
+      queryGeneration: useApp.getState().queryGeneration + 1,
+    })
+    listTasks.mockResolvedValueOnce(makeTasks(500, 505))
+    countTasks.mockResolvedValueOnce({ total: 6 })
+    await useApp.getState().reload()
+    expect(useApp.getState().tasks).toHaveLength(6)
+
+    // 旧的那次 fetchProgress 现在才回来：第二页和它的进度都必须被丢弃
+    stuckProgress.resolve(progressRows(makeTasks(PAGE_SIZE + 1, PAGE_SIZE * 2).map((t) => t.id)))
+    await pending
+
+    const after = useApp.getState()
+    expect(after.tasks).toHaveLength(6) // 旧第二页没有被追加
+    expect(after.tasks.every((t) => Number(t.id.replace('t-', '')) >= 500)).toBe(true)
+    expect(after.progressMap).not.toHaveProperty(`t-${PAGE_SIZE + 1}`) // 旧进度没有混入
+    expect(after.loadingMore).toBe(false) // 不能卡在"正在加载…"
   })
 
   it('别的窗口改了数据时会作废在飞请求并从第一页重取', async () => {
