@@ -21,6 +21,86 @@ BASE=`d6e76feec660d8532e4ddfafe7e99a22daa4fa97`。本节先记录代码与本机
 最终 HEAD、提交范围与 CI run 以提交推送后的交付回执为准。
 2026-09-25 继续完成暂停时未验证的改动，并补跑全套门禁与隔离实机验收。
 
+本轮代码与验收快照 HEAD=25ba1a6d7373def24860b023a970d3ba3bb38ade；已推送到 GitHub main。
+GitHub CI [run 36063728654](https://github.com/PLA0185/lumen/actions/runs/36063728654)：frontend、rust 均为 success。
+此处记录的是追加最终文档提交前的快照；最终 HEAD 与 CI 以交付回执为准。
+
+```text
+BASE=d6e76feec660d8532e4ddfafe7e99a22daa4fa97
+HEAD=25ba1a6d7373def24860b023a970d3ba3bb38ade
+```
+
+```text
+git log --oneline d6e76fe..HEAD
+25ba1a6 test(scale): 覆盖 2000 条任务与依赖服务端搜索
+acdd718 docs: 如实记录 PDF 实机复测未完成
+d9eb7b2 fix(release): 发版门禁任一步失败立即终止
+c439d78 chore(acceptance): 隔离实机验收并收紧发布门禁
+622d2ba fix(recurrence): 统一范围语义、持久模板与事务保存
+175b644 refactor(async): 统一最新请求生效并明确规模边界
+758a207 refactor(data): 集中声明变更域并统一发布数据失效
+```
+
+```text
+git diff --stat d6e76fe..HEAD
+ .github/workflows/ci.yml                          |   3 +
+ .github/workflows/release.yml                     |  28 +-
+ docs/work-log.md                                  |  71 +++
+ package.json                                      |   1 +
+ src-tauri/migrations/0006_recurrence_template.sql |  57 ++
+ src-tauri/src/ai_features.rs                      | 118 +++-
+ src-tauri/src/commands.rs                         | 162 +++++-
+ src-tauri/src/commands_e2e.rs                     |  33 +-
+ src-tauri/src/db.rs                               |  13 +-
+ src-tauri/src/lib.rs                              |   3 +-
+ src-tauri/src/organize.rs                         |   7 +
+ src-tauri/src/recurrence.rs                       |  68 +++
+ src-tauri/src/recurrence_e2e.rs                   | 603 +++++++++++++++++++-
+ src-tauri/src/recurrence_service.rs               | 660 ++++++++++++++++------
+ src/App.tsx                                       |  62 +-
+ src/components/AttachmentList.tsx                 |   2 +
+ src/components/BoardView.tsx                      |  15 +-
+ src/components/CalendarView.tsx                   |  46 +-
+ src/components/DependencyEditor.tsx               |  57 +-
+ src/components/FloatingToday.tsx                  |  59 +-
+ src/components/FocusPanel.tsx                     |  24 +-
+ src/components/OrganizeView.tsx                   |  19 +-
+ src/components/QuickAdd.tsx                       |   4 +-
+ src/components/RecurringTaskDialog.tsx            |   5 +-
+ src/components/ReminderEditor.tsx                 |   2 +
+ src/components/RuleEditor.tsx                     |   1 +
+ src/components/ScopeDialog.tsx                    |  13 +-
+ src/components/SettingsView.tsx                   |  17 +-
+ src/components/StatsView.tsx                      |  34 +-
+ src/components/SubtaskList.tsx                    |   2 +
+ src/components/TaskCard.tsx                       |  14 +-
+ src/components/TaskEditor.tsx                     | 117 +++-
+ src/lib/ai-ipc.ts                                 |   2 +-
+ src/lib/attachment-ipc.ts                         |   2 +-
+ src/lib/backup-ipc.ts                             |   2 +-
+ src/lib/board-paging.ts                           |   5 +-
+ src/lib/data-change.test.ts                       |  74 +++
+ src/lib/data-change.ts                            | 145 +++++
+ src/lib/focus-ipc.ts                              |   2 +-
+ src/lib/ipc.ts                                    |  27 +-
+ src/lib/organize-ipc.ts                           |   2 +-
+ src/lib/recurrence-ipc.ts                         |  18 +-
+ src/lib/reminder-ipc.ts                           |   2 +-
+ src/lib/request-gate.test.ts                      |  16 +
+ src/lib/request-gate.ts                           |  20 +
+ src/lib/stats-ipc.ts                              |   2 +-
+ src/lib/store.ts                                  |  26 -
+ src/lib/window-ipc.ts                             |   2 +-
+ tools/check-version.mjs                           |  18 +
+ tools/requirements-acceptance.txt                 |   1 +
+ tools/run_acceptance.py                           | 104 ++++
+ tools/verify_architecture.py                      | 320 +++++++++++
+ tools/verify_remediation3.py                      |  77 ++-
+ tools/verify_scale.py                             | 144 +++++
+ 54 files changed, 2948 insertions(+), 383 deletions(-)
+```
+
+
 ### 做了
 
 - **Mutation architecture**：十个前端 IPC 模块统一通过 `data-change.ts` 调用；集中声明
