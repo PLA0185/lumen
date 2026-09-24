@@ -49,8 +49,23 @@
   > 自查模式写了下来，命中它们是正常的。要判定是不是真泄露，看命中处**有没有跟着
   > 一大段 base64 与 `untrusted comment:` 行**；只有说明文字就是安全的。
 
-- 更新签名私钥存放在仓库之外（`%USERPROFILE%\.tauri\lumen-updater.key`），
-  密码在同目录的 `lumen-updater-password.txt`；**丢了就再也发不了更新**。
+- 更新签名私钥存放在仓库之外（`%USERPROFILE%\.tauri\lumen-updater.key`）；
+  **密码不再明文保存**（第二轮整改任务书 §9）：它用 Windows DPAPI 加密存放在同目录的
+  `lumen-updater-password.dpapi`，只有本机当前 Windows 账户能解密。
+  统一用脚本操作，不要手抄密码：
+
+  ```powershell
+  pwsh -File tools/updater-secret.ps1 -Status   # 看私钥/密码是否就绪（不打印密码）
+  pwsh -File tools/updater-secret.ps1 -Set      # 交互式录入（不回显），DPAPI 加密落盘
+  pwsh -File tools/updater-secret.ps1 -Build    # 载入签名信息并执行 pnpm tauri build
+  ```
+
+  **私钥丢了就再也发不了更新**；密码密文只能在生成它的那台机器/那个账户上解开，
+  换机器需要重新 `-Set` 录一次。CI 上不用这套：走 GitHub Actions Secrets。
+
+  > 如实说明这道防护的边界：DPAPI 密文面向"文件被拷走 / 被别的账户读到 /
+  > 误提交进仓库"，**挡不住**本机同一账户下的恶意进程——
+  > 那种威胁模型需要硬件密钥，本轮没做。
 
 ## 4. 提交习惯
 
@@ -63,17 +78,22 @@
 ```powershell
 pnpm install --frozen-lockfile
 pnpm typecheck
-pnpm test          # 前端 85 项
+pnpm test          # 前端 92 项
 pnpm build
 pnpm lint
 cd src-tauri
 cargo fmt --check
-cargo test --lib   # 310 项（会随迭代增长）
-cargo clippy --all-targets -- -D warnings
+cargo test --lib   # 337 项（会随迭代增长）
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 CI（`.github/workflows/ci.yml`）会在 push 到 main 时真实执行同一套检查，
 **以 CI 的结果为准**：本地过了但 CI 红了，等于没完成。
+
+> **clippy 没有任何豁免**（第二轮整改任务书 §8）：此前 CI 这里带着
+> `-A clippy::too_many_arguments -A clippy::type_complexity` 两条豁免，
+> 而文档写的是"所有警告全部禁止"——两者不是同一套规则。
+> 现已改为与文档一致的完整门禁（本地命令与 CI **完全相同**，含 `--all-features`）。
 
 ---
 

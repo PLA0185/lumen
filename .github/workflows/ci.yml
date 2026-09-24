@@ -83,9 +83,12 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
-      - name: Clippy（把警告当错误）
+      - name: Clippy（把警告当错误，**不加任何豁免**）
         working-directory: src-tauri
-        # 只对本次整改涉及的模块开启 -D warnings：仓库里还有历史代码
-        # 未清理的 clippy 提示，一次性全开会把 CI 变成永久红灯，
-        # 反而失去"红灯=这次改坏了"的信号价值。
-        run: cargo clippy --all-targets -- -D warnings -A clippy::too_many_arguments -A clippy::type_complexity
+        # 整改任务书 §8：此前 CI 这里带了 `-A clippy::too_many_arguments`
+        # 与 `-A clippy::type_complexity` 两条豁免，而文档里写的是
+        # "所有 clippy warning 全部禁止"——两者不是同一套规则，属于**文档失真**。
+        # 实测把豁免去掉、并加上 --all-features 后仓库是全绿的，
+        # 所以这里采用任务书推荐的方案 A：CI 真正执行完整门禁，
+        # 本地与 CI 跑同一条命令。
+        run: cargo clippy --all-targets --all-features -- -D warnings
