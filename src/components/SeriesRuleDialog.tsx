@@ -3,6 +3,14 @@ import * as rec from '../lib/recurrence-ipc'
 import { IpcError } from '../lib/ipc'
 import { RuleEditor, type RuleEditorValue } from './RuleEditor'
 
+const SYSTEM_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+const COMMON_TIMEZONES = [
+  { value: 'Asia/Shanghai', label: '中国标准时间' },
+  { value: 'America/New_York', label: '美国东部时间' },
+  { value: 'Europe/London', label: '英国时间' },
+  { value: 'UTC', label: '协调世界时（UTC）' },
+]
+
 interface Props {
   taskId: string
   seriesId: string
@@ -42,6 +50,7 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
   const [scope, setScope] = useState<'this_and_future' | 'whole_series'>('this_and_future')
   const [rrule, setRrule] = useState('')
   const [tzid, setTzid] = useState('')
+  const [customTimezone, setCustomTimezone] = useState(false)
   const [confirmHistory, setConfirmHistory] = useState(false)
   const [completedBefore, setCompletedBefore] = useState(0)
   const [busy, setBusy] = useState(false)
@@ -55,6 +64,8 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
         const effective = effectiveRuleAt(d, occurrenceKey)
         setRrule(effective.rrule)
         setTzid(effective.tzid)
+        setCustomTimezone(effective.tzid !== SYSTEM_TZ &&
+          !COMMON_TIMEZONES.some((zone) => zone.value === effective.tzid))
         setCompletedBefore(info.completedBefore ?? 0)
         setDetail(d)
       })
@@ -88,6 +99,8 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
         ? new Date().toISOString() : occurrenceKey)
       setRrule(effective.rrule)
       setTzid(effective.tzid)
+      setCustomTimezone(effective.tzid !== SYSTEM_TZ &&
+        !COMMON_TIMEZONES.some((zone) => zone.value === effective.tzid))
     }
   }
 
@@ -137,16 +150,23 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
           </fieldset>
           <div className="formrow">
             <label className="formlabel" htmlFor="series-timezone">时区</label>
-            <input id="series-timezone" className="input" list="series-timezones"
-              value={tzid} onChange={(e) => setTzid(e.target.value)}
-              aria-describedby="series-timezone-hint" />
-            <datalist id="series-timezones">
-              <option value="Asia/Shanghai" />
-              <option value="America/New_York" />
-              <option value="Europe/London" />
-              <option value="UTC" />
-            </datalist>
-            <p className="setgroup__hint" id="series-timezone-hint">改时区后，之后的任务会按新时区的相同本地时刻安排；之前的任务保留。</p>
+            <select id="series-timezone" className="input"
+              value={customTimezone ? '__custom__' : tzid}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') setCustomTimezone(true)
+                else { setCustomTimezone(false); setTzid(e.target.value) }
+              }} aria-describedby="series-timezone-hint">
+              <option value={SYSTEM_TZ}>跟随系统（{SYSTEM_TZ}）</option>
+              {COMMON_TIMEZONES.filter((zone) => zone.value !== SYSTEM_TZ).map((zone) =>
+                <option key={zone.value} value={zone.value}>{zone.label}</option>)}
+              <option value="__custom__">其它时区…</option>
+            </select>
+            {customTimezone && <input className="input input--compact" value={tzid}
+              aria-label="IANA 时区名称" placeholder="例如 Asia/Tokyo"
+              onChange={(e) => setTzid(e.target.value)} />}
+            <p className="setgroup__hint" id="series-timezone-hint">
+              默认跟随电脑时区。更换后，之后的任务保持相同的当地时刻；之前的任务不变。
+            </p>
           </div>
           <RuleEditor key={`${seriesId}-${scope}-${tzid}`} value={ruleValue} fixedStart
             tzid={tzid} onChange={(next) => setRrule(next.rrule)} />

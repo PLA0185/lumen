@@ -1281,10 +1281,10 @@ async fn history_guard(
     .try_get("n")?;
 
     if n > 0 && !confirm {
-        return Err(
-            AppError::conflict(format!("此操作会影响 {n} 个已完成的历史任务"))
-                .with_hint("请先在界面上查看影响范围，确认后再执行（避免已完成记录被追改）"),
-        );
+        return Err(AppError::conflict(format!(
+            "已有 {n} 条完成记录；这些历史会保留，请确认后继续"
+        ))
+        .with_hint("新设置只应用于允许更新的任务，已完成状态与完成时间不会被改写"));
     }
     Ok(n)
 }
@@ -2163,6 +2163,7 @@ pub async fn recurring_scope_info_inner(
             "reason": "该任务不重复，编辑时无需选择范围",
         }));
     };
+    let series = get_series(state, &sid).await?;
 
     let task = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?1")
         .bind(&task_id)
@@ -2203,6 +2204,19 @@ pub async fn recurring_scope_info_inner(
         .try_get::<i64, _>("n")?,
         None => 0,
     };
+    let open_from_here = match &occ {
+        Some(k) => sqlx::query(
+            "SELECT COUNT(*) AS n FROM tasks
+             WHERE series_id = ?1 AND occurrence_key >= ?2 AND deleted_at IS NULL
+               AND status NOT IN ('done', 'archived')",
+        )
+        .bind(&sid)
+        .bind(k)
+        .fetch_one(state.db.pool())
+        .await?
+        .try_get::<i64, _>("n")?,
+        None => 0,
+    };
 
     Ok(serde_json::json!({
         "isRecurring": true,
@@ -2215,6 +2229,10 @@ pub async fn recurring_scope_info_inner(
         "exceptions": stats.2,
         "segments": stats.3,
         "completedBefore": history_before,
+        "openFromHere": open_from_here,
+        "recurrenceEndKind": series.recurrence_end_kind,
+        "recurrenceUntil": series.recurrence_until,
+        "recurrenceCount": series.recurrence_count,
         // 界面据此禁用不适用的范围选项并说明原因（§5 要求）
         "availableScopes": {
             "thisOnly": true,
@@ -2223,9 +2241,9 @@ pub async fn recurring_scope_info_inner(
         },
         "notes": {
             "thisOnly": "只改这一次，其它发生不受影响",
-            "thisAndFuture": format!("会重算这一次之后尚未完成的 {} 个发生", (stats.0 - stats.1).max(0)),
+            "thisAndFuture": format!("将重算这一次及之后当前已生成的 {open_from_here} 个未完成任务；以后生成的任务也会采用新设置"),
             "wholeSeries": if history_before > 0 {
-                format!("会影响 {history_before} 个已完成的历史记录，需要确认")
+                format!("已有 {history_before} 条完成记录会保留；新设置只应用于允许更新的任务")
             } else {
                 "修改整个系列的基础字段与规则".to_string()
             },

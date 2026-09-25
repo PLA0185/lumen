@@ -157,7 +157,7 @@ def main() -> int:
         select(target, '[aria-labelledby="series-rule-title"] select[aria-label="重复频率"]', "weekly")
         select(target, '[aria-labelledby="series-rule-title"] select[aria-label="结束条件"]', "count")
         ui.set_react_input(target, '[aria-labelledby="series-rule-title"] input[aria-label="重复次数"]', "4")
-        ui.set_react_input(target, "#series-timezone", "America/New_York")
+        select(target, "#series-timezone", "America/New_York")
         check("修改后预览可见", target.wait_for(
             "!!document.querySelector('[aria-labelledby=series-rule-title] .rulepreview__list li')"))
         real_click_visible(target, '[aria-labelledby="series-rule-title"] .modal__actions button:last-child')

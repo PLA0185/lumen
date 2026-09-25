@@ -1761,9 +1761,19 @@ async fn scope_info_reports_recurrence_and_history() {
     assert!(info2["seriesId"].as_str().is_some());
     assert!(info2["occurrenceKey"].as_str().is_some());
     assert!(info2["totalInstances"].as_i64().unwrap() >= 3);
+    assert_eq!(info2["recurrenceEndKind"], "never");
+    assert_eq!(
+        info2["openFromHere"].as_i64().unwrap(),
+        all.len() as i64 - 2,
+        "此次及以后的数量必须按 occurrence cutoff 精确计算"
+    );
     // 三种范围都要有可读说明（§5 要求"不适用的选项要禁用并说明原因"）
     assert!(info2["notes"]["thisOnly"].as_str().is_some());
     assert!(info2["notes"]["thisAndFuture"].as_str().is_some());
+    assert!(info2["notes"]["thisAndFuture"]
+        .as_str()
+        .unwrap()
+        .contains("当前已生成"));
     assert!(info2["notes"]["wholeSeries"].as_str().is_some());
 
     let _ = std::fs::remove_dir_all(&dir);

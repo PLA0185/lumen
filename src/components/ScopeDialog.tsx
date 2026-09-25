@@ -24,6 +24,7 @@ import { useEffect, useState } from 'react'
 import * as rec from '../lib/recurrence-ipc'
 import { IpcError } from '../lib/ipc'
 import type { DeleteMode, EditScope, ScopeInfo } from '../lib/recurrence-ipc'
+import { recurrenceSeriesSummary } from '../lib/scope-copy'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -102,7 +103,6 @@ export function ScopeDialog({
 
   /** 每个选项的影响说明 */
   const notes = info?.notes
-  const total = info?.totalInstances ?? 0
   const done = info?.completed ?? 0
 
   const options: Array<{
@@ -168,9 +168,7 @@ export function ScopeDialog({
               <span>
                 这是第 <strong>{info.occurrenceIndex ?? '?'}</strong> 次发生
               </span>
-              <span>
-                系列共 <strong>{total}</strong> 次
-              </span>
+              <span>{recurrenceSeriesSummary(info)}</span>
               <span>
                 已完成 <strong>{done}</strong> 次
               </span>
@@ -222,8 +220,8 @@ export function ScopeDialog({
                   onChange={(e) => setConfirmHistory(e.target.checked)}
                 />
                 <span>
-                  我了解这会影响到 <strong>{info.completedBefore}</strong> 个已完成的历史记录。
-                  程序会保留它们的完成状态与完成时间，但系列的共同设置会被更新。
+                  已有 <strong>{info.completedBefore}</strong> 条完成记录，这些历史会保留；
+                  新设置只应用于允许更新的任务。
                 </span>
               </label>
             )}

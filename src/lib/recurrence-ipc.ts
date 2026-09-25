@@ -118,6 +118,11 @@ export interface ScopeInfo {
   segments?: number
   /** 该次之前已完成的历史数量（"整个系列"会影响它） */
   completedBefore?: number
+  /** 当前发生及以后、已生成且尚未完成的准确数量 */
+  openFromHere?: number
+  recurrenceEndKind?: 'never' | 'until' | 'count' | string
+  recurrenceUntil?: string | null
+  recurrenceCount?: number | null
   availableScopes?: { thisOnly: boolean; thisAndFuture: boolean; wholeSeries: boolean }
   notes?: { thisOnly: string; thisAndFuture: string; wholeSeries: string }
 }
