@@ -20,7 +20,7 @@
  * 的渲染白名单，非白名单内容一律丢弃，因此不会执行注入的脚本（§10）。
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSanitize from 'rehype-sanitize'
@@ -32,11 +32,12 @@ import { IpcError } from '../lib/ipc'
 import { combineDateTime, fromUtcIso, toDateInput, toTimeInput } from '../lib/datetime'
 import type { PeriodType, Task, TaskStatus } from '../lib/types'
 import { PERIOD_LABELS } from '../lib/types'
-import type { Category, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
+import type { Category, ProjectWithCount, Tag, TagWithCount } from '../lib/organize-ipc'
 import { Icon } from './Icons'
 import { ScopeDialog } from './ScopeDialog'
 import { SeriesRuleDialog } from './SeriesRuleDialog'
 import { onDataChanged } from '../lib/data-change'
+import { loadTaskEditorOptions, saveTaskWithOptionalTags } from '../lib/task-editor-options'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -87,11 +88,23 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [advancedOpen, setAdvancedOpen] = useState(
     Boolean(task.noteMd || task.isPinned || task.isFavorite || (task.periodType && task.periodType !== 'none')),
   )
+  const [detailsOpen, setDetailsOpen] = useState(
+    Boolean(task.description || task.linkUrl || task.categoryId || task.estimatedMinutes || task.actualMinutes),
+  )
+  const [timeTagsOpen, setTimeTagsOpen] = useState(
+    Boolean(task.categoryId || task.estimatedMinutes || task.actualMinutes),
+  )
 
   // 选项数据
   const [projects, setProjects] = useState<ProjectWithCount[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [tags, setTags] = useState<TagWithCount[]>([])
+  const [originalTags, setOriginalTags] = useState<Tag[]>([])
+  const [tagSearch, setTagSearch] = useState('')
+  const [auxReady, setAuxReady] = useState({ projects: false, categories: false, tags: false })
+  const [auxErrors, setAuxErrors] = useState<Record<'projects' | 'categories' | 'tags', string | null>>({
+    projects: null, categories: null, tags: null,
+  })
 
   const [showPreview, setShowPreview] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -100,35 +113,54 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [pendingRecurringPatch, setPendingRecurringPatch] = useState<rec.InstancePatch | null>(null)
   const [pendingRecurringRestrictedReason, setPendingRecurringRestrictedReason] = useState<string | null>(null)
   const [showRuleEditor, setShowRuleEditor] = useState(false)
-  const [optionsLoaded, setOptionsLoaded] = useState(false)
-
-  // 载入选项与初始值
-  useEffect(() => {
-    setOptionsLoaded(false)
-    void (async () => {
-      try {
-        const [p, c, t, mine] = await Promise.all([
-          org.projectList(true),
-          org.categoryList(),
-          org.tagList(),
-          org.taskTagsGet(task.id),
-        ])
-        setProjects(p)
-        setCategories(c)
-        setTags(t)
-        setTagIds(mine.map((x) => x.id))
-        setOptionsLoaded(true)
-      } catch (e) {
-        setError(errText(e))
+  const loadOptions = useCallback(async () => {
+    const { projects: p, categories: c, tags: t, selectedTags: mine } =
+      await loadTaskEditorOptions({
+        projects: () => org.projectList(true),
+        categories: org.categoryList,
+        tags: org.tagList,
+        selectedTags: () => org.taskTagsGet(task.id),
+      })
+    if (p.status === 'fulfilled') {
+      setProjects(p.value)
+      setAuxReady((old) => ({ ...old, projects: true }))
+      setAuxErrors((old) => ({ ...old, projects: null }))
+    } else {
+      setAuxReady((old) => ({ ...old, projects: false }))
+      setAuxErrors((old) => ({ ...old, projects: errText(p.reason) }))
+    }
+    if (c.status === 'fulfilled') {
+      setCategories(c.value)
+      setAuxReady((old) => ({ ...old, categories: true }))
+      setAuxErrors((old) => ({ ...old, categories: null }))
+    } else {
+      setAuxReady((old) => ({ ...old, categories: false }))
+      setAuxErrors((old) => ({ ...old, categories: errText(c.reason) }))
+    }
+    if (t.status === 'fulfilled' && mine.status === 'fulfilled') {
+      setTags(t.value)
+      setOriginalTags(mine.value)
+      setTagIds(mine.value.map((x) => x.id))
+      setAuxReady((old) => ({ ...old, tags: true }))
+      setAuxErrors((old) => ({ ...old, tags: null }))
+    } else {
+      if (mine.status === 'fulfilled') {
+        setOriginalTags(mine.value)
+        setTagIds(mine.value.map((x) => x.id))
       }
-    })()
+      setAuxReady((old) => ({ ...old, tags: false }))
+      setAuxErrors((old) => ({ ...old, tags: errText(
+        t.status === 'rejected' ? t.reason : mine.status === 'rejected' ? mine.reason : '标签读取失败',
+      ) }))
+    }
   }, [task.id])
 
+  // 辅助选项各自失败、各自降级；基本字段始终可保存。
+  useEffect(() => { void loadOptions() }, [loadOptions])
+
   useEffect(() => onDataChanged(['organization', 'all'], () => {
-    void Promise.all([org.projectList(true), org.categoryList(), org.tagList()])
-      .then(([p, c, t]) => { setProjects(p); setCategories(c); setTags(t) })
-      .catch((e) => setError(errText(e)))
-  }), [])
+    void loadOptions()
+  }), [loadOptions])
 
   // 时间字段初始化：把 UTC 转成本地日期/时间控件值
   useEffect(() => {
@@ -185,10 +217,6 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   }
 
   const save = async () => {
-    if (!optionsLoaded) {
-      setError('项目、分类和标签尚未加载完成，请稍后再保存。')
-      return
-    }
     if (!validate()) return
     setSaving(true)
     setError(null)
@@ -229,15 +257,20 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
       if (linkUrl.trim()) patch.linkUrl = linkUrl.trim()
       else patch.clearLink = true
 
-      if (projectId) patch.projectId = projectId
-      else patch.clearProject = true
+      if (auxReady.projects) {
+        if (projectId) patch.projectId = projectId
+        else patch.clearProject = true
+      }
 
-      if (categoryId) patch.categoryId = categoryId
-      else patch.clearCategory = true
+      if (auxReady.categories) {
+        if (categoryId) patch.categoryId = categoryId
+        else patch.clearCategory = true
+      }
 
       if (task.seriesId) {
-        const originalTags = (await org.taskTagsGet(task.id)).map((tag) => tag.id).sort()
-        const changedTags = JSON.stringify([...tagIds].sort()) !== JSON.stringify(originalTags)
+        const originalTagIds = originalTags.map((tag) => tag.id).sort()
+        const changedTags = auxReady.tags &&
+          JSON.stringify([...tagIds].sort()) !== JSON.stringify(originalTagIds)
         const plannedChanged = (patch.plannedAt ?? null) !== task.plannedAt ||
           (patch.hasPlannedTime ?? false) !== (task.hasPlannedTime === 1)
         const dueChanged = (patch.dueAt ?? null) !== task.dueAt ||
@@ -245,7 +278,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         const clearEstimated = !estimated.trim() && task.estimatedMinutes !== null
         const singleOnlyChanged = noteMd !== task.noteMd ||
           linkUrl.trim() !== (task.linkUrl ?? '') ||
-          projectId !== (task.projectId ?? '') || categoryId !== (task.categoryId ?? '') ||
+          (auxReady.projects && projectId !== (task.projectId ?? '')) ||
+          (auxReady.categories && categoryId !== (task.categoryId ?? '')) ||
           changedTags || periodType !== task.periodType || clearEstimated
         const stateChanged = status !== task.status || Number(actual || 0) !== task.actualMinutes ||
           isPinned !== (task.isPinned === 1) || isFavorite !== (task.isFavorite === 1)
@@ -290,15 +324,19 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           noteMd: noteMd !== task.noteMd ? noteMd : undefined,
           linkUrl: linkUrl.trim() && linkUrl.trim() !== (task.linkUrl ?? '') ? linkUrl.trim() : undefined,
           clearLink: !linkUrl.trim() && Boolean(task.linkUrl),
-          projectId: projectId && projectId !== (task.projectId ?? '') ? projectId : undefined,
-          clearProject: !projectId && Boolean(task.projectId),
-          categoryId: categoryId && categoryId !== (task.categoryId ?? '') ? categoryId : undefined,
-          clearCategory: !categoryId && Boolean(task.categoryId),
+          projectId: auxReady.projects && projectId && projectId !== (task.projectId ?? '') ? projectId : undefined,
+          clearProject: auxReady.projects && !projectId && Boolean(task.projectId),
+          categoryId: auxReady.categories && categoryId && categoryId !== (task.categoryId ?? '') ? categoryId : undefined,
+          clearCategory: auxReady.categories && !categoryId && Boolean(task.categoryId),
           tagIds: changedTags ? tagIds : undefined,
           periodType: periodType !== task.periodType ? periodType : undefined,
         })
       } else {
-        const saved = await ipc.saveTask(task.id, patch, tagIds)
+        const saved = await saveTaskWithOptionalTags({
+          tagsReady: auxReady.tags,
+          saveFields: () => ipc.updateTask(task.id, patch),
+          saveFieldsAndTags: () => ipc.saveTask(task.id, patch, tagIds),
+        })
         onSaved(saved)
         onClose()
       }
@@ -322,6 +360,12 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
       ),
     [noteMd],
   )
+  const selectedTagRecords = tagIds.map((id) =>
+    tags.find((tag) => tag.id === id) ?? originalTags.find((tag) => tag.id === id),
+  ).filter((tag): tag is Tag | TagWithCount => Boolean(tag))
+  const availableTags = tags.filter((tag) => !tagIds.includes(tag.id) &&
+    tag.name.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()))
+  const hasAuxError = Object.values(auxErrors).some(Boolean)
 
   return (
     <>
@@ -366,6 +410,9 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           )}
         </div>
 
+        <details className="editor-advanced editor-advanced--compact" open={detailsOpen}
+          onToggle={(e) => setDetailsOpen(e.currentTarget.open)}>
+          <summary>说明与链接</summary>
         <div className="formrow">
           <label className="formlabel" htmlFor="ed-desc">
             描述
@@ -398,6 +445,16 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             </div>
           )}
         </div>
+        </details>
+
+        {hasAuxError && (
+          <div className="alert alert--warn editor-aux-warning" role="status">
+            <span>部分归属或标签没有载入。相关字段暂时只读，其它内容仍可正常保存。</span>
+            <button type="button" className="btn btn--quiet btn--sm" onClick={() => void loadOptions()}>
+              重试
+            </button>
+          </div>
+        )}
 
         <div className="formgrid">
           <label className="formrow">
@@ -434,9 +491,11 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             <select
               className="input"
               value={projectId}
+              disabled={!auxReady.projects}
               onChange={(e) => setProjectId(e.target.value)}
             >
               <option value="">（无项目）</option>
+              {!auxReady.projects && projectId && <option value={projectId}>当前项目（列表读取失败）</option>}
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -444,6 +503,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                 </option>
               ))}
             </select>
+            {auxErrors.projects && <span className="formerr">项目读取失败，可重试</span>}
           </label>
 
           <label className="formrow">
@@ -451,15 +511,18 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             <select
               className="input"
               value={categoryId}
+              disabled={!auxReady.categories}
               onChange={(e) => setCategoryId(e.target.value)}
             >
               <option value="">（无分类）</option>
+              {!auxReady.categories && categoryId && <option value={categoryId}>当前分类（列表读取失败）</option>}
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
               ))}
             </select>
+            {auxErrors.categories && <span className="formerr">分类读取失败，可重试</span>}
           </label>
         </div>
 
@@ -542,6 +605,9 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           </div>
         </fieldset>
 
+        <details className="editor-advanced editor-advanced--compact" open={timeTagsOpen}
+          onToggle={(e) => setTimeTagsOpen(e.currentTarget.open)}>
+          <summary>耗时与标签</summary>
         {/* ---------------- 耗时 ---------------- */}
         <div className="formgrid">
           <div className="formrow">
@@ -586,23 +652,28 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         {/* ---------------- 标签 ---------------- */}
         <div className="formrow">
           <span className="formlabel">标签</span>
-          {tags.length === 0 ? (
+          {!auxReady.tags ? (
+            <div className="aux-field-error">
+              <span>标签读取失败，原标签会保持不变。</span>
+              <button type="button" className="btn btn--quiet btn--sm" onClick={() => void loadOptions()}>
+                重试
+              </button>
+            </div>
+          ) : tags.length === 0 ? (
             <p className="setgroup__hint" style={{ margin: 0 }}>
               还没有标签。可在「标签」页创建。
             </p>
           ) : (
-            <div className="tagpicker">
-              {tags.map((t) => {
-                const on = tagIds.includes(t.id)
-                return (
+            <div className="tagselector">
+              {selectedTagRecords.length > 0 && (
+                <div className="tagpicker" aria-label="已选标签">
+                  {selectedTagRecords.map((t) => (
                   <button
                     key={t.id}
                     type="button"
-                    className={`tagtoggle${on ? ' tagtoggle--on' : ''}`}
-                    aria-pressed={on}
-                    onClick={() =>
-                      setTagIds((prev) => (on ? prev.filter((x) => x !== t.id) : [...prev, t.id]))
-                    }
+                    className="tagtoggle tagtoggle--on"
+                    aria-label={`移除标签 ${t.name}`}
+                    onClick={() => setTagIds((prev) => prev.filter((x) => x !== t.id))}
                   >
                     {t.color && (
                       <span
@@ -611,13 +682,32 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                         aria-hidden="true"
                       />
                     )}
-                    {t.name}
+                    {t.name} <span aria-hidden="true">×</span>
                   </button>
-                )
-              })}
+                  ))}
+                </div>
+              )}
+              <input className="input input--compact" value={tagSearch}
+                aria-label="搜索并添加标签" placeholder="搜索标签…"
+                onChange={(e) => setTagSearch(e.target.value)} />
+              {tagSearch.trim() && (
+                <div className="tagresults" role="listbox" aria-label="可添加标签">
+                  {availableTags.length > 0 ? availableTags.map((t) => (
+                    <button key={t.id} type="button" className="tagresult" role="option"
+                      aria-selected="false"
+                      onClick={() => { setTagIds((old) => [...old, t.id]); setTagSearch('') }}>
+                      {t.color && <span className="orgrow__swatch orgrow__swatch--round"
+                        style={{ background: t.color }} aria-hidden="true" />}
+                      {t.name}
+                    </button>
+                  )) : <span className="setgroup__hint">没有匹配的未选标签</span>}
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        </details>
 
         <details className="editor-advanced" open={advancedOpen}
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}>
@@ -713,7 +803,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             type="button"
             className="btn btn--primary"
             onClick={() => void save()}
-            disabled={saving || !optionsLoaded}
+            disabled={saving}
           >
             {saving ? '保存中…' : '保存'}
           </button>
