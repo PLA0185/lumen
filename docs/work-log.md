@@ -15,6 +15,53 @@
 
 ---
 
+## 第 17 轮 · 2026-09-25 · 0.4.0 发布准备与签名前置阻塞
+
+RC_BASE=`ea5e29ebcc4e4e3fb7cca485fc3319a343f97530`；版本提交
+`01c6cd7e0794774cefd90b9dd71d1bce505f5345`已推送到 `main`。
+
+### 做了
+
+- 在重装后的新环境中重新安装并验证 GitHub CLI、Rust 1.98.1、Cargo、rustfmt、clippy、
+  Visual Studio Build Tools 2022 与 Windows SDK；当前 GitHub 账号对 `PLA0185/lumen` 为 `ADMIN`。
+- 核对远端 `main` 仍为 RC 基线、最新正式 Release 仍为 `v0.3.0`，且 `v0.4.0` tag / Release
+  均不存在。
+- 将 `package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json` 与 Cargo lock 中的
+  Lumen 自身版本统一更新为 `0.4.0`；前端 lockfile 无需变更。
+- 根据 `v0.3.0..ea5e29e` 的实际代码与提交生成 0.4.0 Release Notes，没有夸大为“零 Bug”或
+  “绝不会丢数据”，也没有夹带业务代码、新功能或 0.4.1 backlog。
+- 版本提交触发的 GitHub Actions CI
+  [run 36137819146](https://github.com/PLA0185/lumen/actions/runs/36137819146) 已完成，`frontend`、
+  `rust` 均为 `success`。
+
+### 没做到
+
+- 仓库 Actions Secrets 列表为空：`TAURI_SIGNING_PRIVATE_KEY` 与
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 均缺失。按发布任务书必须停在 tag 之前，
+  因此**没有创建或推送 `v0.4.0` tag**，没有触发 Release workflow，也没有创建
+  GitHub Release。
+- 因 Release 未生成，installer、`.sig`、`latest.json` 和 0.3.0 → 0.4.0 updater 发现、
+  签名校验、自动安装均**未实测**，不记为 PASS。
+
+### 怎么验证的
+
+- 本机前端：`pnpm install --frozen-lockfile`、`pnpm check:version`、`pnpm typecheck`、
+  `pnpm test`（166 项）、`pnpm build`、`pnpm lint` 全部通过。
+- 本机 Rust：`cargo fmt --check`、`cargo check --all-targets`、`cargo test --lib`（361 项）、
+  `cargo clippy --all-targets --all-features -- -D warnings` 全部通过。
+- GitHub Actions：run `36137819146` 上 frontend 与 rust job 全部通过；Actions 的 Node 20
+  deprecation 提示是 runner 对 action runtime 的非阻断告警，不是项目门禁失败。
+- 发布前状态：`gh secret list --repo PLA0185/lumen` 无任何输出；`v0.4.0` tag / Release
+  均不存在。私钥内容从未读取、打印或写入仓库。
+
+### 相关文档
+
+- `RELEASE_NOTES.md`
+- `docs/0.4.0-rc-closure.md`
+- `docs/0.4.1-backlog.md`
+
+---
+
 ## 第 16 轮 · 2026-09-25 · 0.4.0 RC UI/UX 最终收口
 
 BASE=`001b01d12d57469f5134518fa0b0f12ca4d5486c`；应用版本保持 `0.3.0`，未打 tag、未发布。
