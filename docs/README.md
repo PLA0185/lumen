@@ -10,6 +10,8 @@
 
 | 文件 | 内容 | 对应任务书条款 |
 | --- | --- | --- |
+| [`0.4.0-rc-closure.md`](./0.4.0-rc-closure.md) | 0.4.0 RC 最终收口：提交范围、P0/P1、完整门禁、桌面验收和视觉截图 | 0.4.0 RC 最终收口任务书 |
+| [`0.4.1-backlog.md`](./0.4.1-backlog.md) | RC 阶段确认不阻断发布的 P2/P3 清单 | 0.4.0 RC 最终收口任务书 |
 | [`api-research.md`](./api-research.md) | **AI 提供商适配层事实核查**：DeepSeek / OpenAI / Anthropic 的 Base URL、鉴权方式、当前模型 ID、结构化输出能力、SSE 流式差异、错误码、限流、计费单位与数据训练姿态 | §2.2、§6 |
 | [`api-research-tauri2.md`](./api-research-tauri2.md) | **Tauri 2 事实核查**：稳定版本与 MSRV、官方插件矩阵、窗口能力 API 签名、托盘 API、打包与卸载数据行为、Windows 通知机制与限制、Windows 构建前置要求 | §2.1、§2.3、§8 |
 | [`api-research-deps.md`](./api-research-deps.md) | **前端依赖与第三方导入格式**：React/Vite/TS 版本、功能库选型与许可、FullCalendar v7 破坏性变更、Todoist/Microsoft To Do/Google Tasks/Notion 官方接口与导出格式 | §2.3、§7、§9 |
