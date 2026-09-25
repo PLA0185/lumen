@@ -22,7 +22,7 @@ import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { fromUtcIso, toUtcIso } from '../lib/datetime'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import * as recurrence from '../lib/recurrence-ipc'
 import type { Task } from '../lib/types'
 import { Icon } from './Icons'
@@ -106,21 +106,16 @@ export function CalendarView() {
   }, [days, anchor])
 
   const reload = useCallback(async () => {
-    const token = gate.begin()
     setLoading(true)
-    try {
+    await runLatestRequest(gate, async () => {
       await recurrence.recurringEnsureRange(range.start, range.end)
-      const page = await ipc.tasksInRange(range.start, range.end)
-      if (!gate.isCurrent(token)) return
+      return ipc.tasksInRange(range.start, range.end)
+    }, { apply: (page) => {
       setTasks(page.rows)
       setCalendarTotal(page.total)
       setTruncated(page.truncated)
       setError(null)
-    } catch (e) {
-      if (gate.isCurrent(token)) setError(errText(e))
-    } finally {
-      if (gate.isCurrent(token)) setLoading(false)
-    }
+    }, reject: (e) => setError(errText(e)), finish: () => setLoading(false) })
   }, [gate, range.start, range.end])
 
   useEffect(() => {

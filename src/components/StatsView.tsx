@@ -26,7 +26,7 @@ import * as st from '../lib/stats-ipc'
 import { scheduleConflicts } from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { useApp } from '../lib/store'
 import * as focus from '../lib/focus-ipc'
 import type { GrowthConfig, GrowthOverview, PeriodStats } from '../lib/stats-ipc'
@@ -117,29 +117,22 @@ export function StatsView() {
   const [newTarget, setNewTarget] = useState(10)
 
   const reload = useCallback(async () => {
-    const token = gate.begin()
     setLoading(true)
-    try {
-      const [p, g, cfg, gs, cf] = await Promise.all([
+    await runLatestRequest(gate, () => Promise.all([
         st.statsPeriod(days),
         st.statsGrowth(),
         st.growthGetConfig(),
         st.goalsList(),
         // 冲突检测失败不应让整页报错——它是附加信息
         scheduleConflicts().catch(() => []),
-      ])
-      if (!gate.isCurrent(token)) return
+      ]), { apply: ([p, g, cfg, gs, cf]) => {
       setStats(p)
       setGrowth(g)
       setGrowthCfg(cfg)
       setGoals(gs)
       setConflicts(cf)
       setError(null)
-    } catch (e) {
-      if (gate.isCurrent(token)) setError(errText(e))
-    } finally {
-      if (gate.isCurrent(token)) setLoading(false)
-    }
+    }, reject: (e) => setError(errText(e)), finish: () => setLoading(false) })
   }, [days, gate])
 
   useEffect(() => {

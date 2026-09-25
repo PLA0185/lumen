@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import * as focus from '../lib/focus-ipc'
 import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
@@ -56,18 +56,13 @@ export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelPro
   const lastSyncRef = useRef(0)
 
   const reload = useCallback(async () => {
-    const token = gate.begin()
-    try {
-      const [cur, sum] = await Promise.all([focus.focusCurrent(), focus.focusSummary()])
-      if (!gate.isCurrent(token)) return
+    await runLatestRequest(gate,
+      () => Promise.all([focus.focusCurrent(), focus.focusSummary()]),
+      { apply: ([cur, sum]) => {
       setView(cur)
       setSummary(sum)
       setError(null)
-    } catch (e) {
-      if (gate.isCurrent(token)) setError(errText(e))
-    } finally {
-      if (gate.isCurrent(token)) setLoading(false)
-    }
+      }, reject: (e) => setError(errText(e)), finish: () => setLoading(false) })
   }, [gate])
 
   useEffect(() => {

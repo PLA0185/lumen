@@ -18,3 +18,29 @@ export function createRequestGate() {
     },
   }
 }
+
+export type RequestGate = ReturnType<typeof createRequestGate>
+
+/** Shared consumer runner: only the newest request may mutate UI state. */
+export async function runLatestRequest<T>(
+  gate: RequestGate,
+  request: () => Promise<T>,
+  callbacks: {
+    apply: (value: T) => void
+    reject?: (error: unknown) => void
+    finish?: () => void
+  },
+): Promise<boolean> {
+  const token = gate.begin()
+  try {
+    const value = await request()
+    if (!gate.isCurrent(token)) return false
+    callbacks.apply(value)
+    return true
+  } catch (error) {
+    if (gate.isCurrent(token)) callbacks.reject?.(error)
+    return false
+  } finally {
+    if (gate.isCurrent(token)) callbacks.finish?.()
+  }
+}

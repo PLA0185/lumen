@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Category, OrphanStrategy, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
@@ -305,24 +305,17 @@ export function OrganizeView() {
   } | null>(null)
 
   const reload = useCallback(async () => {
-    const token = gate.begin()
     setLoading(true)
     setError(null)
-    try {
-      const [p, c, t] = await Promise.all([
+    await runLatestRequest(gate, () => Promise.all([
         org.projectList(includeArchived),
         org.categoryList(),
         org.tagList(),
-      ])
-      if (!gate.isCurrent(token)) return
+      ]), { apply: ([p, c, t]) => {
       setProjects(p)
       setCategories(c)
       setTags(t)
-    } catch (e) {
-      if (gate.isCurrent(token)) setError(errText(e))
-    } finally {
-      if (gate.isCurrent(token)) setLoading(false)
-    }
+    }, reject: (e) => setError(errText(e)), finish: () => setLoading(false) })
   }, [gate, includeArchived])
 
   useEffect(() => {

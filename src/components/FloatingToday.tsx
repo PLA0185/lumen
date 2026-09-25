@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as win from '../lib/window-ipc'
 import * as ipc from '../lib/ipc'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
 import { TaskEditor } from './TaskEditor'
 import type { FloatingState } from '../lib/window-ipc'
@@ -62,15 +62,14 @@ export function FloatingToday() {
   const opacityTimer = useRef<number | undefined>(undefined)
 
   const reload = useCallback(async () => {
-    const token = gate.begin()
-    try {
+    await runLatestRequest(gate, async () => {
       const r = todayRange()
       const query: TaskQuery = {
         statuses: ['todo', 'doing', 'waiting', 'done'],
         plannedFrom: r.start,
         plannedTo: r.end,
       }
-      const [list, allCount, doneCount, st] = await Promise.all([
+      return Promise.all([
         ipc.listTasks({
           ...query,
           sortBy: 'manual',
@@ -80,7 +79,7 @@ export function FloatingToday() {
         ipc.countTasks({ ...query, statuses: ['done'] }),
         win.windowFloatingState(),
       ])
-      if (!gate.isCurrent(token)) return
+    }, { apply: ([list, allCount, doneCount, st]) => {
       setTasks(list)
       setTotal(allCount.total)
       setDoneTotal(doneCount.total)
@@ -88,11 +87,8 @@ export function FloatingToday() {
       setOpacity(st.opacity)
       document.documentElement.style.setProperty('--floating-opacity', String(st.opacity))
       setError(null)
-    } catch (e) {
-      if (gate.isCurrent(token)) setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      if (gate.isCurrent(token)) setLoading(false)
-    }
+    }, reject: (e) => setError(e instanceof Error ? e.message : String(e)),
+    finish: () => setLoading(false) })
   }, [gate])
 
   useEffect(() => {

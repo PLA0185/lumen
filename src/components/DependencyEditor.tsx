@@ -14,7 +14,7 @@ import * as org from '../lib/organize-ipc'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { onDataChanged } from '../lib/data-change'
-import { createRequestGate } from '../lib/request-gate'
+import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import type { DependencyItem } from '../lib/organize-ipc'
 import type { Task } from '../lib/types'
 import { Icon } from './Icons'
@@ -64,26 +64,19 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
   }, [reload])
 
   const loadCandidates = useCallback(async (offset: number) => {
-    const token = candidateGate.begin()
     const query = {
       statuses: ['todo', 'doing', 'waiting'] as Array<'todo' | 'doing' | 'waiting'>,
       search: search.trim() || null,
     }
     setCandidateLoading(true)
-    try {
-      const [list, count] = await Promise.all([
+    await runLatestRequest(candidateGate, () => Promise.all([
         ipc.listTasks({ ...query, limit: 50, offset, sortBy: 'due' }),
         ipc.countTasks(query),
-      ])
-      if (!candidateGate.isCurrent(token)) return
+      ]), { apply: ([list, count]) => {
       setCandidates((old) => offset === 0 ? list : [...old, ...list])
       setCandidateTotal(count.total)
       setError(null)
-    } catch (e) {
-      if (candidateGate.isCurrent(token)) setError(errText(e))
-    } finally {
-      if (candidateGate.isCurrent(token)) setCandidateLoading(false)
-    }
+    }, reject: (e) => setError(errText(e)), finish: () => setCandidateLoading(false) })
   }, [candidateGate, search])
 
   useEffect(() => {
