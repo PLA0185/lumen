@@ -112,3 +112,24 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
+
+      # tauri-action v1 目前把 updater URL 写成 GitHub API asset URL；客户端公开分发
+      # 使用无需 API Accept header 的 Releases 匿名直链更稳妥，也与应用 endpoint 约定一致。
+      - name: 规范 latest.json 为匿名 Release 直链
+        if: steps.guard.outputs.ok == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --pattern latest.json --clobber
+          $release = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
+          [array]$installers = $release.assets | Where-Object { $_.name -match '_x64-setup\.exe$' }
+          if ($installers.Count -ne 1) {
+            throw "预期恰好一个 x64 NSIS installer，实际为 $($installers.Count)"
+          }
+          node tools/fix-updater-json.mjs `
+            --repo=$env:GITHUB_REPOSITORY `
+            --tag=$env:GITHUB_REF_NAME `
+            --asset=$($installers[0].name) `
+            --path=latest.json
+          gh release upload $env:GITHUB_REF_NAME latest.json --repo $env:GITHUB_REPOSITORY --clobber
