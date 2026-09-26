@@ -58,7 +58,7 @@
       "endpoints": [
         "https://github.com/PLA0185/lumen/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3MzdERTAzOEFCQUU1RjkKUldUNTVicUtBOTQzTjRibXFaT3Ara2ZKSXZwNkhXTEZqWnhhQXFyQWhtMnZVWTQ4UW5IRllmT20K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEyRTBFNjc0MUM3REFENzQKUldSMHJYMGNkT2Jnb21Wb2pVRm94YTB3ZEYrREFnYXcwSXpmV245MmEyNTRQTDdab0lNMGZsT0IK",
       "windows": {
         "installMode": "quiet"
       }

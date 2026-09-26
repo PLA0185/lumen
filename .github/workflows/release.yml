@@ -1,23 +1,7 @@
 name: Release
 
-# 打 tag（形如 v0.2.3）时自动构建 Windows 安装包并发布 Release。
-#
-# ## 这套工作流是"可选"的
-#
-# 本项目的 Release 一直是**手动**发布的（构建 + 上传 `setup.exe`、`.sig`、
-# `latest.json`）。这个工作流是给"以后想交给 CI"准备的，因此它必须做到两件事：
-#
-# 1. **没配签名密钥时不报红**。第一次打 tag 时，因为仓库里没有
-#    `TAURI_SIGNING_PRIVATE_KEY`，构建会直接失败。现在先执行完整质量门禁，
-#    再检查密钥决定是否构建；跳过构建时只在日志里留一条 notice。签名无法关闭（官方原文
-#    "This cannot be disabled."），所以没有密钥就没有"能用的更新包"，
-#    跳过比产出一个装不上的包更诚实。
-# 2. **与手动发布的 Release 共存**：用 `tagName` 定位已存在的 Release 并更新
-#    其资产，而不是新建一个。
-#
-# ## 启用方法
-#
-# 在仓库 Settings → Secrets and variables → Actions 添加两个 Secret：
+# 打 tag（形如 v0.4.0）时自动执行完整门禁、构建 Windows 安装包并发布 Release。
+# 仓库 Settings → Secrets and variables → Actions 必须配置两个 Secret：
 #   - `TAURI_SIGNING_PRIVATE_KEY`：`lumen-updater.key` 的**文件内容**
 #   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：该密钥的密码
 #
@@ -49,7 +33,7 @@ jobs:
         with:
           node-version: 22
 
-      # Tag and source version must be checked even when signing is unavailable.
+      # Tag and source version must be checked before all other release work.
       - name: 校验 tag 与三处应用版本
         run: node tools/check-version.mjs --tag=${{ github.ref_name }}
 
@@ -89,19 +73,20 @@ jobs:
           cargo test --lib
           cargo clippy --all-targets --all-features -- -D warnings
 
-      # 签名仅决定能否发布，不能跳过上面的代码质量门禁。
+      # 签名密钥缺一项都必须让发布失败，不能产出不可更新的 Release。
       - name: 检查签名密钥是否已配置
         id: guard
         shell: bash
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          if [ -z "$KEY" ]; then
+          if [ -z "$KEY" ] || [ -z "$PASSWORD" ]; then
             echo "ok=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=跳过自动构建::仓库未配置 TAURI_SIGNING_PRIVATE_KEY，本次不构建。"
-          else
-            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "::error title=缺少 updater 签名配置::TAURI_SIGNING_PRIVATE_KEY 与 TAURI_SIGNING_PRIVATE_KEY_PASSWORD 必须同时存在。"
+            exit 1
           fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: 构建并发布
         if: steps.guard.outputs.ok == 'true'
@@ -113,7 +98,15 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Lumen ${{ github.ref_name }}'
-          releaseBody: '自动构建产物。安装包、签名与 latest.json 见下方 Assets。'
+          releaseBody: |
+            > **从 v0.3.0 或更早版本升级**
+            >
+            > 本版本重置了自动更新签名密钥。
+            > v0.3.0 及更早版本无法通过旧签名链自动安装 v0.4.0。
+            > 请手动下载安装 v0.4.0 一次。
+            > 从 v0.4.0 开始，后续版本恢复应用内自动更新。
+
+            完整更新内容见仓库中的 RELEASE_NOTES.md。安装包、签名与 latest.json 见下方 Assets。
           releaseDraft: false
           prerelease: false
           uploadUpdaterJson: true
