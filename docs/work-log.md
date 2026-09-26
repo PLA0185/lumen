@@ -15,6 +15,67 @@
 
 ---
 
+## 第 18 轮 · 2026-09-26 · 仓库重建、Updater 信任链重置与 0.4.0 正式发布
+
+迁移基线=`5a04d2836d6fbd2bf6b0b09a844e472421c4a71b`；正式发布提交=
+`49c57d3baf6c0b70c6f0ab470f2f9fc828b1b3d5`；发布后工作流修复=
+`cd28664a32426f249d9ec6c8c60e5923a3313c37`。
+
+### 做了
+
+- 把原 `PLA0185/lumen` 的 Git 历史、`main`、`v0.1.0` 至 `v0.3.0` tags、6 个历史
+  Releases 与 16 个 assets 迁移到 `PLA0185/lumen-migration`；逐个回下载资产并核对文件名、
+  大小与 SHA-256 后，删除旧仓库，再把迁移仓库改名为新的 `PLA0185/lumen`。旧仓库 Issues
+  和 Pull Requests 均为 0，因而没有可迁移条目。
+- 删除前生成并验证了完整 Git bundle：
+  `lumen-before-repo-reset.bundle`（2,731,405 bytes，SHA-256
+  `7e2d306a97125ab502a6b41ec05fd6e135caee0153783fafd86c7c0a89764d13`）。
+- 生成全新的 Tauri updater minisign 密钥；私钥与 DPAPI 加密的密码仅保留在当前 Windows
+  用户目录，公钥写入 `tauri.conf.json`，两个 Actions Secrets 已设置，私钥未进入 Git。
+- 本机签名构建成功，签名可由新公钥独立验证；创建 annotated tag `v0.4.0` 并正式发布
+  `Lumen v0.4.0`。Release workflow run `36205300667` 成功。
+- 校验正式 Release 的 installer、`.sig`、`latest.json`：版本、平台、签名内容、匿名下载与
+  installer SHA-256 均正确，新公钥验证正式 installer 通过。
+- 发现 `tauri-action v1` 生成的是 GitHub API asset URL 后，先修正已发布的 `latest.json`，
+  再加入 `tools/fix-updater-json.mjs` 和发布后处理步骤，后续会固定生成匿名 Release 直链。
+- 用正式 Release 安装包在本机静默安装：退出码 0，注册表和 exe 均为 0.4.0；启动后窗口
+  持续响应，首次数据库 `integrity_check=ok`。应用内通过真实 GitHub 端点检查，明确显示
+  “当前版本 0.4.0 已是最新版本”。
+
+### 没做到
+
+- **0.3.x → 0.4.0 应用内自动升级不支持，这是本次信任链重置的设计结果**：旧客户端只信任
+  已废弃的旧公钥，不能接受新私钥签出的 0.4.0，用户必须手动安装 0.4.0。
+- 本机执行验收前没有已安装的 0.3.x，也没有生产数据目录，所以“现有 0.3 数据经手动覆盖安装
+  后保持不变”无法实测；本轮只验证了全新安装、首次建库和启动。没有删除任何既有用户数据。
+- 0.4.0 → 下一版本的真实自动下载与安装要等下一正式版本才能端到端验证；本轮验证到
+  0.4.0 对真实端点的“已是最新”结果，以及正式资产的签名/下载链路。
+- 新私钥当前有本机独立恢复副本，但尚未由仓库外的密码管理器或离线加密介质做第二份备份；
+  这是发布后的人工必办项，不能记为已完成。
+
+### 怎么验证的
+
+- 迁移：源/目标 refs 对比；历史 Release 元数据对比；16 个 assets 从目标仓库重新下载后逐项
+  校验；Git bundle 执行 `git bundle verify`；删除/改名后重新核对最终仓库公开性、默认分支、
+  tags、Releases 与 Secrets 名称。
+- 本机门禁：`pnpm install --frozen-lockfile`、版本一致性、类型检查、166 项前端测试、构建、
+  ESLint，以及 `cargo fmt --check`、全目标 check、361 项 Rust 测试、Clippy `-D warnings`
+  全部通过。
+- 正式发布：CI run `36203988762` 与 Release run `36205300667` 成功；发布后直链固化提交的
+  CI run `36206619410` 也由 frontend、rust 两个 job 全部通过。
+- 正式 installer SHA-256：
+  `0104c904e2ff26e59521eea8301a1e3266a6747664d567c98fd103bc2fcffeec`；安装后 exe
+  ProductVersion=`0.4.0`，生产数据库包含 20 张表且完整性检查为 `ok`。
+
+### 相关文档
+
+- `RELEASE_NOTES.md`
+- `.github/workflows/release.yml`
+- `tools/fix-updater-json.mjs`
+- [GitHub Release v0.4.0](https://github.com/PLA0185/lumen/releases/tag/v0.4.0)
+
+---
+
 ## 第 17 轮 · 2026-09-25 · 0.4.0 发布准备与签名前置阻塞
 
 RC_BASE=`ea5e29ebcc4e4e3fb7cca485fc3319a343f97530`；版本提交
