@@ -16,8 +16,13 @@ import type { PeriodType, Task } from '../lib/types'
 import * as rec from '../lib/recurrence-ipc'
 import { RuleEditor } from './RuleEditor'
 import type { RuleEditorValue } from './RuleEditor'
+import type { TaskCreationContext } from '../lib/task-creation-context'
 
 interface QuickAddProps {
+  /** 从今天/明天新建时沿用该视图日期；其它入口仍可不设日期。 */
+  defaultPlannedDate?: string
+  defaultPeriodType?: PeriodType
+  context?: TaskCreationContext
   /** 保存成功后回调，用于刷新列表 */
   onCreated: (t: Task) => void
   onRecurringCreated?: (warning: string | null) => void | Promise<void>
@@ -35,9 +40,12 @@ export function QuickAdd({
   autoFocus = true,
   onCancel,
   tags = [],
+  defaultPlannedDate = '',
+  defaultPeriodType = 'none',
+  context,
 }: QuickAddProps) {
   const [text, setText] = useState('')
-  const [dateStr, setDateStr] = useState('')
+  const [dateStr, setDateStr] = useState(defaultPlannedDate)
   const [timeStr, setTimeStr] = useState('')
   const [priority, setPriority] = useState(0)
   const [repeat, setRepeat] = useState('none')
@@ -50,7 +58,8 @@ export function QuickAdd({
   const [materializeDays, setMaterializeDays] = useState(90)
   const savingRef = useRef(false)
   /** 周期跨度：这周/这个月做完就行，不必定到某天 */
-  const [periodType, setPeriodType] = useState<PeriodType>('none')
+  const [periodType, setPeriodType] = useState<PeriodType>(defaultPeriodType)
+  const [periodTouched, setPeriodTouched] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** 用户是否手动改过日期；改过之后不再用解析值覆盖（避免"我改的又被冲掉"） */
@@ -58,6 +67,13 @@ export function QuickAdd({
   const inputRef = useRef<HTMLInputElement>(null)
 
   const parsed = useMemo(() => parseQuickInput(text), [text])
+  useEffect(() => {
+    if (!periodTouched) setPeriodType(defaultPeriodType)
+  }, [defaultPeriodType, periodTouched])
+
+  useEffect(() => {
+    if (!dateTouched && !parsed.date && repeat === 'none') setDateStr(defaultPlannedDate)
+  }, [defaultPlannedDate, dateTouched, parsed.date, repeat])
 
   // 解析结果回填到控件，使用户能直接看到并修改（§4.4）
   useEffect(() => {
@@ -77,17 +93,18 @@ export function QuickAdd({
 
   const reset = useCallback(() => {
     setText('')
-    setDateStr('')
+    setDateStr(defaultPlannedDate)
     setTimeStr('')
     setPriority(0)
-    setPeriodType('none')
+    setPeriodType(defaultPeriodType)
+    setPeriodTouched(false)
     setError(null)
     setDateTouched(false)
     setRepeat('none')
     setDescription('')
     setMaterializeDays(90)
     setRule({ rrule: 'FREQ=WEEKLY', dtstartLocal: '', hasStartTime: false })
-  }, [])
+  }, [defaultPlannedDate, defaultPeriodType])
 
   const save = useCallback(async () => {
     if (savingRef.current) return
@@ -102,17 +119,20 @@ export function QuickAdd({
     setError(null)
     try {
       const dt = dateStr ? combineDateTime(dateStr, timeStr) : null
-      const tagIds = parsed.tags
+      const parsedTagIds = parsed.tags
         .map(
           (name) =>
             tags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id,
         )
         .filter((x): x is string => Boolean(x))
+      const tagIds = [...new Set([...(context?.tagIds ?? []), ...parsedTagIds])]
 
       if (repeat !== 'none') {
         if (!rule.dtstartLocal) throw new Error('请选择首次发生的日期')
         const result = await rec.recurringCreate({
           title,
+          projectId: context?.projectId,
+          categoryId: context?.categoryId,
           description: description.trim() || undefined,
           priority: priority || undefined,
           tagIds,
@@ -127,6 +147,8 @@ export function QuickAdd({
       } else {
         const task = await ipc.createTask({
           title,
+          projectId: context?.projectId,
+          categoryId: context?.categoryId,
           priority: priority || undefined,
           periodType: periodType === 'none' ? undefined : periodType,
           plannedAt: dt?.utc ?? null,
@@ -161,6 +183,7 @@ export function QuickAdd({
     rule,
     description,
     materializeDays,
+    context,
   ])
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -179,6 +202,7 @@ export function QuickAdd({
 
   return (
     <div className="quickadd">
+      {context && <p className="setgroup__hint" role="note">新建到：{context.label}</p>}
       <div className="quickadd__row">
         <input
           ref={inputRef}
@@ -256,14 +280,14 @@ export function QuickAdd({
         {/* 周期跨度：用于"这周/这个月做完就行"的任务。
             选中后**不需要**填具体日期，因此这里不做联动清空，
             用户想同时指定日期也可以。 */}
-        {repeat === 'none' && (
+        {(
           <label className="field">
             周期
             <select
               value={periodType}
               aria-label="周期跨度"
               title="标记为某个周期内完成即可，不必绑定到具体某一天"
-              onChange={(e) => setPeriodType(e.target.value as PeriodType)}
+              onChange={(e) => { setPeriodTouched(true); setPeriodType(e.target.value as PeriodType) }}
             >
               <option value="none">不限</option>
               <option value="day">今日内</option>
@@ -325,7 +349,7 @@ export function QuickAdd({
       {repeat !== 'none' && (
         <fieldset className="formfieldset quickadd__repeat">
           <legend>重复规则</legend>
-          <RuleEditor key={repeat} value={rule} onChange={setRule} />
+          <RuleEditor key={repeat} value={rule} onChange={setRule} periodType={periodType} />
           <label className="field">
             描述
             <input

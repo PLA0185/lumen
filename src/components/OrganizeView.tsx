@@ -17,6 +17,7 @@ import * as org from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
 import type { Category, OrphanStrategy, ProjectWithCount, TagWithCount } from '../lib/organize-ipc'
 import { Icon } from './Icons'
+import type { TaskCreationContext } from '../lib/task-creation-context'
 
 /** 统一的错误文案提取 */
 function errText(e: unknown): string {
@@ -269,9 +270,12 @@ function MergeDialog({ kind, items, initialSourceId, busy, onCancel, onConfirm }
 
 type Tab = 'projects' | 'categories' | 'tags'
 
-export function OrganizeView() {
+export function OrganizeView({ onNewTask, initialTab = 'projects' }: {
+  onNewTask?: (context: TaskCreationContext) => void
+  initialTab?: Tab
+} = {}) {
   const gate = useMemo(createRequestGate, [])
-  const [tab, setTab] = useState<Tab>('projects')
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [projects, setProjects] = useState<ProjectWithCount[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [tags, setTags] = useState<TagWithCount[]>([])
@@ -319,6 +323,7 @@ export function OrganizeView() {
   }, [gate, includeArchived])
 
   useEffect(() => {
+    gate.activate()
     void reload()
     const off = onDataChanged(['tasks', 'organization', 'all'], () => void reload())
     return () => { off(); gate.invalidate() }
@@ -600,6 +605,11 @@ export function OrganizeView() {
                   </span>
 
                   <span className="orgrow__actions">
+                    {onNewTask && p.isArchived !== 1 && <button type="button" className="icon-btn"
+                      title={`在项目「${p.name}」新建任务`} aria-label={`在项目 ${p.name} 新建任务`}
+                      onClick={() => onNewTask({label: `项目「${p.name}」`, projectId:p.id})}>
+                      <Icon name="plus" size={15} />
+                    </button>}
                     <button
                       type="button"
                       className="icon-btn"
@@ -682,6 +692,11 @@ export function OrganizeView() {
                   )}
                   <span className="orgrow__meta">{c.description || ''}</span>
                   <span className="orgrow__actions">
+                    {onNewTask && <button type="button" className="icon-btn"
+                      title={`在分类「${c.name}」新建任务`} aria-label={`在分类 ${c.name} 新建任务`}
+                      onClick={() => onNewTask({label: `分类「${c.name}」`, categoryId:c.id})}>
+                      <Icon name="plus" size={15} />
+                    </button>}
                     <button
                       type="button"
                       className="icon-btn"
@@ -746,6 +761,11 @@ export function OrganizeView() {
                   )}
                   <span className="orgrow__meta">{t.taskCount} 个任务使用</span>
                   <span className="orgrow__actions">
+                    {onNewTask && <button type="button" className="icon-btn"
+                      title={`在标签「${t.name}」新建任务`} aria-label={`在标签 ${t.name} 新建任务`}
+                      onClick={() => onNewTask({label: `标签「${t.name}」`, tagIds:[t.id]})}>
+                      <Icon name="plus" size={15} />
+                    </button>}
                     <button
                       type="button"
                       className="icon-btn"

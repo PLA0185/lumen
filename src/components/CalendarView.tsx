@@ -77,10 +77,11 @@ function weekDays(anchor: Date): Date[] {
   )
 }
 
-export function CalendarView() {
+export function CalendarView({ onDateChange }: { onDateChange?: (date: string) => void } = {}) {
   const gate = useMemo(createRequestGate, [])
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()))
+  useEffect(() => { onDateChange?.(dayKey(anchor)) }, [anchor, onDateChange])
   const [tasks, setTasks] = useState<Task[]>([])
   const [calendarTotal, setCalendarTotal] = useState(0)
   const [truncated, setTruncated] = useState(false)
@@ -119,6 +120,7 @@ export function CalendarView() {
   }, [gate, range.start, range.end])
 
   useEffect(() => {
+    gate.activate()
     void reload()
     const off = onDataChanged(['tasks', 'all'], () => void reload())
     return () => {

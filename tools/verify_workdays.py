@@ -32,8 +32,8 @@ def click(selector):
 def select(selector, value):
     main.eval(f'(() => {{ const e=document.querySelector({json.dumps(selector)}); e.value={json.dumps(value)}; e.dispatchEvent(new Event("change", {{bubbles:true}})); }})()')
 
-main.eval("Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('新建任务')).dataset.workdayNew='1'")
-click('[data-workday-new]')
+main.wait_for('document.querySelector("button[title=\\"新建任务（Ctrl+N）\\"]")')
+click('button[title="新建任务（Ctrl+N）"]')
 select('[aria-label="任务重复"]', 'daily')
 check('新建每日任务默认双休', main.wait_for('document.querySelector("[aria-label=\\"周六、周日不执行\\"]")?.checked'))
 ui.set_react_input(main, '.ruleeditor input[type=date]', '2026-09-30')

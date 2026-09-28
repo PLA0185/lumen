@@ -367,7 +367,7 @@ async fn materialize_range(
 
     // Each segment owns [anchor, next anchor). Expand only near the requested
     // range, never only the first N occurrences from DTSTART.
-    let mut candidates: Vec<(String, i64, Occurrence, FieldOverride)> = Vec::new();
+    let mut candidates: Vec<(String, i64, Occurrence, FieldOverride, String)> = Vec::new();
     for (i, (version, anchor, rule, ov)) in timeline.iter().enumerate() {
         let next_anchor = timeline.get(i + 1).and_then(|segment| segment.1.as_deref());
         let tz: chrono_tz::Tz = rule
@@ -402,13 +402,19 @@ async fn materialize_range(
             {
                 continue;
             }
-            candidates.push((key, *version, o, ov.clone()));
+            candidates.push((
+                key,
+                *version,
+                o,
+                ov.clone(),
+                rule.task_period.clone().unwrap_or_else(|| "none".into()),
+            ));
         }
     }
     // A boundary can coincide with both rules; the newer version wins.
     candidates.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     let mut seen: std::collections::HashSet<String> = Default::default();
-    candidates.retain(|(k, _, _, _)| seen.insert(k.clone()));
+    candidates.retain(|(k, _, _, _, _)| seen.insert(k.clone()));
 
     let template = sqlx::query_as::<_, SeriesTemplate>(
         "SELECT title, description, note_md, link_url, priority, project_id,
@@ -422,7 +428,7 @@ async fn materialize_range(
 
     let mut tx = state.db.pool().begin().await?;
 
-    for (key, _ver, occ, ov) in candidates {
+    for (key, _ver, occ, ov, period) in candidates {
         if existing_keys.contains(&key) || skip_keys.contains(&key) {
             continue;
         }
@@ -452,7 +458,7 @@ async fn materialize_range(
                 estimated_minutes, actual_minutes,
                 completed_at, created_at, updated_at,
                 sort_order, is_pinned, is_favorite,
-                series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception
+                series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception, period_type
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 'todo', ?6, ?7, ?8,
@@ -460,7 +466,7 @@ async fn materialize_range(
                 ?11, 0,
                 NULL, ?12, ?12,
                 0, 0, 0,
-                ?13, ?14, ?15, 'generated', 0
+                ?13, ?14, ?15, 'generated', 0, ?16
              )",
         )
         .bind(&id)
@@ -478,6 +484,7 @@ async fn materialize_range(
         .bind(series_id)
         .bind(&key)
         .bind(occ.index)
+        .bind(period)
         .execute(&mut *tx)
         .await?;
         if inserted.rows_affected() == 0 {
@@ -691,12 +698,12 @@ pub async fn create_recurring_impl(
             id, title, description, priority, project_id, category_id,
             status, planned_at, has_planned_time,
             estimated_minutes, created_at, updated_at,
-            sort_order, series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception
+            sort_order, series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception, period_type
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6,
             'todo', ?7, ?8,
             ?9, ?10, ?10,
-            0, ?11, ?7, ?12, 'generated', 0
+            0, ?11, ?7, ?12, 'generated', 0, ?13
          )",
     )
     .bind(&task_id)
@@ -711,6 +718,7 @@ pub async fn create_recurring_impl(
     .bind(&now)
     .bind(&series_id)
     .bind(first_occ.index)
+    .bind(rule.task_period.as_deref().unwrap_or("none"))
     .execute(&mut *tx)
     .await?;
 

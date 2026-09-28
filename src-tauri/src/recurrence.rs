@@ -109,6 +109,8 @@ pub struct RecurrenceRule {
     pub skip_holidays: bool,
     #[serde(default)]
     pub include_makeup: bool,
+    #[serde(default)]
+    pub task_period: Option<String>,
     /// 结束条件
     pub end: EndCondition,
     /// 时区标识，如 `Asia/Shanghai`
@@ -201,6 +203,9 @@ impl RecurrenceRule {
             parts.push(format!("BYMONTH={}", months.join(",")));
         }
 
+        if let Some(period) = &self.task_period {
+            parts.push(format!("X-LUMEN-PERIOD={}", period.to_ascii_uppercase()));
+        }
         if self.skip_holidays {
             parts.push("X-LUMEN-HOLIDAYS=CN".to_string());
         }
@@ -245,6 +250,7 @@ impl RecurrenceRule {
         let mut weekdays_only = false;
         let mut skip_holidays = false;
         let mut include_makeup = false;
+        let mut task_period = None;
         let mut end = EndCondition::Never;
 
         for token in rrule.split(';').filter(|s| !s.trim().is_empty()) {
@@ -319,6 +325,20 @@ impl RecurrenceRule {
                     }
                     // BYSETPOS 必须配合 BYDAY 使用，星期在后续统一校验
                     by_setpos = Some(SetPos { nth, weekday: 1 });
+                }
+                "X-LUMEN-PERIOD" => {
+                    let period = value.to_ascii_lowercase();
+                    if !matches!(
+                        period.as_str(),
+                        "day" | "week" | "month" | "quarter" | "year" | "none"
+                    ) {
+                        return Err(AppError::validation(
+                            "任务周期必须是 day/week/month/quarter/year/none",
+                        ));
+                    }
+                    if period != "none" {
+                        task_period = Some(period);
+                    }
                 }
                 "X-LUMEN-HOLIDAYS" => {
                     if !value.eq_ignore_ascii_case("CN") {
@@ -414,6 +434,7 @@ impl RecurrenceRule {
             weekdays_only,
             skip_holidays,
             include_makeup,
+            task_period,
             end,
             tzid: tzid.to_string(),
             dtstart_local: dtstart_local.to_string(),
@@ -1706,6 +1727,7 @@ mod tests {
             weekdays_only: false,
             skip_holidays: false,
             include_makeup: false,
+            task_period: None,
             end: EndCondition::Never,
             tzid: "UTC".into(),
             dtstart_local: "2026-02-01T00:00:00".into(),

@@ -34,7 +34,7 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
 #[tokio::test]
 async fn holiday_series_persists_and_materializes_only_allowed_days() {
     let (state, dir) = setup("holiday-series").await;
-    let text = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;COUNT=4";
+    let text = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-PERIOD=WEEK;X-LUMEN-HOLIDAYS=CN;COUNT=4";
     let created = create_recurring_impl(
         &state,
         CreateRecurringInput {
@@ -84,6 +84,7 @@ async fn holiday_series_persists_and_materializes_only_allowed_days() {
     );
     let rows = list_instances(&state, &series_id).await.unwrap();
     assert_eq!(rows.len(), 4);
+    assert!(rows.iter().all(|t| t.period_type == "week"));
     assert_eq!(
         rows[3].occurrence_key.as_ref().unwrap()[..10],
         *"2026-10-12"

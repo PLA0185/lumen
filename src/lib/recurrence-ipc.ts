@@ -5,6 +5,7 @@
 import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode, Task } from './types'
+import type { PeriodType } from './types'
 
 /** 频率 */
 export type Freq = 'daily' | 'weekly' | 'monthly' | 'yearly'
@@ -294,6 +295,7 @@ export function buildRrule(opts: {
   weekdaysOnly?: boolean
   skipHolidays?: boolean
   includeMakeup?: boolean
+  periodType?: PeriodType
   /** 每月：指定日期（1–31） */
   byMonthday?: number[]
   /** 每月：第 N 个星期 X */
@@ -342,6 +344,7 @@ export function buildRrule(opts: {
     }
   }
 
+  if (opts.periodType && opts.periodType !== 'none') parts.push(`X-LUMEN-PERIOD=${opts.periodType.toUpperCase()}`)
   if (opts.skipHolidays) parts.push('X-LUMEN-HOLIDAYS=CN')
   if (opts.skipHolidays && opts.includeMakeup && opts.weekdaysOnly && opts.freq === 'daily')
     parts.push('X-LUMEN-MAKEUP=TRUE')

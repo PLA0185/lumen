@@ -3,6 +3,10 @@ import { buildRrule } from '../lib/recurrence-ipc'
 import { parseRrule } from './RuleEditor'
 
 describe('editing an existing recurrence rule', () => {
+  it('keeps the task period when editing a recurring series', () => {
+    const text = 'FREQ=DAILY;X-LUMEN-PERIOD=WEEK;COUNT=3'
+    expect(buildRrule(parseRrule(text))).toBe(text)
+  })
   it('keeps the daily weekend and holiday policy when editing', () => {
     const text = 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;X-LUMEN-MAKEUP=TRUE;COUNT=10'
     expect(buildRrule(parseRrule(text))).toBe(text)

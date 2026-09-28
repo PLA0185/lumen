@@ -8,6 +8,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { format } from 'date-fns'
+import { creationDefaults, type TaskCreationContext } from './lib/task-creation-context'
+import { ContextTaskList } from './components/ContextTaskList'
 import { useApp, PAGE_SIZE, buildQuery } from './lib/store'
 import type { SubtaskSummary } from './lib/store'
 import { IpcError } from './lib/ipc'
@@ -93,6 +96,10 @@ export default function App() {
   } = useApp()
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [creationContext, setCreationContext] = useState<TaskCreationContext>()
+  const [calendarDate, setCalendarDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const defaults = creationDefaults(view, calendarDate)
+  useEffect(() => { setCreationContext(undefined) }, [view])
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
   const [deletingRecurring, setDeletingRecurring] = useState<Task | null>(null)
@@ -295,6 +302,11 @@ export default function App() {
       if (!mod) return
       if (e.key === 'n') {
         e.preventDefault()
+        if (ORGANIZE_VIEWS.has(view)) {
+          pushToast('info', '请点击具体项目、分类或标签旁的加号新建任务')
+          return
+        }
+        if (view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats') setView('inbox')
         setShowQuickAdd(true)
       } else if (e.key === 'f') {
         e.preventDefault()
@@ -306,15 +318,16 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [reload])
+  }, [reload, view, pushToast, setView])
 
   const onCreated = useCallback(
-    async (_t: Task) => {
-      pushToast('success', '任务已创建')
+    async (t: Task) => {
+      pushToast('success', t.plannedAt || t.periodType !== 'none' || t.projectId || t.categoryId || creationContext
+        ? '任务已创建' : '任务已保存到收件箱（未设置计划日期）')
       await reload()
       await useApp.getState().refreshOverview()
     },
-    [reload, pushToast],
+    [reload, pushToast, creationContext],
   )
 
   const meta = VIEW_META[view] ?? { title: '任务', subtitle: '' }
@@ -586,7 +599,8 @@ export default function App() {
             <button
               type="button"
               className="btn btn--primary btn--sm"
-              onClick={() => setShowQuickAdd((v) => !v)}
+              onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
+              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats'}
               title="新建任务（Ctrl+N）"
             >
               <Icon name="plus" size={15} /> 新建
@@ -598,6 +612,9 @@ export default function App() {
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
+                defaultPlannedDate={defaults.plannedDate}
+                defaultPeriodType={defaults.periodType}
+                context={creationContext}
                 onCreated={onCreated}
                 onRecurringCreated={async (warning) => {
                   pushToast(warning ? 'error' : 'success', warning ?? '重复任务已创建')
@@ -695,12 +712,23 @@ export default function App() {
             onDragEndCard={handleDragEndCard}
             onRetry={reload}
             onNew={() => setShowQuickAdd(true)}
+            onNewTask={(context) => { setCreationContext(context); setShowQuickAdd(true) }}
+            onCalendarDate={setCalendarDate}
             onGoSettings={() => setView('settings')}
             totalCount={totalCount}
             hasMore={hasMore}
             loadingMore={loadingMore}
             onLoadMore={() => void loadMore()}
           />
+          {ORGANIZE_VIEWS.has(view) && creationContext && <ContextTaskList key={creationContext.label}
+            context={creationContext} onEdit={setEditing} onToggle={(id,done) => void toggleDone(id,done)}
+            onDelete={(id) => { void (async () => {
+              try {
+                const task = await ipc.getTask(id)
+                if (task.seriesId) setDeletingRecurring(task)
+                else await remove(id)
+              } catch (e) { pushToast('error', e instanceof IpcError ? e.userMessage() : String(e)) }
+            })() }} onDuplicate={(task) => void duplicate(task.id)} />}
         </main>
       </div>
 
@@ -817,6 +845,8 @@ interface TaskAreaProps {
   onDragEndCard: () => void
   onRetry: () => void
   onNew: () => void
+  onNewTask: (context: TaskCreationContext) => void
+  onCalendarDate: (date: string) => void
   onGoSettings: () => void
   /** 当前条件下的总条数（后端 count），用于回答"还有多少没加载" */
   totalCount: number
@@ -846,6 +876,8 @@ function TaskArea({
   onDragEndCard,
   onRetry,
   onNew,
+  onNewTask,
+  onCalendarDate,
   onGoSettings,
   totalCount,
   hasMore,
@@ -854,7 +886,7 @@ function TaskArea({
 }: TaskAreaProps) {
   // 组织管理视图（项目与分类、标签）走专门界面
   if (ORGANIZE_VIEWS.has(view)) {
-    return <OrganizeView />
+    return <OrganizeView key={view} initialTab={view === 'tags' ? 'tags' : 'projects'} onNewTask={onNewTask} />
   }
 
   // 设置页（外观、数据与备份、提醒、关于）
@@ -864,7 +896,7 @@ function TaskArea({
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）
   if (view === 'calendar') {
-    return <CalendarView />
+    return <CalendarView onDateChange={onCalendarDate} />
   }
 
   // 看板视图（按状态分列 + 拖拽改状态）

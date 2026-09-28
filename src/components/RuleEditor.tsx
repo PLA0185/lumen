@@ -17,6 +17,7 @@ import * as rec from '../lib/recurrence-ipc'
 import { IpcError } from '../lib/ipc'
 import { format } from 'date-fns'
 import type { EndCondition, Freq, SetPos } from '../lib/recurrence-ipc'
+import type { PeriodType } from '../lib/types'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -37,6 +38,7 @@ interface RuleEditorProps {
   /** Editing an existing series keeps its original start identity. */
   fixedStart?: boolean
   tzid?: string
+  periodType?: PeriodType
 }
 
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7]
@@ -49,6 +51,7 @@ export function parseRrule(rrule: string): {
   weekdaysOnly: boolean
   skipHolidays: boolean
   includeMakeup: boolean
+  periodType: PeriodType
   byMonthday: number[]
   byMonth: number[]
   setPos: SetPos | null
@@ -61,6 +64,7 @@ export function parseRrule(rrule: string): {
     weekdaysOnly: false,
     skipHolidays: false,
     includeMakeup: false,
+    periodType: 'none' as PeriodType,
     byMonthday: [] as number[],
     byMonth: [] as number[],
     setPos: null as SetPos | null,
@@ -97,6 +101,9 @@ export function parseRrule(rrule: string): {
       if (Number.isFinite(n)) setpos = n
     } else if (key === 'BYMONTH') {
       out.byMonth = v.split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 12)
+    } else if (key === 'X-LUMEN-PERIOD') {
+      const period = v.toLowerCase()
+      if (['none', 'day', 'week', 'month', 'quarter', 'year'].includes(period)) out.periodType = period as PeriodType
     } else if (key === 'X-LUMEN-HOLIDAYS') {
       out.skipHolidays = v.toUpperCase() === 'CN'
     } else if (key === 'X-LUMEN-MAKEUP') {
@@ -137,7 +144,7 @@ function splitDtstart(s: string): { date: string; time: string } {
   return { date, time }
 }
 
-export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, tzid }: RuleEditorProps) {
+export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, tzid, periodType }: RuleEditorProps) {
   // 初始状态从传入的 value 反推，这样编辑已有系列时能正确回显；
   // 新建时 value 是默认值，行为不变。
   const initial = useMemo(() => parseRrule(value.rrule), [value.rrule])
@@ -190,12 +197,13 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
       weekdaysOnly,
       skipHolidays,
       includeMakeup,
+      periodType: periodType ?? initial.periodType,
       byMonthday: monthMode === 'day' ? byMonthday : undefined,
       setPos: monthMode === 'setpos' ? setPos : null,
       byMonth,
       end,
     })
-  }, [freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, monthMode, byMonthday, setPos, byMonth, end])
+  }, [freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, periodType, initial.periodType, monthMode, byMonthday, setPos, byMonth, end])
 
   const dtstartLocal = timeStr ? `${dateStr}T${timeStr}:00` : `${dateStr}T00:00:00`
   const hasStartTime = Boolean(timeStr)
