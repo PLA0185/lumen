@@ -19,6 +19,8 @@ import type {
   ViewId,
 } from './types'
 import { todayRange } from './datetime'
+import type { SubtaskProgress } from './organize-ipc'
+export type SubtaskSummary = Omit<SubtaskProgress, 'taskId'>
 
 /** 列表加载状态（§3：空列表、加载中、失败都要有明确状态） */
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error'
@@ -46,7 +48,7 @@ interface AppStore {
   tasks: Task[]
   /** 任务 ID → 子任务进度。列表页**批量**获取一次，
    * 而不是让每张卡片各查一次，否则 1000 条任务会产生 1000 次查询（§10）。 */
-  progressMap: Record<string, { total: number; done: number; percent: number | null }>
+  progressMap: Record<string, SubtaskSummary>
   loadState: LoadState
   /** 加载失败时的可读原因 */
   loadError: string | null
@@ -241,13 +243,13 @@ export function buildQuery(s: {
  */
 async function fetchProgress(
   tasks: Task[],
-): Promise<Record<string, { total: number; done: number; percent: number | null }>> {
+): Promise<Record<string, SubtaskSummary>> {
   if (tasks.length === 0) return {}
   try {
     const { subtaskProgressBatch } = await import('./organize-ipc')
     const rows = await subtaskProgressBatch(tasks.map((t) => t.id))
     return Object.fromEntries(
-      rows.map((p) => [p.taskId, { total: p.total, done: p.done, percent: p.percent }]),
+      rows.map(({ taskId, ...summary }) => [taskId, summary]),
     )
   } catch {
     return {}

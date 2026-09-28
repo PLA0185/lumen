@@ -31,6 +31,217 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
     (AppState::new(db), dir)
 }
 
+#[tokio::test]
+async fn subtask_batch_returns_ordered_titles_and_live_completion_for_requested_tasks() {
+    let (state, dir) = setup("subtask-summary").await;
+    let parent = create_task_impl(&state.db, task("有子任务")).await.unwrap();
+    let other = create_task_impl(&state.db, task("另一个任务"))
+        .await
+        .unwrap();
+    let first = crate::subtasks::create_subtask_impl(&state.db, &parent.id, "CA")
+        .await
+        .unwrap();
+    let second = crate::subtasks::create_subtask_impl(&state.db, &parent.id, "UK")
+        .await
+        .unwrap();
+    crate::subtasks::create_subtask_impl(&state.db, &other.id, "不该混入")
+        .await
+        .unwrap();
+    sqlx::query("UPDATE subtasks SET is_done=1 WHERE id=?1")
+        .bind(&second.id)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let rows = crate::subtasks::subtask_progress_batch_impl(
+        &state.db,
+        &[parent.id.clone(), parent.id.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].total, rows[0].done, rows[0].percent),
+        (2, 1, Some(50))
+    );
+    assert_eq!(
+        rows[0]
+            .items
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![first.id.as_str(), second.id.as_str()]
+    );
+    assert_eq!(rows[0].items[1].is_done, 1);
+    assert!(crate::subtasks::subtask_progress_batch_impl(&state.db, &[])
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(
+        crate::subtasks::subtask_progress_batch_impl(&state.db, &vec![parent.id; 2001])
+            .await
+            .is_err()
+    );
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn last_completed_subtask_completes_parent_atomically() {
+    use crate::subtasks::{create_subtask_impl, update_subtask_impl, SubtaskPatch};
+    let (state, dir) = setup("subtask-parent-completion").await;
+    let db = &state.db;
+    let parent = create_task_impl(db, task("最后一步完成大任务"))
+        .await
+        .unwrap();
+    let first = create_subtask_impl(db, &parent.id, "第一步").await.unwrap();
+    let last = create_subtask_impl(db, &parent.id, "最后一步")
+        .await
+        .unwrap();
+    let done = || SubtaskPatch {
+        is_done: Some(true),
+        ..Default::default()
+    };
+    update_subtask_impl(db, &first.id, done()).await.unwrap();
+    assert_eq!(
+        col_str(db, &parent.id, "status").await.as_deref(),
+        Some("todo")
+    );
+    assert!(col_str(db, &parent.id, "completed_at").await.is_none());
+    update_subtask_impl(db, &last.id, done()).await.unwrap();
+    assert_eq!(
+        col_str(db, &parent.id, "status").await.as_deref(),
+        Some("done")
+    );
+    let completed = col_str(db, &parent.id, "completed_at").await.unwrap();
+    update_subtask_impl(db, &last.id, done()).await.unwrap();
+    assert_eq!(
+        col_str(db, &parent.id, "completed_at").await,
+        Some(completed)
+    );
+
+    let other = create_task_impl(db, task("模拟父任务保存失败"))
+        .await
+        .unwrap();
+    let step = create_subtask_impl(db, &other.id, "必须原子保存")
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER reject_completion BEFORE UPDATE OF status ON tasks WHEN NEW.status = 'done' BEGIN SELECT RAISE(ABORT, 'test failure'); END")
+        .execute(db.pool()).await.unwrap();
+    assert!(update_subtask_impl(db, &step.id, done()).await.is_err());
+    let is_done: i64 = sqlx::query_scalar("SELECT is_done FROM subtasks WHERE id=?1")
+        .bind(step.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(is_done, 0, "父任务保存失败也必须回滚子任务");
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn subtask_completion_respects_parent_lifecycle_and_recurring_scope() {
+    use crate::subtasks::{create_subtask_impl, update_subtask_impl, SubtaskPatch};
+    let (state, dir) = setup("subtask-parent-lifecycle").await;
+    let db = &state.db;
+    for status in ["todo", "doing", "waiting", "done", "archived"] {
+        let mut input = task(status);
+        input.status = status.into();
+        let parent = create_task_impl(db, input).await.unwrap();
+        let previous = col_str(db, &parent.id, "completed_at").await;
+        let step = create_subtask_impl(db, &parent.id, "步骤").await.unwrap();
+        update_subtask_impl(
+            db,
+            &step.id,
+            SubtaskPatch {
+                is_done: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let expected = if status == "archived" {
+            "archived"
+        } else {
+            "done"
+        };
+        assert_eq!(
+            col_str(db, &parent.id, "status").await.as_deref(),
+            Some(expected)
+        );
+        if status == "done" || status == "archived" {
+            assert_eq!(col_str(db, &parent.id, "completed_at").await, previous);
+        }
+    }
+    let deleted = create_task_impl(db, task("回收站")).await.unwrap();
+    let step = create_subtask_impl(db, &deleted.id, "步骤").await.unwrap();
+    sqlx::query("UPDATE tasks SET deleted_at=updated_at WHERE id=?1")
+        .bind(&deleted.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    update_subtask_impl(
+        db,
+        &step.id,
+        SubtaskPatch {
+            is_done: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        col_str(db, &deleted.id, "status").await.as_deref(),
+        Some("todo")
+    );
+
+    use crate::recurrence_service::{create_recurring_impl, list_instances, CreateRecurringInput};
+    let series = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "只完成本次".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY;COUNT=2".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2026-09-28T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(2),
+        },
+    )
+    .await
+    .unwrap();
+    let instances = list_instances(&state, &series.series_id).await.unwrap();
+    assert_eq!(instances.len(), 2);
+    let step = create_subtask_impl(db, &instances[0].id, "本次步骤")
+        .await
+        .unwrap();
+    update_subtask_impl(
+        db,
+        &step.id,
+        SubtaskPatch {
+            is_done: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        col_str(db, &instances[0].id, "status").await.as_deref(),
+        Some("done")
+    );
+    assert_eq!(
+        col_str(db, &instances[1].id, "status").await.as_deref(),
+        Some("todo")
+    );
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn task(title: &str) -> CreateTaskInput {
     CreateTaskInput {
         title: title.to_string(),

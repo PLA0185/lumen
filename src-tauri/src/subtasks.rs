@@ -49,6 +49,8 @@ pub struct SubtaskProgress {
     /// 0–100 的整数百分比；无子任务时为 None（而不是 0，
     /// 因为"没有子任务"与"完成 0%"是两件不同的事）
     pub percent: Option<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<Subtask>,
 }
 
 /// 创建子任务
@@ -159,7 +161,7 @@ pub async fn subtask_update(
 
 /// 更新子任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
 pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppResult<Subtask> {
-    get_subtask(db, id).await?;
+    let existing = get_subtask(db, id).await?;
 
     let new_title = match &patch.title {
         Some(t) => {
@@ -193,11 +195,30 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
     if let Some(o) = patch.sort_order {
         sep.push("sort_order = ").push_bind_unseparated(o);
     }
-    sep.push("updated_at = ").push_bind_unseparated(now);
+    sep.push("updated_at = ").push_bind_unseparated(now.clone());
     b.push(" WHERE id = ").push_bind(id);
 
-    b.build().execute(db.pool()).await?;
-    get_subtask(db, id).await
+    let mut tx = db.pool().begin().await?;
+    b.build().execute(&mut *tx).await?;
+    if patch.is_done == Some(true) {
+        // 与最后一步在同一事务提交，失败时两者一起回滚；仅完成本次实例。
+        sqlx::query(
+            "UPDATE tasks SET status = 'done', completed_at = ?1, updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL AND status IN ('todo', 'doing', 'waiting')
+               AND EXISTS (SELECT 1 FROM subtasks WHERE task_id = ?2)
+               AND NOT EXISTS (SELECT 1 FROM subtasks WHERE task_id = ?2 AND is_done = 0)",
+        )
+        .bind(&now)
+        .bind(&existing.task_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    let updated = sqlx::query_as::<_, Subtask>("SELECT * FROM subtasks WHERE id = ?1")
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(updated)
 }
 
 /// 删除子任务
@@ -231,6 +252,7 @@ pub async fn subtask_progress(
         task_id,
         total,
         done,
+        items: Vec::new(),
         percent: if total > 0 {
             Some((done * 100) / total)
         } else {
@@ -245,6 +267,13 @@ pub async fn subtask_progress_batch(
     state: State<'_, AppState>,
     task_ids: Vec<String>,
 ) -> AppResult<Vec<SubtaskProgress>> {
+    subtask_progress_batch_impl(&state.db, &task_ids).await
+}
+
+pub async fn subtask_progress_batch_impl(
+    db: &Db,
+    task_ids: &[String],
+) -> AppResult<Vec<SubtaskProgress>> {
     if task_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -252,33 +281,33 @@ pub async fn subtask_progress_batch(
         return Err(AppError::validation("单次查询最多 2000 个任务"));
     }
 
-    let mut b = QueryBuilder::<Sqlite>::new(
-        "SELECT task_id, COUNT(*) AS total, COALESCE(SUM(is_done), 0) AS done
-         FROM subtasks WHERE task_id IN (",
-    );
+    let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM subtasks WHERE task_id IN (");
     let mut sep = b.separated(", ");
-    for id in &task_ids {
+    for id in task_ids {
         sep.push_bind(id.clone());
     }
-    sep.push_unseparated(") GROUP BY task_id");
+    sep.push_unseparated(") ORDER BY task_id, sort_order, id");
 
-    let rows = b.build().fetch_all(state.db.pool()).await?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        let total: i64 = r.try_get("total")?;
-        let done: i64 = r.try_get("done")?;
-        out.push(SubtaskProgress {
-            task_id: r.try_get("task_id")?,
-            total,
-            done,
-            percent: if total > 0 {
-                Some((done * 100) / total)
-            } else {
-                None
-            },
-        });
+    let rows = b.build_query_as::<Subtask>().fetch_all(db.pool()).await?;
+    let mut grouped: std::collections::BTreeMap<String, SubtaskProgress> = Default::default();
+    for item in rows {
+        let summary = grouped
+            .entry(item.task_id.clone())
+            .or_insert_with(|| SubtaskProgress {
+                task_id: item.task_id.clone(),
+                total: 0,
+                done: 0,
+                percent: None,
+                items: Vec::new(),
+            });
+        summary.total += 1;
+        summary.done += i64::from(item.is_done == 1);
+        summary.items.push(item);
     }
-    Ok(out)
+    for summary in grouped.values_mut() {
+        summary.percent = Some(summary.done * 100 / summary.total);
+    }
+    Ok(grouped.into_values().collect())
 }
 
 // =============================================================================

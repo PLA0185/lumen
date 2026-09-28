@@ -13,4 +13,16 @@ describe('latest request wins', () => {
     gate.dispose()
     expect(gate.isCurrent(gate.begin())).toBe(false)
   })
+
+  it('accepts responses after effect remount without accepting the old mount', () => {
+    const gate = createRequestGate()
+    const old = gate.begin()
+    gate.dispose()
+    gate.activate()
+    const current = gate.begin()
+    expect(gate.isCurrent(old)).toBe(false)
+    expect(gate.isCurrent(current)).toBe(true)
+    gate.dispose()
+    expect(gate.isCurrent(current)).toBe(false)
+  })
 })

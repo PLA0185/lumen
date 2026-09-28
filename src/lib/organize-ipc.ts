@@ -85,6 +85,8 @@ export interface SubtaskProgress {
   done: number
   /** 无子任务时为 null —— 与"完成 0%"是不同含义 */
   percent: number | null
+  /** 批量查询同时返回子任务，用于卡片和悬浮窗的简览。 */
+  items?: Subtask[]
 }
 
 /** 依赖项 */

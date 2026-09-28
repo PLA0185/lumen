@@ -159,7 +159,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
                 />
               ) : (
                 <span
-                  className="subtask__title"
+                  className="subtask__title selectable"
                   onDoubleClick={() => {
                     setEditingId(s.id)
                     setEditTitle(s.title)

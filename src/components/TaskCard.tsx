@@ -14,6 +14,8 @@ import { PERIOD_BADGES, PERIOD_LABELS } from '../lib/types'
 import { formatTaskTime, isOverdue } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
+import { SubtaskPreview } from './SubtaskPreview'
+import type { SubtaskProgress } from '../lib/organize-ipc'
 import { DependencyEditor } from './DependencyEditor'
 import { AttachmentList } from './AttachmentList'
 import { FocusPanel } from './FocusPanel'
@@ -37,17 +39,22 @@ function SeriesInfo({ taskId }: { taskId: string }) {
 
   useEffect(() => {
     let active = true
-    const load = () => { void (async () => {
-      try {
-        const next = await rec.recurringScopeInfo(taskId)
-        if (active) setInfo(next)
-      } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : String(e))
-      }
-    })() }
+    const load = () => {
+      void (async () => {
+        try {
+          const next = await rec.recurringScopeInfo(taskId)
+          if (active) setInfo(next)
+        } catch (e) {
+          if (active) setError(e instanceof Error ? e.message : String(e))
+        }
+      })()
+    }
     load()
     const off = onDataChanged(['recurrence', 'tasks', 'all'], load)
-    return () => { active = false; off() }
+    return () => {
+      active = false
+      off()
+    }
   }, [taskId])
 
   if (!info?.isRecurring) return null
@@ -77,7 +84,8 @@ function SeriesInfo({ taskId }: { taskId: string }) {
     <div className="seriesinfo">
       <div className="seriesinfo__row">
         <span className="seriesinfo__rule" title="这是重复任务的一次发生">
-          <Icon name="repeat" size={13} /> 第 {info.occurrenceIndex ?? '?'} 次发生
+          <Icon name="repeat" size={13} /> 第 {info.occurrenceIndex ?? '?'}{' '}
+          次发生
         </span>
         <span>
           系列共 <strong>{info.totalInstances ?? 0}</strong> 次
@@ -86,7 +94,10 @@ function SeriesInfo({ taskId }: { taskId: string }) {
           已完成 <strong>{info.completed ?? 0}</strong> 次
         </span>
         {info.isException && (
-          <span className="chip chip--warn" title="这一次被单独修改过，改系列规则时会保护它">
+          <span
+            className="chip chip--warn"
+            title="这一次被单独修改过，改系列规则时会保护它"
+          >
             已单独修改
           </span>
         )}
@@ -138,7 +149,7 @@ interface TaskCardProps {
   /** 回收站视图下显示恢复/永久删除而非完成/删除 */
   mode?: 'normal' | 'trash'
   /** 子任务进度（由列表页批量获取，避免每张卡片各查一次） */
-  progress?: { total: number; done: number; percent: number | null }
+  progress?: Omit<SubtaskProgress, 'taskId'>
   /** 复制任务（§4.1 复制为副本，不复制附件与完成状态） */
   onDuplicate?: (task: Task) => void
   /** 是否允许拖拽排序（回收站、只读视图传 false） */
@@ -196,20 +207,11 @@ export function TaskCard({
       ]
         .filter(Boolean)
         .join(' ')}
-      draggable={canDrag}
-      onDragStart={
-        canDrag
-          ? (e) => {
-              e.dataTransfer.effectAllowed = 'move'
-              // 部分浏览器要求 setData 才会真正启动拖拽
-              e.dataTransfer.setData('text/plain', task.id)
-              onDragStartCard?.(task.id)
-            }
-          : undefined
-      }
       onDragOver={
         canDrag
           ? (e) => {
+              if (!e.dataTransfer.types.includes('application/x-lumen-task'))
+                return
               e.preventDefault()
               e.dataTransfer.dropEffect = 'move'
               onDragOverCard?.(task.id)
@@ -220,6 +222,8 @@ export function TaskCard({
       onDrop={
         canDrag
           ? (e) => {
+              if (!e.dataTransfer.types.includes('application/x-lumen-task'))
+                return
               e.preventDefault()
               onDragEndCard?.()
             }
@@ -228,7 +232,17 @@ export function TaskCard({
     >
       <div className="task__main">
         {canDrag && (
-          <span className="task__grip" title="按住拖动可调整顺序（仅同一天内生效）" aria-hidden="true">
+          <span
+            className="task__grip"
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move'
+              e.dataTransfer.setData('application/x-lumen-task', task.id)
+              onDragStartCard?.(task.id)
+            }}
+            title="按住把手拖动可调整顺序（仅同一天内生效）"
+            aria-hidden="true"
+          >
             ⋮⋮
           </span>
         )}
@@ -237,12 +251,21 @@ export function TaskCard({
             type="button"
             role="checkbox"
             aria-checked={done}
-            aria-label={done ? `将「${task.title}」标记为未完成` : `将「${task.title}」标记为已完成`}
+            aria-label={
+              done
+                ? `将「${task.title}」标记为未完成`
+                : `将「${task.title}」标记为已完成`
+            }
             className="task__check"
             onClick={() => onToggle(task.id, !done)}
           >
             {done && (
-              <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 12 12"
+                aria-hidden="true"
+              >
                 <path
                   d="M2.5 6.2l2.3 2.3L9.5 3.8"
                   fill="none"
@@ -256,10 +279,18 @@ export function TaskCard({
           </button>
         )}
 
-        <div className="task__body" onClick={() => hasDetail && setExpanded((v) => !v)}>
-          <div className="task__title">{task.title}</div>
+        <div
+          className="task__body"
+          onClick={() => {
+            if (hasDetail && !window.getSelection()?.toString())
+              setExpanded((v) => !v)
+          }}
+        >
+          <div className="task__title selectable">{task.title}</div>
 
-          {task.description && <div className="task__desc">{task.description}</div>}
+          {task.description && (
+            <div className="task__desc selectable">{task.description}</div>
+          )}
 
           <div className="task__meta">
             {task.priority > 0 && (
@@ -285,7 +316,10 @@ export function TaskCard({
               </span>
             )}
             {isRecurring && (
-              <span className="badge badge--recurring" title="这是重复任务的一次发生">
+              <span
+                className="badge badge--recurring"
+                title="这是重复任务的一次发生"
+              >
                 <Icon name="repeat" size={13} /> 重复
               </span>
             )}
@@ -293,12 +327,17 @@ export function TaskCard({
             {timeText && <span>{timeText}</span>}
 
             {task.estimatedMinutes != null && task.estimatedMinutes > 0 && (
-              <span title="预计耗时">约 {formatMinutes(task.estimatedMinutes)}</span>
+              <span title="预计耗时">
+                约 {formatMinutes(task.estimatedMinutes)}
+              </span>
             )}
 
             {/* 子任务进度：只在确实有子任务时显示，避免"0/0"噪音 */}
             {progress && progress.total > 0 && (
-              <span className="task__progress" title={`已完成 ${progress.done} / ${progress.total}`}>
+              <span
+                className="task__progress"
+                title={`已完成 ${progress.done} / ${progress.total}`}
+              >
                 <span className="progress progress--inline">
                   <span
                     className="progress__bar"
@@ -310,7 +349,9 @@ export function TaskCard({
             )}
 
             {inTrash && task.deletedAt && (
-              <span>删除于 {new Date(task.deletedAt).toLocaleString('zh-CN')}</span>
+              <span>
+                删除于 {new Date(task.deletedAt).toLocaleString('zh-CN')}
+              </span>
             )}
           </div>
         </div>
@@ -380,6 +421,11 @@ export function TaskCard({
           )}
         </div>
       </div>
+
+      {!expanded &&
+        !inTrash &&
+        progress?.items &&
+        progress.items.length > 0 && <SubtaskPreview items={progress.items} />}
 
       {expanded && hasDetail && (
         <div className="task__detail">

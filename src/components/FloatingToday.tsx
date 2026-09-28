@@ -27,6 +27,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as win from '../lib/window-ipc'
 import * as ipc from '../lib/ipc'
+import { subtaskProgressBatch } from '../lib/organize-ipc'
+import type { Subtask } from '../lib/organize-ipc'
+import { SubtaskPreview } from './SubtaskPreview'
 import { onDataChanged } from '../lib/data-change'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
@@ -43,6 +46,7 @@ const OPACITY_SAVE_DELAY = 250
 export function FloatingToday() {
   const gate = useMemo(createRequestGate, [])
   const [tasks, setTasks] = useState<Task[]>([])
+  const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({})
   const [total, setTotal] = useState(0)
   const [doneTotal, setDoneTotal] = useState(0)
   const [state, setState] = useState<FloatingState | null>(null)
@@ -62,36 +66,54 @@ export function FloatingToday() {
   const opacityTimer = useRef<number | undefined>(undefined)
 
   const reload = useCallback(async () => {
-    await runLatestRequest(gate, async () => {
-      const r = todayRange()
-      const query: TaskQuery = {
-        statuses: ['todo', 'doing', 'waiting', 'done'],
-        plannedFrom: r.start,
-        plannedTo: r.end,
-      }
-      return Promise.all([
-        ipc.listTasks({
-          ...query,
-          sortBy: 'manual',
-          limit: 100,
-        }),
-        ipc.countTasks(query),
-        ipc.countTasks({ ...query, statuses: ['done'] }),
-        win.windowFloatingState(),
-      ])
-    }, { apply: ([list, allCount, doneCount, st]) => {
-      setTasks(list)
-      setTotal(allCount.total)
-      setDoneTotal(doneCount.total)
-      setState(st)
-      setOpacity(st.opacity)
-      document.documentElement.style.setProperty('--floating-opacity', String(st.opacity))
-      setError(null)
-    }, reject: (e) => setError(e instanceof Error ? e.message : String(e)),
-    finish: () => setLoading(false) })
+    await runLatestRequest(
+      gate,
+      async () => {
+        const r = todayRange()
+        const query: TaskQuery = {
+          statuses: ['todo', 'doing', 'waiting', 'done'],
+          plannedFrom: r.start,
+          plannedTo: r.end,
+        }
+        const [list, allCount, doneCount, st] = await Promise.all([
+          ipc.listTasks({
+            ...query,
+            sortBy: 'manual',
+            limit: 100,
+          }),
+          ipc.countTasks(query),
+          ipc.countTasks({ ...query, statuses: ['done'] }),
+          win.windowFloatingState(),
+        ])
+        const summaries = await subtaskProgressBatch(
+          list.map((task) => task.id),
+        )
+        return { list, allCount, doneCount, st, summaries }
+      },
+      {
+        apply: ({ list, allCount, doneCount, st, summaries }) => {
+          setTasks(list)
+          setSubtasks(
+            Object.fromEntries(summaries.map((p) => [p.taskId, p.items ?? []])),
+          )
+          setTotal(allCount.total)
+          setDoneTotal(doneCount.total)
+          setState(st)
+          setOpacity(st.opacity)
+          document.documentElement.style.setProperty(
+            '--floating-opacity',
+            String(st.opacity),
+          )
+          setError(null)
+        },
+        reject: (e) => setError(e instanceof Error ? e.message : String(e)),
+        finish: () => setLoading(false),
+      },
+    )
   }, [gate])
 
   useEffect(() => {
+    gate.activate()
     void reload()
     // 定时刷新作为兜底（例如主窗口没开、事件丢了）
     const t = window.setInterval(() => void reload(), 60_000)
@@ -101,11 +123,9 @@ export function FloatingToday() {
     return () => {
       window.clearInterval(t)
       off()
-      gate.invalidate()
+      gate.dispose()
     }
   }, [gate, reload])
-
-  useEffect(() => () => gate.dispose(), [gate])
 
   /** 监听后端广播的配置变化，实时更新不透明度与穿透提示 */
   useEffect(() => {
@@ -137,7 +157,9 @@ export function FloatingToday() {
         })
       } catch (e) {
         // 事件监听不可用时不影响主流程，但要说明原因，避免"改了不生效"却查不到
-        setError(`悬浮窗实时同步不可用：${e instanceof Error ? e.message : String(e)}`)
+        setError(
+          `悬浮窗实时同步不可用：${e instanceof Error ? e.message : String(e)}`,
+        )
       }
     })()
     return () => unlisten?.()
@@ -167,7 +189,11 @@ export function FloatingToday() {
                 const width = payload.width / scale
                 const height = payload.height / scale
                 const applied = await win.windowSetFloatingSize(width, height)
-                setState((s) => (s ? { ...s, width: applied.width, height: applied.height } : s))
+                setState((s) =>
+                  s
+                    ? { ...s, width: applied.width, height: applied.height }
+                    : s,
+                )
               } catch (e) {
                 setError(e instanceof Error ? e.message : String(e))
               }
@@ -253,7 +279,11 @@ export function FloatingToday() {
     if (e.button !== 0) return
     const target = e.target as HTMLElement
     if (!target.closest('[data-drag-region]')) return
-    if (target.closest('button, input, select, textarea, a, [role="button"], [data-no-drag]')) {
+    if (
+      target.closest(
+        'button, input, select, textarea, a, [role="button"], .selectable, [data-no-drag]',
+      )
+    ) {
       return
     }
     try {
@@ -329,7 +359,11 @@ export function FloatingToday() {
               type="button"
               className={`floating__btn${state?.alwaysOnTop ? ' floating__btn--on' : ''}`}
               aria-pressed={state?.alwaysOnTop ?? false}
-              title={state?.alwaysOnTop ? '取消置顶（会被其它窗口盖住）' : '置顶显示（始终浮在最前）'}
+              title={
+                state?.alwaysOnTop
+                  ? '取消置顶（会被其它窗口盖住）'
+                  : '置顶显示（始终浮在最前）'
+              }
               aria-label={state?.alwaysOnTop ? '取消置顶' : '置顶显示'}
               onClick={() => void act('toggle_floating_top')}
             >
@@ -374,7 +408,9 @@ export function FloatingToday() {
       {total > tasks.length && (
         <div className="floating__hint">
           仅显示前 {tasks.length} 项，共 {total} 项。
-          <button type="button" onClick={() => void act('show_main')}>在主窗口查看全部</button>
+          <button type="button" onClick={() => void act('show_main')}>
+            在主窗口查看全部
+          </button>
         </div>
       )}
 
@@ -384,7 +420,9 @@ export function FloatingToday() {
         <div className="floating__empty">
           今天还没有安排。
           <br />
-          <span className="floating__hint">在下面的输入框里直接添加，或在主窗口给任务设置「计划时间」为今天。</span>
+          <span className="floating__hint">
+            在下面的输入框里直接添加，或在主窗口给任务设置「计划时间」为今天。
+          </span>
         </div>
       ) : (
         <ul className="floating__list">
@@ -404,12 +442,18 @@ export function FloatingToday() {
                   type="button"
                   role="checkbox"
                   aria-checked={isDone}
-                  aria-label={isDone ? `将「${t.title}」标记为未完成` : `完成「${t.title}」`}
+                  aria-label={
+                    isDone
+                      ? `将「${t.title}」标记为未完成`
+                      : `完成「${t.title}」`
+                  }
                   className="floating__check"
                   disabled={clickThrough}
                   onClick={() => void toggle(t.id, !isDone)}
                 >
-                  {isDone ? <Icon name="completed" size={11} strokeWidth={2.4} /> : null}
+                  {isDone ? (
+                    <Icon name="completed" size={11} strokeWidth={2.4} />
+                  ) : null}
                 </button>
 
                 {editing ? (
@@ -433,7 +477,7 @@ export function FloatingToday() {
                   />
                 ) : (
                   <span
-                    className="floating__text"
+                    className="floating__text selectable"
                     title={`${t.title}\n双击可直接改名，点右侧 ✎ 打开完整编辑`}
                     role="button"
                     tabIndex={0}
@@ -480,6 +524,12 @@ export function FloatingToday() {
                 >
                   <Icon name="edit" size={15} />
                 </button>
+                {(subtasks[t.id]?.length ?? 0) > 0 && (
+                  <SubtaskPreview
+                    items={subtasks[t.id] ?? []}
+                    disabled={clickThrough}
+                  />
+                )}
               </li>
             )
           })}
@@ -504,7 +554,9 @@ export function FloatingToday() {
               title={`不透明度 ${Math.round(opacity * 100)}%（拖动调节，最低 25%）`}
               onChange={(e) => onOpacityInput(Number(e.target.value) / 100)}
             />
-            <span className="floating__opacity-value">{Math.round(opacity * 100)}%</span>
+            <span className="floating__opacity-value">
+              {Math.round(opacity * 100)}%
+            </span>
           </label>
           <span className="floating__hint">按住空白处可移动窗口</span>
         </footer>
@@ -527,7 +579,7 @@ export function FloatingToday() {
           onSaved={async () => {
             setFullEditing(null)
             await reload()
-                }}
+          }}
         />
       )}
     </div>
@@ -626,7 +678,11 @@ export function QuickAddWindow() {
 }
 
 /** 快速添加窗内的输入区（复用主界面的解析逻辑但样式更紧凑） */
-function QuickAddBody({ onCreated }: { onCreated: (title: string) => void | Promise<void> }) {
+function QuickAddBody({
+  onCreated,
+}: {
+  onCreated: (title: string) => void | Promise<void>
+}) {
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -686,7 +742,8 @@ function QuickAddBody({ onCreated }: { onCreated: (title: string) => void | Prom
           } else if (e.key === 'Escape') {
             e.preventDefault()
             void (async () => {
-              const { getCurrentWindow } = await import('@tauri-apps/api/window')
+              const { getCurrentWindow } =
+                await import('@tauri-apps/api/window')
               await getCurrentWindow().hide()
             })()
           }

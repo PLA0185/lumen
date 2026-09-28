@@ -3,6 +3,11 @@ export function createRequestGate() {
   let generation = 0
   let disposed = false
   return {
+    /** A React effect can be mounted again after StrictMode's cleanup rehearsal. */
+    activate(): void {
+      disposed = false
+      generation += 1
+    },
     begin(): number {
       return ++generation
     },
