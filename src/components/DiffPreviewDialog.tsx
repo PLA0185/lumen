@@ -26,6 +26,7 @@ import { useMemo, useState } from 'react'
 import * as ai from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
 import type { DiffPreview } from '../lib/ai-ipc'
+import { fromUtcIso, toDateInput } from '../lib/datetime'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -53,9 +54,18 @@ export function DiffPreviewDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
+  const [edits, setEdits] = useState<Record<string, ai.PreviewEdit>>({})
+  const edit = (index: number, field: ai.PreviewEdit['field'], value: string) =>
+    setEdits((old) => ({
+      ...old,
+      [`${index}:${field}`]: { index, field, value: value || null },
+    }))
 
   const counts = useMemo(() => ai.countIssues(preview.issues), [preview.issues])
-  const applyCheck = useMemo(() => ai.canApply(preview, selected.size), [preview, selected])
+  const applyCheck = useMemo(
+    () => ai.canApply(preview, selected.size),
+    [preview, selected],
+  )
 
   /** 按条目下标取它相关的校验问题 */
   const issuesFor = (index: number) =>
@@ -79,9 +89,16 @@ export function DiffPreviewDialog({
     setBusy(true)
     setError(null)
     try {
+      const chosenEdits = Object.values(edits).filter((e) =>
+        selected.has(e.index),
+      )
+      if (chosenEdits.length)
+        await ai.aiEditPreview(preview.previewId, chosenEdits)
       // 全部选中时传 null，让后端走"全部接受"路径（语义更明确）
       const indices =
-        selected.size === preview.items.length ? null : Array.from(selected).sort((a, b) => a - b)
+        selected.size === preview.items.length
+          ? null
+          : Array.from(selected).sort((a, b) => a - b)
       const r = await ai.aiApply(preview.previewId, indices)
       onApplied(r.created, r.updated)
       onClose()
@@ -102,14 +119,21 @@ export function DiffPreviewDialog({
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="diff-title">
+    <div
+      className="modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="diff-title"
+    >
       <div className="modal modal--wide">
         <h2 className="modal__title" id="diff-title">
-          {preview.capability}　<span className="chip chip--muted">{preview.summary}</span>
+          {preview.capability}　
+          <span className="chip chip--muted">{preview.summary}</span>
         </h2>
 
         <p className="modal__text">
-          以下是 AI 提出的改动。<strong>在你确认之前，数据库没有任何改动。</strong>
+          以下是 AI 提出的改动。
+          <strong>在你确认之前，数据库没有任何改动。</strong>
           请逐条核对——你可以只接受其中一部分。
         </p>
 
@@ -133,7 +157,9 @@ export function DiffPreviewDialog({
                   </li>
                 ))}
                 {preview.issues.length > 8 && (
-                  <li>…另有 {preview.issues.length - 8} 处，可展开原始输出查看</li>
+                  <li>
+                    …另有 {preview.issues.length - 8} 处，可展开原始输出查看
+                  </li>
                 )}
               </ul>
             </div>
@@ -164,7 +190,8 @@ export function DiffPreviewDialog({
                   ref={(el) => {
                     if (el) {
                       el.indeterminate =
-                        selected.size > 0 && selected.size < preview.items.length
+                        selected.size > 0 &&
+                        selected.size < preview.items.length
                     }
                   }}
                   onChange={toggleAll}
@@ -210,6 +237,88 @@ export function DiffPreviewDialog({
                         </span>
                         <span className="diffitem__title">{it.title}</span>
                       </div>
+                      {it.action === 'create' && (
+                        <div className="diffitem__editor">
+                          <label className="field">
+                            标题
+                            <input
+                              className="input selectable"
+                              aria-label={`第 ${i + 1} 条任务标题`}
+                              value={
+                                edits[`${i}:title`]
+                                  ? (edits[`${i}:title`]?.value ?? '')
+                                  : it.title
+                              }
+                              disabled={busy}
+                              onChange={(e) => edit(i, 'title', e.target.value)}
+                            />
+                          </label>
+                          {preview.capability !== '拆解任务' && (
+                            <>
+                              {(['plannedAt', 'dueAt'] as const).map(
+                                (field) => (
+                                  <label className="field" key={field}>
+                                    {field === 'plannedAt'
+                                      ? '计划日期'
+                                      : '截止日期'}
+                                    <input
+                                      type="date"
+                                      aria-label={`第 ${i + 1} 条${field === 'plannedAt' ? '计划日期' : '截止日期'}`}
+                                      disabled={busy}
+                                      value={
+                                        edits[`${i}:${field}`]
+                                          ? (edits[`${i}:${field}`]?.value ??
+                                            '')
+                                          : toDateInput(
+                                              fromUtcIso(
+                                                it.changes
+                                                  .find(
+                                                    (c) => c.field === field,
+                                                  )
+                                                  ?.after?.replace(
+                                                    '（仅日期）',
+                                                    '',
+                                                  ),
+                                              ),
+                                            )
+                                      }
+                                      onChange={(e) =>
+                                        edit(i, field, e.target.value)
+                                      }
+                                    />
+                                  </label>
+                                ),
+                              )}
+                              <label className="field">
+                                优先级
+                                <select
+                                  aria-label={`第 ${i + 1} 条优先级`}
+                                  disabled={busy}
+                                  value={
+                                    edits[`${i}:priority`]?.value ??
+                                    String(
+                                      ['无', '低', '中', '高'].indexOf(
+                                        it.changes.find(
+                                          (c) => c.field === 'priority',
+                                        )?.after ?? '无',
+                                      ),
+                                    )
+                                  }
+                                  onChange={(e) =>
+                                    edit(i, 'priority', e.target.value)
+                                  }
+                                >
+                                  {['无', '低', '中', '高'].map((label, p) => (
+                                    <option key={p} value={p}>
+                                      {label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       {/* 字段级改动：逐项列出前→后，让用户看清 AI 到底改了什么 */}
                       {/* 注意用 dl/dt/dd 而不是 table：这里是「字段名 → 值」的键值对，
@@ -226,19 +335,30 @@ export function DiffPreviewDialog({
                                     <span className="diffarrow">→</span>
                                   </>
                                 ) : null}
-                                <span className="diffnew">{c.after ?? '（清空）'}</span>
+                                <span className="diffnew">
+                                  {c.after ?? '（清空）'}
+                                </span>
                               </dd>
                             </div>
                           ))}
                         </dl>
                       )}
 
-                      {it.note && <div className="diffitem__note">AI 说明：{it.note}</div>}
+                      {it.note && (
+                        <div className="diffitem__note">AI 说明：{it.note}</div>
+                      )}
 
                       {itemIssues.length > 0 && (
                         <div className="diffitem__issues">
                           {itemIssues.map((x, xi) => (
-                            <div key={xi} className={x.level === 'error' ? 'formerr' : 'setgroup__hint'}>
+                            <div
+                              key={xi}
+                              className={
+                                x.level === 'error'
+                                  ? 'formerr'
+                                  : 'setgroup__hint'
+                              }
+                            >
                               {x.level === 'error' ? '无法写入：' : '提示：'}
                               {x.message}
                             </div>
@@ -283,7 +403,12 @@ export function DiffPreviewDialog({
 
         {/* ---------------- 操作 ---------------- */}
         <div className="modal__actions">
-          <button type="button" className="btn btn--ghost" onClick={() => void discard()} disabled={busy}>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => void discard()}
+            disabled={busy}
+          >
             放弃
           </button>
           {onRegenerate && (

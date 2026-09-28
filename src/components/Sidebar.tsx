@@ -61,6 +61,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '其他',
     items: [
+      { id: 'assistant', icon: 'star', label: 'AI 助手' },
       { id: 'stats', icon: 'stats', label: '统计' },
       { id: 'settings', icon: 'settings', label: '设置' },
     ],
@@ -69,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** 视图标题与说明。说明文字用于向用户解释该视图的口径（§4.2 要求规则明确）。 */
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
+  assistant: { title: 'AI 助手', subtitle: '一段话生成计划待办，日、周、月、年总结' },
   today: { title: '今天', subtitle: '计划时间落在今天的所有任务' },
   tomorrow: { title: '明天', subtitle: '计划时间落在明天的所有任务' },
   week: {

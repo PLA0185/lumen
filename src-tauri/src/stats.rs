@@ -157,8 +157,6 @@ struct DayRow {
 
 /// 计算最近 N 天的本地时间范围（含今天），返回 UTC 边界与本地日期串
 fn recent_range(days: i64) -> AppResult<(String, String, String, String)> {
-    use chrono::TimeZone;
-
     if !(1..=366).contains(&days) {
         return Err(
             AppError::validation(format!("统计天数超出范围：{days}")).with_hint("允许 1–366 天")
@@ -168,6 +166,18 @@ fn recent_range(days: i64) -> AppResult<(String, String, String, String)> {
     let today = chrono::Local::now().date_naive();
     let start_date = today - chrono::Duration::days(days - 1);
     let end_date = today + chrono::Duration::days(1); // 半开区间，含今天
+    date_range(start_date, end_date)
+}
+
+fn date_range(
+    start_date: chrono::NaiveDate,
+    end_date: chrono::NaiveDate,
+) -> AppResult<(String, String, String, String)> {
+    use chrono::TimeZone;
+    let days = (end_date - start_date).num_days();
+    if !(1..=366).contains(&days) {
+        return Err(AppError::validation("统计范围必须为 1–366 天"));
+    }
 
     let local_dt = |d: chrono::NaiveDate| {
         d.and_hms_opt(0, 0, 0)
@@ -189,15 +199,27 @@ fn recent_range(days: i64) -> AppResult<(String, String, String, String)> {
 // 采集
 // =============================================================================
 
-/// 采集最近 N 天的统计（供统计页与 AI 复盘共用，保证口径一致）。
-pub async fn collect_period_stats(state: &AppState, days: i64) -> AppResult<serde_json::Value> {
-    let p = period_stats(&state.db, days).await?;
+/// 周期统计的主体实现
+pub async fn period_stats(db: &Db, days: i64) -> AppResult<PeriodStats> {
+    period_stats_in_range(db, days, recent_range(days)?).await
+}
+
+pub async fn collect_calendar_stats(
+    state: &AppState,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+) -> AppResult<serde_json::Value> {
+    let p =
+        period_stats_in_range(&state.db, (end - start).num_days(), date_range(start, end)?).await?;
     serde_json::to_value(&p).map_err(|e| AppError::internal(format!("序列化统计失败：{e}")))
 }
 
-/// 周期统计的主体实现
-pub async fn period_stats(db: &Db, days: i64) -> AppResult<PeriodStats> {
-    let (start_utc, end_utc, start_date, end_date) = recent_range(days)?;
+async fn period_stats_in_range(
+    db: &Db,
+    days: i64,
+    range: (String, String, String, String),
+) -> AppResult<PeriodStats> {
+    let (start_utc, end_utc, start_date, end_date) = range;
 
     // ---------------- 按天聚合完成任务 ----------------
     // completed_at 用本地日期归属，与"今天完成了什么"的直觉一致

@@ -176,6 +176,7 @@ export const AI_CMD = {
   plan: 'ai_plan',
   review: 'ai_review',
   apply: 'ai_apply',
+  editPreview: 'ai_preview_edit',
   discard: 'ai_discard',
   conflicts: 'schedule_conflicts',
 } as const
@@ -260,10 +261,13 @@ export const aiPlan = (
     input: { horizon, minutesPerDay, taskIds: taskIds ?? null, sendNotes },
   })
 
+export type ReviewHorizon = 'daily' | 'weekly' | 'monthly' | 'yearly'
 export const aiReview = (
   config: ProviderConfig,
-  horizon: 'daily' | 'weekly',
-): Promise<ReviewResult> => call(AI_CMD.review, { config, input: { horizon } })
+  horizon: ReviewHorizon,
+  anchorDate?: string,
+  text?: string,
+): Promise<ReviewResult> => call(AI_CMD.review, { config, input: { horizon, anchorDate, text } })
 
 /**
  * 确认写入。
@@ -280,6 +284,10 @@ export const aiApply = (
 /** 放弃预览 */
 export const aiDiscard = (previewId: string): Promise<boolean> =>
   call(AI_CMD.discard, { previewId })
+
+export interface PreviewEdit { index: number; field: 'title' | 'plannedAt' | 'dueAt' | 'priority'; value: string | null }
+export const aiEditPreview = (previewId: string, edits: PreviewEdit[]): Promise<DiffItem[]> =>
+  call(AI_CMD.editPreview, { previewId, edits })
 
 /** 排程冲突（纯规则计算，不依赖 AI） */
 export const scheduleConflicts = (): Promise<

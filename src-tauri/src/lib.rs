@@ -407,6 +407,7 @@ pub fn run() {
             ai_features::ai_plan,
             ai_features::ai_review,
             ai_features::ai_apply,
+            ai_features::ai_preview_edit,
             ai_features::ai_discard,
             ai_features::schedule_conflicts,
             // ---- 统计与成长（§7）----

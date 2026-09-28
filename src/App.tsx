@@ -20,6 +20,7 @@ import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
+import { AiAssistant } from './components/AiAssistant'
 import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
@@ -35,6 +36,7 @@ import { Icon } from './components/Icons'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
+  'assistant',
   'today',
   'tomorrow',
   'week',
@@ -306,7 +308,7 @@ export default function App() {
           pushToast('info', '请点击具体项目、分类或标签旁的加号新建任务')
           return
         }
-        if (view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats') setView('inbox')
+        if (view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant') setView('inbox')
         setShowQuickAdd(true)
       } else if (e.key === 'f') {
         e.preventDefault()
@@ -600,7 +602,7 @@ export default function App() {
               type="button"
               className="btn btn--primary btn--sm"
               onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
-              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats'}
+              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant'}
               title="新建任务（Ctrl+N）"
             >
               <Icon name="plus" size={15} /> 新建
@@ -893,6 +895,7 @@ function TaskArea({
   if (view === 'settings') {
     return <SettingsView />
   }
+  if (view === 'assistant') return <AiAssistant />
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）
   if (view === 'calendar') {

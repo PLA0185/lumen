@@ -213,6 +213,107 @@ fn take(id: &str) -> AppResult<(String, Vec<DiffItem>)> {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewEdit {
+    pub index: usize,
+    pub field: String,
+    pub value: Option<String>,
+}
+
+fn edit_items(items: &mut [DiffItem], edits: Vec<PreviewEdit>) -> AppResult<()> {
+    for edit in edits {
+        let item = items
+            .get_mut(edit.index)
+            .ok_or_else(|| AppError::validation("预览条目不存在"))?;
+        let is_subtask = item
+            .payload
+            .get("asSubtask")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if (item.action != DiffAction::Create && edit.field != "plannedAt")
+            || (is_subtask && edit.field != "title")
+        {
+            return Err(AppError::validation("此条目不允许修改该字段"));
+        }
+        let raw = edit.value.as_deref().unwrap_or("").trim();
+        let (value, label, display) = match edit.field.as_str() {
+            "title" => {
+                if raw.is_empty() || raw.chars().count() > 500 {
+                    return Err(AppError::validation("标题必须为 1–500 字"));
+                }
+                item.title = raw.to_string();
+                (serde_json::json!(raw), "标题", Some(raw.to_string()))
+            }
+            "plannedAt" | "dueAt" => {
+                let label = if edit.field == "plannedAt" {
+                    "计划时间"
+                } else {
+                    "截止时间"
+                };
+                let (date, has_time) = normalize_model_datetime(label, raw)?;
+                if item.action != DiffAction::Create && date.is_none() {
+                    return Err(AppError::validation("排程日期不能为空"));
+                }
+                item.payload[if edit.field == "plannedAt" {
+                    "hasPlannedTime"
+                } else {
+                    "hasDueTime"
+                }] = serde_json::json!(has_time);
+                let display = date
+                    .as_ref()
+                    .map(|d| format!("{d}{}", if has_time { "" } else { "（仅日期）" }));
+                (serde_json::json!(date), label, display)
+            }
+            "priority" => {
+                let p = raw
+                    .parse::<i64>()
+                    .map_err(|_| AppError::validation("优先级应为 0–3"))?;
+                if !(0..=3).contains(&p) {
+                    return Err(AppError::validation("优先级应为 0–3"));
+                }
+                (
+                    serde_json::json!(p),
+                    "优先级",
+                    Some(["无", "低", "中", "高"][p as usize].to_string()),
+                )
+            }
+            _ => return Err(AppError::validation("不能编辑此字段")),
+        };
+        item.payload[&edit.field] = value;
+        if let Some(change) = item.changes.iter_mut().find(|c| c.field == edit.field) {
+            change.after = display;
+        } else {
+            item.changes.push(FieldChange {
+                field: edit.field,
+                label: label.into(),
+                before: None,
+                after: display,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// 用户调整预览：只改内存候选，原始动作、目标 ID 与附件均不可改。
+#[tauri::command]
+pub fn ai_preview_edit(preview_id: String, edits: Vec<PreviewEdit>) -> AppResult<Vec<DiffItem>> {
+    let mut r = registry()
+        .lock()
+        .map_err(|_| AppError::internal("预览注册表不可用"))?;
+    let (time, pending) = r
+        .map
+        .get_mut(&preview_id)
+        .ok_or_else(|| AppError::not_found("预览", &preview_id))?;
+    if time.elapsed() >= PREVIEW_TTL {
+        return Err(AppError::conflict("预览已过期，请重新生成"));
+    }
+    let mut items = pending.items.clone();
+    edit_items(&mut items, edits)?;
+    pending.items = items.clone();
+    Ok(items)
+}
+
 // =============================================================================
 // JSON 解析与校验
 // =============================================================================
@@ -765,7 +866,8 @@ pub async fn ai_organize(
     let (brief, _index) = collect_task_brief(&state, None, 80, input.send_notes).await?;
 
     let user = format!(
-        "已有任务（用于避免重复）：\n{}\n\n需要整理的文本：\n{}",
+        "当前本地日期与时区：{}。原文中的今天、明天、本周以此为准。\n已有任务（用于避免重复）：\n{}\n\n需要整理的文本：\n{}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M %:z"),
         serde_json::to_string(&brief).unwrap_or_else(|_| "[]".into()),
         text
     );
@@ -1201,8 +1303,51 @@ pub async fn ai_plan(
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewInput {
-    /// daily / weekly
+    /// daily / weekly / monthly / yearly
     pub horizon: String,
+    #[serde(default)]
+    pub anchor_date: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+fn review_range(
+    horizon: &str,
+    anchor: chrono::NaiveDate,
+) -> AppResult<(chrono::NaiveDate, chrono::NaiveDate)> {
+    use chrono::Datelike;
+    let range = match horizon {
+        "daily" | "day" => (anchor, anchor.succ_opt()),
+        "weekly" | "week" => {
+            let start =
+                anchor - chrono::Duration::days(anchor.weekday().num_days_from_monday() as i64);
+            (start, start.checked_add_signed(chrono::Duration::days(7)))
+        }
+        "monthly" | "month" => {
+            let start = anchor
+                .with_day(1)
+                .ok_or_else(|| AppError::validation("无效月份"))?;
+            (start, start.checked_add_months(chrono::Months::new(1)))
+        }
+        "yearly" | "year" => {
+            let start = chrono::NaiveDate::from_ymd_opt(anchor.year(), 1, 1)
+                .ok_or_else(|| AppError::validation("无效年份"))?;
+            (
+                start,
+                chrono::NaiveDate::from_ymd_opt(anchor.year() + 1, 1, 1),
+            )
+        }
+        other => {
+            return Err(AppError::validation(format!("不支持的复盘范围：{other}"))
+                .with_hint("允许 daily / weekly / monthly / yearly"))
+        }
+    };
+    Ok((
+        range.0,
+        range
+            .1
+            .ok_or_else(|| AppError::validation("日期超出范围"))?,
+    ))
 }
 
 /// 复盘结果（**纯只读**，不产生任何写入）
@@ -1218,7 +1363,7 @@ pub struct ReviewResult {
 
 const REVIEW_SYSTEM: &str = r#"你是一个务实的复盘助手。用户会给你真实的完成记录数据，请写一份简短的复盘。
 要求：
-- 用中文，分点陈述，总长度不超过 300 字。
+- 用中文，根据日、周、月、年范围给出工作成果、未完成项与下一步建议；有用户文本时结合文本总结。
 - 只基于给出的数据说话，**绝对不要编造**没有出现在数据里的事实。
 - 不要夸大成绩，也不要说教。若完成率低，直接指出并给一条具体可行的建议。
 - 不要使用"继续保持"这类空话。"#;
@@ -1229,20 +1374,25 @@ pub async fn ai_review(
     config: ProviderConfig,
     input: ReviewInput,
 ) -> AppResult<ReviewResult> {
-    let days = match input.horizon.as_str() {
-        "daily" | "day" => 1i64,
-        "weekly" | "week" => 7i64,
-        other => {
-            return Err(AppError::validation(format!("不支持的复盘范围：{other}"))
-                .with_hint("允许值：daily / weekly"))
-        }
+    let anchor = match input.anchor_date.as_deref() {
+        Some(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+            .map_err(|_| AppError::validation("总结日期格式应为 YYYY-MM-DD"))?,
+        None => chrono::Local::now().date_naive(),
     };
+    let (start, end) = review_range(&input.horizon, anchor)?;
+    let text = input.text.as_deref().unwrap_or("").trim();
+    if text.chars().count() > 20_000 {
+        return Err(AppError::validation("总结文本超过 20000 字，请分段处理"));
+    }
 
     // 统计口径与统计页保持一致，避免"复盘说的和界面显示的不一样"
-    let stats = crate::stats::collect_period_stats(&state, days).await?;
+    let stats = crate::stats::collect_calendar_stats(&state, start, end).await?;
+    let range = format!("{} 至 {}", start, end - chrono::Duration::days(1));
 
     let user = serde_json::json!({
-        "range": if days == 1 { "今天" } else { "最近 7 天" },
+        "range": range,
+        "today": chrono::Local::now().date_naive().to_string(),
+        "userText": text,
         "data": stats,
     });
 
@@ -1263,15 +1413,17 @@ pub async fn ai_review(
 
     Ok(ReviewResult {
         text: resp.text.clone(),
-        summary: format!(
-            "基于{}的真实完成记录生成",
-            if days == 1 { "今天" } else { "最近 7 天" }
-        ),
+        summary: format!("{range} 工作总结"),
         stats,
         usage: resp.usage,
-        data_scope_note:
-            "复盘只发送聚合后的统计数据（数量、完成率、耗时等），不发送任何任务标题或正文。"
-                .to_string(),
+        data_scope_note: format!(
+            "发送 {range} 的聚合统计（数量、完成率、耗时等）{}；不自动发送任务标题、正文或附件。",
+            if text.is_empty() {
+                ""
+            } else {
+                "及用户提供的文本"
+            }
+        ),
     })
 }
 
@@ -1559,6 +1711,129 @@ pub async fn schedule_conflicts(state: State<'_, AppState>) -> AppResult<Vec<ser
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn edited_preview_is_validated_before_writing_and_applies_selected_items() {
+        let dir = std::env::temp_dir().join(format!("lumen-ai-edit-{}", uuid::Uuid::now_v7()));
+        let state = AppState::new(crate::db::Db::init(&dir).await.unwrap());
+        let item = |title: &str| {
+            let obj = serde_json::json!({ "title": title, "priority": 0 });
+            build_create_item(0, obj.as_object().unwrap(), &mut vec![]).unwrap()
+        };
+        let id = register("整理任务", vec![item("原始标题"), item("不接受这条")]);
+        let edits = vec![
+            PreviewEdit {
+                index: 0,
+                field: "title".into(),
+                value: Some("修改后标题".into()),
+            },
+            PreviewEdit {
+                index: 0,
+                field: "plannedAt".into(),
+                value: Some("2026-02-30".into()),
+            },
+        ];
+        assert!(ai_preview_edit(id.clone(), edits).is_err());
+        assert_eq!(
+            registry().lock().unwrap().map[&id].1.items[0].title,
+            "原始标题"
+        );
+        let edited = ai_preview_edit(
+            id.clone(),
+            vec![
+                PreviewEdit {
+                    index: 0,
+                    field: "title".into(),
+                    value: Some("修改后标题".into()),
+                },
+                PreviewEdit {
+                    index: 0,
+                    field: "plannedAt".into(),
+                    value: Some("2026-09-29".into()),
+                },
+                PreviewEdit {
+                    index: 0,
+                    field: "priority".into(),
+                    value: Some("3".into()),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(edited[0].title, "修改后标题");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks")
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        let result = ai_apply_impl(&state, id.clone(), Some(vec![0]))
+            .await
+            .unwrap();
+        assert_eq!(result.created, 1);
+        let (title, priority, has_time): (String, i64, i64) =
+            sqlx::query_as("SELECT title, priority, has_planned_time FROM tasks")
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap();
+        assert_eq!((title.as_str(), priority, has_time), ("修改后标题", 3, 0));
+        assert!(ai_apply_impl(&state, id, None).await.is_err());
+        let id = register("整理任务", vec![item("保留")]);
+        for (field, value) in [("title", ""), ("priority", "4"), ("taskId", "other")] {
+            assert!(ai_preview_edit(
+                id.clone(),
+                vec![PreviewEdit {
+                    index: 0,
+                    field: field.into(),
+                    value: Some(value.into())
+                }]
+            )
+            .is_err());
+        }
+        use chrono::TimeZone;
+        for date in ["2024-02-01", "2024-02-29", "2024-03-01"] {
+            let day = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap();
+            let local = chrono::Local
+                .from_local_datetime(&day.and_hms_opt(12, 0, 0).unwrap())
+                .single()
+                .unwrap();
+            let at = crate::db::to_db_time(local.with_timezone(&chrono::Utc));
+            sqlx::query("INSERT INTO tasks (id,title,status,completed_at,created_at,updated_at,actual_minutes) VALUES (?1,'总结测试','done',?2,?2,?2,20)").bind(date).bind(at).execute(state.db.pool()).await.unwrap();
+        }
+        let anchor = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let (s, e) = review_range("monthly", anchor).unwrap();
+        let stats = crate::stats::collect_calendar_stats(&state, s, e)
+            .await
+            .unwrap();
+        assert_eq!(stats["completedTotal"], 2);
+        assert_eq!(stats["actualMinutes"], 40);
+        assert_eq!(stats["days"], 29);
+        let (s, e) = review_range("yearly", anchor).unwrap();
+        let stats = crate::stats::collect_calendar_stats(&state, s, e)
+            .await
+            .unwrap();
+        assert_eq!(stats["completedTotal"], 3);
+        assert_eq!(stats["days"], 366);
+        state.db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn review_supports_calendar_month_year_and_monday_week() {
+        use chrono::NaiveDate;
+        let day = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+        let (s, e) = review_range("monthly", day).unwrap();
+        assert_eq!(s, NaiveDate::from_ymd_opt(2024, 2, 1).unwrap());
+        assert_eq!(e, NaiveDate::from_ymd_opt(2024, 3, 1).unwrap());
+        assert_eq!((e - s).num_days(), 29);
+        let (s, e) = review_range("yearly", day).unwrap();
+        assert_eq!(s, NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        assert_eq!(e, NaiveDate::from_ymd_opt(2025, 1, 1).unwrap());
+        assert_eq!((e - s).num_days(), 366);
+        let day = NaiveDate::from_ymd_opt(2026, 9, 28).unwrap();
+        let (s, e) = review_range("weekly", day).unwrap();
+        assert_eq!(s, day);
+        assert_eq!(e, NaiveDate::from_ymd_opt(2026, 10, 5).unwrap());
+        assert!(review_range("quarter", day).is_err());
+    }
     use super::*;
 
     #[tokio::test]
