@@ -743,7 +743,7 @@ pub async fn create_recurring_impl(
     let end_range = to_db_time(first_dt + chrono::Duration::days(days));
     // 物化失败必须**暴露出来**，不能静默吞掉：
     // 用户会以为"创建成功"，实际日历里只有第一个实例，且不知道原因。
-    let (created, warning) =
+    let (created, mut warning) =
         match materialize_range(state, &series_id, &first_utc, &end_range, MAX_MATERIALIZE).await {
             Ok(n) => (n, None),
             Err(e) => {
@@ -757,6 +757,22 @@ pub async fn create_recurring_impl(
             }
         };
 
+    let needs_repair = warning.is_some();
+    let calendar_end = crate::recurrence::parse_local_date(&format!(
+        "{}-12-31",
+        crate::holiday_calendar::LAST_YEAR
+    ))?;
+    if rule.skip_holidays
+        && (crate::recurrence::parse_local_datetime(&rule.dtstart_local)?.date()
+            + chrono::Duration::days(days))
+            > calendar_end
+    {
+        let notice = "节假日日历已覆盖至 2026-12-31，其它年份的任务尚未生成，请更新日历后继续。";
+        warning = Some(match warning {
+            Some(previous) => format!("{previous} {notice}"),
+            None => notice.into(),
+        });
+    }
     log::info!(
         "已创建重复系列 {series_id}（{}），共物化 {} 个实例",
         rule.describe(),
@@ -768,7 +784,7 @@ pub async fn create_recurring_impl(
         created_count: created,
         description: rule.describe(),
         edge_note: rule.edge_policy_note(),
-        needs_repair: warning.is_some(),
+        needs_repair,
         warning,
     })
 }

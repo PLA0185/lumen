@@ -32,6 +32,7 @@ mod commands_e2e;
 pub mod db;
 pub mod error;
 pub mod focus;
+pub mod holiday_calendar;
 pub mod models;
 pub mod organize;
 pub mod pdf;

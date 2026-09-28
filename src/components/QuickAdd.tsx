@@ -287,7 +287,9 @@ export function QuickAdd({
                   rrule:
                     next === 'custom'
                       ? rule.rrule
-                      : `FREQ=${next.toUpperCase()}`,
+                      : next === 'daily'
+                        ? 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
+                        : `FREQ=${next.toUpperCase()}`,
                   dtstartLocal:
                     rule.dtstartLocal ||
                     `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,

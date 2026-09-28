@@ -3,6 +3,10 @@ import { buildRrule } from '../lib/recurrence-ipc'
 import { parseRrule } from './RuleEditor'
 
 describe('editing an existing recurrence rule', () => {
+  it('keeps the daily weekend and holiday policy when editing', () => {
+    const text = 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;X-LUMEN-MAKEUP=TRUE;COUNT=10'
+    expect(buildRrule(parseRrule(text))).toBe(text)
+  })
   it('keeps COUNT and the monthly last-day rule on an unchanged save', () => {
     const parsed = parseRrule('FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=-1;COUNT=8')
     expect(parsed.end).toEqual({ kind: 'count', count: 8 })

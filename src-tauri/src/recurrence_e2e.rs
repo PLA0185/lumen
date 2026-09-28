@@ -32,6 +32,78 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn holiday_series_persists_and_materializes_only_allowed_days() {
+    let (state, dir) = setup("holiday-series").await;
+    let text = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;COUNT=4";
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "每日工作".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: text.into(),
+            tzid: Some("Asia/Shanghai".into()),
+            dtstart_local: "2026-09-30T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(10),
+        },
+    )
+    .await
+    .unwrap();
+    let dates: Vec<_> = list_instances(&state, &created.series_id)
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.occurrence_key.as_ref().unwrap()[..10].to_string())
+        .collect();
+    assert_eq!(dates, ["2026-09-30", "2026-10-08", "2026-10-09"]);
+    let series_id = created.series_id;
+    state.db.pool().close().await;
+    let state = AppState::new(Db::init(&dir).await.unwrap());
+    let saved: String = sqlx::query_scalar("SELECT rrule FROM task_series WHERE id = ?1")
+        .bind(&series_id)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(saved, text);
+    assert_eq!(
+        recurring_materialize_inner(
+            &state,
+            series_id.clone(),
+            "2026-09-29T00:00:00Z".into(),
+            "2027-01-10T00:00:00Z".into()
+        )
+        .await
+        .unwrap(),
+        1
+    );
+    let rows = list_instances(&state, &series_id).await.unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(
+        rows[3].occurrence_key.as_ref().unwrap()[..10],
+        *"2026-10-12"
+    );
+    assert_eq!(
+        recurring_materialize_inner(
+            &state,
+            series_id,
+            "2026-09-29T00:00:00Z".into(),
+            "2027-01-10T00:00:00Z".into()
+        )
+        .await
+        .unwrap(),
+        0
+    );
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn old_series_uses_persistent_template_and_tags() {
     let (state, dir) = setup("rec-old-template").await;
     let now = crate::db::to_db_time(crate::db::utc_now());

@@ -290,8 +290,10 @@ export function buildRrule(opts: {
   interval: number
   /** 每周：指定的星期（空表示沿用起始日的星期） */
   byWeekday?: number[]
-  /** 每周：是否只取工作日 */
+  /** 每日/每周：周一至周五 */
   weekdaysOnly?: boolean
+  skipHolidays?: boolean
+  includeMakeup?: boolean
   /** 每月：指定日期（1–31） */
   byMonthday?: number[]
   /** 每月：第 N 个星期 X */
@@ -304,7 +306,7 @@ export function buildRrule(opts: {
 
   if (opts.interval > 1) parts.push(`INTERVAL=${opts.interval}`)
 
-  if (opts.freq === 'weekly') {
+  if (opts.freq === 'weekly' || opts.freq === 'daily') {
     if (opts.weekdaysOnly) {
       parts.push('BYDAY=MO,TU,WE,TH,FR')
     } else if (opts.byWeekday && opts.byWeekday.length > 0) {
@@ -339,6 +341,10 @@ export function buildRrule(opts: {
       parts.push(`BYMONTHDAY=${days.join(',')}`)
     }
   }
+
+  if (opts.skipHolidays) parts.push('X-LUMEN-HOLIDAYS=CN')
+  if (opts.skipHolidays && opts.includeMakeup && opts.weekdaysOnly && opts.freq === 'daily')
+    parts.push('X-LUMEN-MAKEUP=TRUE')
 
   switch (opts.end.kind) {
     case 'until':
@@ -384,6 +390,8 @@ export function describeRule(opts: {
   interval: number
   byWeekday?: number[]
   weekdaysOnly?: boolean
+  skipHolidays?: boolean
+  includeMakeup?: boolean
   byMonthday?: number[]
   setPos?: SetPos | null
   byMonth?: number[]
@@ -392,7 +400,7 @@ export function describeRule(opts: {
   const every = opts.interval > 1 ? `每 ${opts.interval} ` : '每'
   let s = `${every}${FREQ_LABELS[opts.freq]}`
 
-  if (opts.freq === 'weekly') {
+  if (opts.freq === 'weekly' || opts.freq === 'daily') {
     if (opts.weekdaysOnly) {
       s += '的工作日（周一至周五）'
     } else if (opts.byWeekday && opts.byWeekday.length > 0) {
@@ -418,6 +426,10 @@ export function describeRule(opts: {
       s += `${[...opts.byMonthday].sort((a, b) => a - b).join('、')}日`
     }
   }
+
+  if (opts.skipHolidays) s += '，法定节假日不执行（中国大陆）'
+  if (opts.skipHolidays && opts.includeMakeup && opts.freq === 'daily' && opts.weekdaysOnly)
+    s += '，调休补班也执行'
 
   switch (opts.end.kind) {
     case 'until':

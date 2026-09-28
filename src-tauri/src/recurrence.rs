@@ -105,6 +105,10 @@ pub struct RecurrenceRule {
     pub by_month: Vec<u8>,
     /// 是否只取工作日（周一至周五）
     pub weekdays_only: bool,
+    #[serde(default)]
+    pub skip_holidays: bool,
+    #[serde(default)]
+    pub include_makeup: bool,
     /// 结束条件
     pub end: EndCondition,
     /// 时区标识，如 `Asia/Shanghai`
@@ -197,6 +201,12 @@ impl RecurrenceRule {
             parts.push(format!("BYMONTH={}", months.join(",")));
         }
 
+        if self.skip_holidays {
+            parts.push("X-LUMEN-HOLIDAYS=CN".to_string());
+        }
+        if self.include_makeup {
+            parts.push("X-LUMEN-MAKEUP=TRUE".to_string());
+        }
         // 结束条件必须与 UNTIL / COUNT 互斥
         match &self.end {
             EndCondition::Never => {}
@@ -233,6 +243,8 @@ impl RecurrenceRule {
         let mut by_month: Vec<u8> = Vec::new();
         let mut by_setpos: Option<SetPos> = None;
         let mut weekdays_only = false;
+        let mut skip_holidays = false;
+        let mut include_makeup = false;
         let mut end = EndCondition::Never;
 
         for token in rrule.split(';').filter(|s| !s.trim().is_empty()) {
@@ -308,6 +320,18 @@ impl RecurrenceRule {
                     // BYSETPOS 必须配合 BYDAY 使用，星期在后续统一校验
                     by_setpos = Some(SetPos { nth, weekday: 1 });
                 }
+                "X-LUMEN-HOLIDAYS" => {
+                    if !value.eq_ignore_ascii_case("CN") {
+                        return Err(AppError::validation("节假日日历仅支持中国大陆（CN）"));
+                    }
+                    skip_holidays = true;
+                }
+                "X-LUMEN-MAKEUP" => {
+                    if !value.eq_ignore_ascii_case("TRUE") {
+                        return Err(AppError::validation("调休补班选项应为 TRUE"));
+                    }
+                    include_makeup = true;
+                }
                 "UNTIL" => {
                     // 接受 YYYYMMDD 与 YYYYMMDDTHHMMSSZ 两种形式
                     let digits: String = value.chars().take(8).collect();
@@ -363,13 +387,22 @@ impl RecurrenceRule {
                 )));
             }
         }
-        if weekdays_only && freq != Freq::Weekly {
-            return Err(AppError::validation("「仅工作日」只能用于每周重复")
+        if weekdays_only && !matches!(freq, Freq::Daily | Freq::Weekly) {
+            return Err(AppError::validation("「仅工作日」只能用于每日或每周重复")
                 .with_hint("如需每月的某些天，请改用具体日期"));
+        }
+        if include_makeup && (!skip_holidays || !weekdays_only || freq != Freq::Daily) {
+            return Err(AppError::validation(
+                "调休补班需要同时选择每日双休和中国大陆节假日日历",
+            ));
         }
 
         // 校验 dtstart_local 合法
-        parse_local_datetime(dtstart_local)?;
+        let start = parse_local_datetime(dtstart_local)?;
+        if skip_holidays && crate::holiday_calendar::is_workday(start.date()).is_none() {
+            return Err(AppError::validation("起始年份没有已公布的节假日日历")
+                .with_hint("已内置 2025–2026 年。请更新日历，或取消节假日过滤后按双休安排。"));
+        }
 
         Ok(Self {
             freq,
@@ -379,6 +412,8 @@ impl RecurrenceRule {
             by_setpos,
             by_month,
             weekdays_only,
+            skip_holidays,
+            include_makeup,
             end,
             tzid: tzid.to_string(),
             dtstart_local: dtstart_local.to_string(),
@@ -450,6 +485,12 @@ impl RecurrenceRule {
             s.push_str(&format!("的{}月", months.join("、")));
         }
 
+        if self.skip_holidays {
+            s.push_str("，法定节假日不执行（中国大陆）");
+        }
+        if self.include_makeup {
+            s.push_str("，调休补班也执行");
+        }
         match &self.end {
             EndCondition::Never => {}
             EndCondition::Until { date } => s.push_str(&format!("，直到 {date}")),
@@ -610,6 +651,9 @@ impl RecurrenceRule {
         if !period_ok {
             return false;
         }
+        if self.skip_holidays && crate::holiday_calendar::is_holiday(d) != Some(false) {
+            return false;
+        }
 
         // 年规则的月份过滤
         if self.freq == Freq::Yearly
@@ -655,6 +699,9 @@ impl RecurrenceRule {
 
         // 星期过滤：工作日的简写优先
         if self.weekdays_only {
+            if self.include_makeup {
+                return crate::holiday_calendar::is_workday(d) == Some(true);
+            }
             return (1..=5).contains(&iso_weekday(d));
         }
         if !self.by_weekday.is_empty() {
@@ -698,6 +745,10 @@ impl RecurrenceRule {
         let mut d = anchor_date;
 
         while out.len() < limit && probed < MAX_PROBE_DAYS {
+            if self.skip_holidays && chrono::Datelike::year(&d) > crate::holiday_calendar::LAST_YEAR
+            {
+                break;
+            }
             if let Some(ud) = until_date {
                 if d > ud {
                     break;
@@ -856,6 +907,120 @@ mod tests {
     fn rule(rrule: &str) -> RecurrenceRule {
         RecurrenceRule::from_rrule_string(rrule, "Asia/Shanghai", "2026-09-21T09:00:00", true)
             .expect("规则应能解析")
+    }
+
+    #[test]
+    fn daily_holidays_and_makeup_are_real_occurrences() {
+        let text = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;COUNT=4";
+        let r =
+            RecurrenceRule::from_rrule_string(text, "Asia/Shanghai", "2026-09-30T09:00:00", true)
+                .unwrap();
+        let dates: Vec<_> = r
+            .expand(10)
+            .unwrap()
+            .iter()
+            .map(|o| o.local.date().to_string())
+            .collect();
+        assert_eq!(
+            dates,
+            ["2026-09-30", "2026-10-08", "2026-10-09", "2026-10-12"]
+        );
+        let r = RecurrenceRule::from_rrule_string(
+            &text.replace(";COUNT", ";X-LUMEN-MAKEUP=TRUE;COUNT"),
+            "Asia/Shanghai",
+            "2026-09-30T09:00:00",
+            true,
+        )
+        .unwrap();
+        let dates: Vec<_> = r
+            .expand(10)
+            .unwrap()
+            .iter()
+            .map(|o| o.local.date().to_string())
+            .collect();
+        assert_eq!(
+            dates,
+            ["2026-09-30", "2026-10-08", "2026-10-09", "2026-10-10"]
+        );
+    }
+
+    #[test]
+    fn daily_weekends_and_interval_do_not_consume_count() {
+        let r = RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=3",
+            "UTC",
+            "2026-09-18T09:00:00",
+            true,
+        )
+        .unwrap();
+        let dates: Vec<_> = r
+            .expand(10)
+            .unwrap()
+            .iter()
+            .map(|o| o.local.date().to_string())
+            .collect();
+        assert_eq!(dates, ["2026-09-18", "2026-09-21", "2026-09-22"]);
+        let r = RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;INTERVAL=3;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;COUNT=3",
+            "UTC",
+            "2026-09-28T09:00:00",
+            true,
+        )
+        .unwrap();
+        let dates: Vec<_> = r
+            .expand(10)
+            .unwrap()
+            .iter()
+            .map(|o| o.local.date().to_string())
+            .collect();
+        assert_eq!(dates, ["2026-09-28", "2026-10-13", "2026-10-16"]);
+    }
+
+    #[test]
+    fn holiday_policy_roundtrips_and_applies_to_monthly_dates() {
+        let text =
+            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;X-LUMEN-MAKEUP=TRUE;COUNT=10";
+        let r = rule(text);
+        assert_eq!(r.to_rrule_string().unwrap(), text);
+        assert!(r.describe().contains("调休补班也执行"));
+        let r = RecurrenceRule::from_rrule_string(
+            "FREQ=MONTHLY;BYMONTHDAY=1;X-LUMEN-HOLIDAYS=CN;COUNT=1",
+            "UTC",
+            "2026-10-01T00:00:00",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            r.expand(10).unwrap()[0].local.date().to_string(),
+            "2026-11-01"
+        );
+    }
+
+    #[test]
+    fn missing_calendar_does_not_invent_future_workdays() {
+        let text = "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;X-LUMEN-HOLIDAYS=CN;COUNT=4";
+        assert!(
+            RecurrenceRule::from_rrule_string(text, "UTC", "2027-01-01T09:00:00", true).is_err()
+        );
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;X-LUMEN-HOLIDAYS=US",
+            "UTC",
+            "2026-09-28T00:00:00",
+            false
+        )
+        .is_err());
+        let r =
+            RecurrenceRule::from_rrule_string(text, "UTC", "2026-12-30T09:00:00", true).unwrap();
+        assert_eq!(r.expand(10).unwrap().len(), 2);
+        let rows = r
+            .expand_between(
+                parse_local_datetime("2026-12-31T00:00:00").unwrap(),
+                parse_local_datetime("2027-01-10T00:00:00").unwrap(),
+                100,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].index, 2);
     }
 
     // ------------------------- 解析与序列化 -------------------------
@@ -1027,9 +1192,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_weekdays_only_outside_weekly() {
+    fn rejects_weekdays_only_outside_daily_or_weekly() {
         assert!(RecurrenceRule::from_rrule_string(
-            "FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR",
+            "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR",
             "UTC",
             "2026-01-01T00:00:00",
             true
@@ -1539,6 +1704,8 @@ mod tests {
             by_setpos: None,
             by_month: vec![2],
             weekdays_only: false,
+            skip_holidays: false,
+            include_makeup: false,
             end: EndCondition::Never,
             tzid: "UTC".into(),
             dtstart_local: "2026-02-01T00:00:00".into(),

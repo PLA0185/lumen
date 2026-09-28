@@ -47,6 +47,8 @@ export function parseRrule(rrule: string): {
   interval: number
   byWeekday: number[]
   weekdaysOnly: boolean
+  skipHolidays: boolean
+  includeMakeup: boolean
   byMonthday: number[]
   byMonth: number[]
   setPos: SetPos | null
@@ -57,6 +59,8 @@ export function parseRrule(rrule: string): {
     interval: 1,
     byWeekday: [] as number[],
     weekdaysOnly: false,
+    skipHolidays: false,
+    includeMakeup: false,
     byMonthday: [] as number[],
     byMonth: [] as number[],
     setPos: null as SetPos | null,
@@ -93,6 +97,10 @@ export function parseRrule(rrule: string): {
       if (Number.isFinite(n)) setpos = n
     } else if (key === 'BYMONTH') {
       out.byMonth = v.split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 12)
+    } else if (key === 'X-LUMEN-HOLIDAYS') {
+      out.skipHolidays = v.toUpperCase() === 'CN'
+    } else if (key === 'X-LUMEN-MAKEUP') {
+      out.includeMakeup = v.toUpperCase() === 'TRUE'
     } else if (key === 'UNTIL') {
       const m = v.match(/^(\d{4})(\d{2})(\d{2})$/)
       if (m) out.end = { kind: 'until', date: `${m[1]}-${m[2]}-${m[3]}` }
@@ -139,6 +147,8 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
   const [interval, setInterval] = useState(initial.interval)
   const [byWeekday, setByWeekday] = useState<number[]>(initial.byWeekday)
   const [weekdaysOnly, setWeekdaysOnly] = useState(initial.weekdaysOnly)
+  const [skipHolidays, setSkipHolidays] = useState(initial.skipHolidays)
+  const [includeMakeup, setIncludeMakeup] = useState(initial.includeMakeup)
   const [monthMode, setMonthMode] = useState<'day' | 'setpos'>(
     initial.setPos ? 'setpos' : 'day',
   )
@@ -178,12 +188,14 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
       interval,
       byWeekday,
       weekdaysOnly,
+      skipHolidays,
+      includeMakeup,
       byMonthday: monthMode === 'day' ? byMonthday : undefined,
       setPos: monthMode === 'setpos' ? setPos : null,
       byMonth,
       end,
     })
-  }, [freq, interval, byWeekday, weekdaysOnly, monthMode, byMonthday, setPos, byMonth, end])
+  }, [freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, monthMode, byMonthday, setPos, byMonth, end])
 
   const dtstartLocal = timeStr ? `${dateStr}T${timeStr}:00` : `${dateStr}T00:00:00`
   const hasStartTime = Boolean(timeStr)
@@ -260,7 +272,14 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
             className="input input--compact"
             value={freq}
             aria-label="重复频率"
-            onChange={(e) => setFreq(e.target.value as Freq)}
+            onChange={(e) => {
+              const next = e.target.value as Freq
+              setFreq(next)
+              if (next === 'daily') {
+                setWeekdaysOnly(true)
+                setByWeekday([])
+              }
+            }}
           >
             <option value="daily">天</option>
             <option value="weekly">周</option>
@@ -268,6 +287,35 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
             <option value="yearly">年</option>
           </select>
         </div>
+      </div>
+
+      {freq === 'daily' && (
+        <div className="formrow">
+          <span className="formlabel">休息安排</span>
+          <label className="checkbox">
+            <input type="checkbox" checked={weekdaysOnly} aria-label="周六、周日不执行"
+              onChange={(e) => { setWeekdaysOnly(e.target.checked); setByWeekday([]) }} />
+            周六、周日不执行（双休）
+          </label>
+        </div>
+      )}
+      <div className="formrow">
+        <span className="formlabel">节假日</span>
+        <label className="checkbox">
+          <input type="checkbox" checked={skipHolidays} aria-label="法定节假日不执行"
+            onChange={(e) => setSkipHolidays(e.target.checked)} />
+          法定节假日不执行（中国大陆）
+        </label>
+        {skipHolidays && freq === 'daily' && weekdaysOnly && (
+          <label className="checkbox">
+            <input type="checkbox" checked={includeMakeup} aria-label="调休补班也执行"
+              onChange={(e) => setIncludeMakeup(e.target.checked)} />
+            调休补班也执行（默认关闭，保持双休）
+          </label>
+        )}
+        {skipHolidays && <p className="setgroup__hint" role="note">
+          按国务院放假安排跳过整段假期。已内置 2025–2026 年日历；其它年份没有日历时不生成任务，需更新日历后继续。
+        </p>}
       </div>
 
       {/* ---------------- 每周：星期选择 ---------------- */}
@@ -529,7 +577,7 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
       <div className="rulepreview">
         <div className="rulepreview__head">
           <span>接下来 10 次发生</span>
-          <strong>{rec.describeRule({ freq, interval, byWeekday, weekdaysOnly, byMonthday, setPos, byMonth, end })}</strong>
+          <strong>{rec.describeRule({ freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, byMonthday, setPos, byMonth, end })}</strong>
         </div>
         {previewError ? (
           <div className="formerr" role="alert">
