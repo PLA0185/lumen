@@ -15,6 +15,61 @@
 
 ---
 
+## 第 19 轮 · 2026-09-28 · 恢复工作电脑源码、核对旧密钥与覆盖升级 0.4.0
+
+### 做了
+
+- 从 GitHub 的 `main`（基线 `59b40d4`）克隆到本轮工作目录；开始时该目录为空。
+  找到另一个 0.3.0 旧源码目录，保留其源码、Git 历史及工作状态。
+- 确认工作电脑的旧 updater 私钥、公钥及 DPAPI 密码文件仍在仓库外的
+  `%USERPROFILE%/.tauri/`；状态脚本退出码为 0，当前 Windows 账户能解密密码，
+  没有遗留明文密码文件。公钥对应旧源码，与 0.4.0 公钥不匹配。
+- 下载正式 Release 的 0.4.0 安装包，核对 GitHub 提供的 SHA-256，并用当前仓库公钥
+  独立验证 installer 的 minisign 签名及 trusted comment 签名。升级前备份了完整数据目录、
+  SQLite 一致性快照及旧 exe，备份置于仓库之外。
+- 使用官方安装包覆盖升级：安装器退出码 0，exe ProductVersion 为 0.4.0。
+- 发现旧数据库启动失败：`migration 1 was previously applied but has been modified`。
+  逐项核对已应用的 1–5 号迁移：旧文件 SHA-384 与数据库记录完全匹配；新旧 SQL
+  仅有 LF/CRLF 差异；正式 exe 实际嵌入的是 CRLF SQL。没有发现真实 SQL 内容变化。
+- 先在数据库副本上验证校验值调整及官方 6、7 号迁移，完整性、外键与全部旧任务字段
+  均通过；再在应用关闭且已有一致性备份的条件下，用事务和旧 checksum 条件修正生产库
+  的 1–5 号校验记录。正式应用自行执行 6、7 号迁移，启动并持续响应。
+- 用真实鼠标事件触发已安装应用的更新检查，真实 GitHub 端点返回
+  “当前版本 0.4.0 已是最新版本”。22 条既有任务的原有字段逐行校验保持一致，
+  既有业务表行数保持一致，数据库完整性为 `ok`。
+
+### 没做到
+
+- 未取得 0.4.0 的新签名私钥。本机常规密钥目录中找到的是旧密钥，不能用于给当前
+  公钥信任链发布更新；没有改写私钥、密码或 GitHub Actions Secrets。
+- 未验证 0.4.0 → 下一版本的完整下载、安装链路，因为目前没有更高的正式版本。
+- 本轮处理的是这台电脑的迁移元数据兼容问题，没有修改应用代码或历史 SQL。
+  SQL 文件的检出换行策略仍会影响 SQLx checksum；其他旧库或跨平台构建的兼容问题
+  尚未通过应用内通用处理解决，不应记为全局修复。
+
+### 怎么验证的
+
+- GitHub 仓库元数据、`git ls-remote`、本地分支和工作区核对；匿名获取正式 Release
+  和 `latest.json`，安装包 SHA-256 与发布值一致。
+- updater 状态脚本、公钥对比、Node crypto 独立签名验证、安装器退出码与文件版本。
+- SQLite backup API、一致性检查、外键检查、迁移文件与正式二进制比对，以及升级前后
+  22 条任务原有字段的 SHA-256 对比；生产库从 17 张表迁移到 20 张表。
+- `pnpm install --frozen-lockfile`、版本校验、typecheck、166 项前端测试、build、
+  lint，以及 `cargo fmt --check`、361 项 Rust 测试、
+  `cargo clippy --all-targets --all-features -- -D warnings` 均通过。
+- 桌面程序响应状态与应用内真实 GitHub 更新检查通过；旧验收脚本遇到“打开关于时
+  已在自动检查”的时序问题，本轮使用等待检查结束后真实点击的独立脚本验证，未把
+  旧脚本的失败记成通过。
+
+### 相关文档
+
+- `RELEASE_NOTES.md`：0.3.x → 0.4.0 的签名信任链重置说明。
+- `tools/updater-secret.ps1`：仓库外签名私钥与 DPAPI 密码状态检查。
+- `.gitattributes`、`src-tauri/migrations/`：检出换行和 SQLx checksum 的关联。
+- [GitHub Release v0.4.0](https://github.com/PLA0185/lumen/releases/tag/v0.4.0)
+
+---
+
 ## 第 18 轮 · 2026-09-26 · 仓库重建、Updater 信任链重置与 0.4.0 正式发布
 
 迁移基线=`5a04d2836d6fbd2bf6b0b09a844e472421c4a71b`；正式发布提交=
