@@ -452,7 +452,7 @@ export function FloatingToday() {
                   disabled={clickThrough}
                   onClick={() => void toggle(t.id, !isDone)}
                 >
-                  {isDone && <CheckMark />}
+                  {isDone && <CheckMark size={11} />}
                 </button>
 
                 {editing ? (

@@ -142,7 +142,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
                 className="task__check task__check--sm"
                 onClick={() => void toggle(s)}
               >
-                {s.isDone === 1 && <CheckMark />}
+                {s.isDone === 1 && <CheckMark size={11} />}
               </button>
 
               {editingId === s.id ? (

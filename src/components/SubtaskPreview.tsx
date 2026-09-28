@@ -43,7 +43,7 @@ export function SubtaskPreview({
               disabled={disabled || saving !== null}
               onClick={() => void toggle(item)}
             >
-              {item.isDone === 1 && <CheckMark />}
+              {item.isDone === 1 && <CheckMark size={11} />}
             </button>
             <span className="subtask-preview__title selectable">
               {item.title}
