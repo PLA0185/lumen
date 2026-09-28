@@ -17,8 +17,12 @@ import * as rec from '../lib/recurrence-ipc'
 import { RuleEditor } from './RuleEditor'
 import type { RuleEditorValue } from './RuleEditor'
 import type { TaskCreationContext } from '../lib/task-creation-context'
+import { Icon } from './Icons'
 
 interface QuickAddProps {
+  /** 浮窗新建行：选项就地展开，不跳到另一个窗口。 */
+  compact?: boolean
+  onConfigureReminder?: (task: Task) => void
   /** 从今天/明天新建时沿用该视图日期；其它入口仍可不设日期。 */
   defaultPlannedDate?: string
   defaultPeriodType?: PeriodType
@@ -35,6 +39,8 @@ interface QuickAddProps {
 }
 
 export function QuickAdd({
+  compact = false,
+  onConfigureReminder,
   onCreated,
   onRecurringCreated,
   autoFocus = true,
@@ -44,6 +50,8 @@ export function QuickAdd({
   defaultPeriodType = 'none',
   context,
 }: QuickAddProps) {
+  const [optionsOpen, setOptionsOpen] = useState(!compact)
+  const [configureReminder, setConfigureReminder] = useState(false)
   const [text, setText] = useState('')
   const [dateStr, setDateStr] = useState(defaultPlannedDate)
   const [timeStr, setTimeStr] = useState('')
@@ -72,7 +80,8 @@ export function QuickAdd({
   }, [defaultPeriodType, periodTouched])
 
   useEffect(() => {
-    if (!dateTouched && !parsed.date && repeat === 'none') setDateStr(defaultPlannedDate)
+    if (!dateTouched && !parsed.date && repeat === 'none')
+      setDateStr(defaultPlannedDate)
   }, [defaultPlannedDate, dateTouched, parsed.date, repeat])
 
   // 解析结果回填到控件，使用户能直接看到并修改（§4.4）
@@ -103,6 +112,7 @@ export function QuickAdd({
     setRepeat('none')
     setDescription('')
     setMaterializeDays(90)
+    setConfigureReminder(false)
     setRule({ rrule: 'FREQ=WEEKLY', dtstartLocal: '', hasStartTime: false })
   }, [defaultPlannedDate, defaultPeriodType])
 
@@ -156,6 +166,7 @@ export function QuickAdd({
           tagIds,
         })
         onCreated(task)
+        if (configureReminder) onConfigureReminder?.(task)
       }
       // createTask 的统一 mutation 层已通知所有数据视图。
       reset()
@@ -184,6 +195,8 @@ export function QuickAdd({
     description,
     materializeDays,
     context,
+    configureReminder,
+    onConfigureReminder,
   ])
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -201,9 +214,16 @@ export function QuickAdd({
   )
 
   return (
-    <div className="quickadd">
-      {context && <p className="setgroup__hint" role="note">新建到：{context.label}</p>}
+    <div className={`quickadd${compact ? ' quickadd--compact' : ''}`}>
+      {context && (
+        <p className="setgroup__hint" role="note">
+          新建到：{context.label}
+        </p>
+      )}
       <div className="quickadd__row">
+        {compact && (
+          <span className="floating__draft-check" aria-hidden="true" />
+        )}
         <input
           ref={inputRef}
           className="quickadd__input selectable"
@@ -223,6 +243,34 @@ export function QuickAdd({
         >
           {saving ? '保存中…' : '添加'}
         </button>
+        {compact && (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="新任务选项"
+            title="编辑日期、时间、优先级和重复规则"
+            aria-expanded={optionsOpen}
+            onClick={() => setOptionsOpen((v) => !v)}
+          >
+            <Icon name="edit" size={17} />
+          </button>
+        )}
+        {compact && onConfigureReminder && (
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="新任务提醒"
+            title="添加后设置提醒"
+            aria-pressed={configureReminder}
+            disabled={repeat !== 'none'}
+            onClick={() => {
+              setConfigureReminder((v) => !v)
+              setOptionsOpen(true)
+            }}
+          >
+            <Icon name="clock" size={17} />
+          </button>
+        )}
         {onCancel && (
           <button
             type="button"
@@ -234,122 +282,142 @@ export function QuickAdd({
         )}
       </div>
 
-      <div className="quickadd__row quickadd__row--meta">
-        {repeat === 'none' && (
+      {optionsOpen && (
+        <div className="quickadd__row quickadd__row--meta">
+          {repeat === 'none' && (
+            <label className="field">
+              计划
+              <input
+                type="date"
+                value={dateStr}
+                aria-label="计划执行日期"
+                onChange={(e) => {
+                  setDateStr(e.target.value)
+                  setDateTouched(true)
+                }}
+              />
+            </label>
+          )}
+          {repeat === 'none' && (
+            <label className="field">
+              时间
+              <input
+                type="time"
+                value={timeStr}
+                aria-label="计划执行时间（留空表示仅日期）"
+                onChange={(e) => {
+                  setTimeStr(e.target.value)
+                  setDateTouched(true)
+                }}
+              />
+            </label>
+          )}
           <label className="field">
-            计划
-            <input
-              type="date"
-              value={dateStr}
-              aria-label="计划执行日期"
-              onChange={(e) => {
-                setDateStr(e.target.value)
-                setDateTouched(true)
-              }}
-            />
-          </label>
-        )}
-        {repeat === 'none' && (
-          <label className="field">
-            时间
-            <input
-              type="time"
-              value={timeStr}
-              aria-label="计划执行时间（留空表示仅日期）"
-              onChange={(e) => {
-                setTimeStr(e.target.value)
-                setDateTouched(true)
-              }}
-            />
-          </label>
-        )}
-        <label className="field">
-          优先级
-          <select
-            value={priority}
-            aria-label="优先级"
-            onChange={(e) => setPriority(Number(e.target.value))}
-          >
-            <option value={0}>无</option>
-            <option value={1}>低</option>
-            <option value={2}>中</option>
-            <option value={3}>高</option>
-          </select>
-        </label>
-
-        {/* 周期跨度：用于"这周/这个月做完就行"的任务。
-            选中后**不需要**填具体日期，因此这里不做联动清空，
-            用户想同时指定日期也可以。 */}
-        {(
-          <label className="field">
-            周期
+            优先级
             <select
-              value={periodType}
-              aria-label="周期跨度"
-              title="标记为某个周期内完成即可，不必绑定到具体某一天"
-              onChange={(e) => { setPeriodTouched(true); setPeriodType(e.target.value as PeriodType) }}
+              value={priority}
+              aria-label="优先级"
+              onChange={(e) => setPriority(Number(e.target.value))}
             >
-              <option value="none">不限</option>
-              <option value="day">今日内</option>
-              <option value="week">本周内</option>
-              <option value="month">本月内</option>
-              <option value="quarter">本季度内</option>
-              <option value="year">今年内</option>
+              <option value={0}>无</option>
+              <option value={1}>低</option>
+              <option value={2}>中</option>
+              <option value={3}>高</option>
             </select>
           </label>
-        )}
-        <label className="field">
-          重复
-          <select
-            aria-label="任务重复"
-            value={repeat}
-            onChange={(e) => {
-              const next = e.target.value
-              setRepeat(next)
-              if (next !== 'none')
-                setRule({
-                  rrule:
-                    next === 'custom'
-                      ? rule.rrule
-                      : next === 'daily'
-                        ? 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
-                        : `FREQ=${next.toUpperCase()}`,
-                  dtstartLocal:
-                    rule.dtstartLocal ||
-                    `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
-                  hasStartTime: rule.dtstartLocal
-                    ? rule.hasStartTime
-                    : Boolean(timeStr),
-                })
-            }}
-          >
-            <option value="none">不重复</option>
-            <option value="daily">每天</option>
-            <option value="weekly">每周</option>
-            <option value="monthly">每月</option>
-            <option value="yearly">每年</option>
-            <option value="custom">自定义规则</option>
-          </select>
-        </label>
-        {repeat === 'none' && dateStr && (
-          <button
-            type="button"
-            className="btn btn--quiet btn--sm"
-            onClick={() => {
-              setDateStr('')
-              setTimeStr('')
-              setDateTouched(true)
-            }}
-          >
-            清除日期
-          </button>
-        )}
-      </div>
 
+          {/* 周期跨度：用于"这周/这个月做完就行"的任务。
+            选中后**不需要**填具体日期，因此这里不做联动清空，
+            用户想同时指定日期也可以。 */}
+          {
+            <label className="field">
+              周期
+              <select
+                value={periodType}
+                aria-label="周期跨度"
+                title="标记为某个周期内完成即可，不必绑定到具体某一天"
+                onChange={(e) => {
+                  setPeriodTouched(true)
+                  setPeriodType(e.target.value as PeriodType)
+                }}
+              >
+                <option value="none">不限</option>
+                <option value="day">今日内</option>
+                <option value="week">本周内</option>
+                <option value="month">本月内</option>
+                <option value="quarter">本季度内</option>
+                <option value="year">今年内</option>
+              </select>
+            </label>
+          }
+          <label className="field">
+            重复
+            <select
+              aria-label="任务重复"
+              value={repeat}
+              onChange={(e) => {
+                const next = e.target.value
+                setRepeat(next)
+                if (next !== 'none')
+                  setRule({
+                    rrule:
+                      next === 'custom'
+                        ? rule.rrule
+                        : next === 'daily'
+                          ? 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
+                          : `FREQ=${next.toUpperCase()}`,
+                    dtstartLocal:
+                      rule.dtstartLocal ||
+                      `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
+                    hasStartTime: rule.dtstartLocal
+                      ? rule.hasStartTime
+                      : Boolean(timeStr),
+                  })
+              }}
+            >
+              <option value="none">不重复</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="monthly">每月</option>
+              <option value="yearly">每年</option>
+              <option value="custom">自定义规则</option>
+            </select>
+          </label>
+          {repeat === 'none' && dateStr && (
+            <button
+              type="button"
+              className="btn btn--quiet btn--sm"
+              onClick={() => {
+                setDateStr('')
+                setTimeStr('')
+                setDateTouched(true)
+              }}
+            >
+              清除日期
+            </button>
+          )}
+        </div>
+      )}
+
+      {optionsOpen && onConfigureReminder && repeat === 'none' && (
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={configureReminder}
+            onChange={(e) => setConfigureReminder(e.target.checked)}
+          />
+          添加后设置提醒
+        </label>
+      )}
       {repeat !== 'none' && (
         <fieldset className="formfieldset quickadd__repeat">
           <legend>重复规则</legend>
-          <RuleEditor key={repeat} value={rule} onChange={setRule} periodType={periodType} />
+          <RuleEditor
+            key={repeat}
+            value={rule}
+            onChange={setRule}
+            periodType={periodType}
+          />
           <label className="field">
             描述
             <input

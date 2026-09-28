@@ -42,9 +42,9 @@ pub const FLOATING: &str = "floating";
 pub const QUICK_ADD: &str = "quick-add";
 
 /// 悬浮窗默认宽度（紧凑但不拥挤）
-const FLOATING_W: f64 = 320.0;
+const FLOATING_W: f64 = 450.0;
 /// 悬浮窗默认高度
-const FLOATING_H: f64 = 460.0;
+const FLOATING_H: f64 = 600.0;
 
 /// 悬浮窗尺寸的取值边界。
 ///

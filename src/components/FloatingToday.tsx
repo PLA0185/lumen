@@ -38,6 +38,11 @@ import type { FloatingState } from '../lib/window-ipc'
 import type { Task, TaskQuery } from '../lib/types'
 import { Icon } from './Icons'
 import { CheckMark } from './CheckMark'
+import { addDays, format, startOfWeek } from 'date-fns'
+import { QuickAdd } from './QuickAdd'
+import { FocusPanel } from './FocusPanel'
+import { ReminderEditor } from './ReminderEditor'
+import { AiAssistant } from './AiAssistant'
 
 /** 拖动结束后再落库的延迟：拖动过程中会连续触发 resize 事件 */
 const SIZE_SAVE_DELAY = 400
@@ -45,6 +50,27 @@ const SIZE_SAVE_DELAY = 400
 const OPACITY_SAVE_DELAY = 250
 
 export function FloatingToday() {
+  const [selectedDate, setSelectedDate] = useState(() =>
+    format(new Date(), 'yyyy-MM-dd'),
+  )
+  const [adding, setAdding] = useState(false)
+  const [panel, setPanel] = useState<'focus' | 'reminder' | 'ai' | null>(null)
+  const [reminderTask, setReminderTask] = useState<Task | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [hideDone, setHideDone] = useState(false)
+  const [weekCounts, setWeekCounts] = useState<number[]>([])
+  const selectedDay = useMemo(
+    () => new Date(`${selectedDate}T00:00:00`),
+    [selectedDate],
+  )
+  const weekStart = useMemo(
+    () => startOfWeek(selectedDay, { weekStartsOn: 1 }),
+    [selectedDay],
+  )
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  )
   const gate = useMemo(createRequestGate, [])
   const [tasks, setTasks] = useState<Task[]>([])
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({})
@@ -70,13 +96,13 @@ export function FloatingToday() {
     await runLatestRequest(
       gate,
       async () => {
-        const r = todayRange()
+        const r = todayRange(selectedDay)
         const query: TaskQuery = {
           statuses: ['todo', 'doing', 'waiting', 'done'],
           plannedFrom: r.start,
           plannedTo: r.end,
         }
-        const [list, allCount, doneCount, st] = await Promise.all([
+        const [list, allCount, doneCount, st, counts] = await Promise.all([
           ipc.listTasks({
             ...query,
             sortBy: 'manual',
@@ -85,14 +111,25 @@ export function FloatingToday() {
           ipc.countTasks(query),
           ipc.countTasks({ ...query, statuses: ['done'] }),
           win.windowFloatingState(),
+          Promise.all(
+            weekDays.map((day) => {
+              const range = todayRange(day)
+              return ipc.countTasks({
+                statuses: ['todo', 'doing', 'waiting'],
+                plannedFrom: range.start,
+                plannedTo: range.end,
+              })
+            }),
+          ),
         ])
         const summaries = await subtaskProgressBatch(
           list.map((task) => task.id),
         )
-        return { list, allCount, doneCount, st, summaries }
+        return { list, allCount, doneCount, st, summaries, counts }
       },
       {
-        apply: ({ list, allCount, doneCount, st, summaries }) => {
+        apply: ({ list, allCount, doneCount, st, summaries, counts }) => {
+          setWeekCounts(counts.map((c) => c.total))
           setTasks(list)
           setSubtasks(
             Object.fromEntries(summaries.map((p) => [p.taskId, p.items ?? []])),
@@ -111,10 +148,11 @@ export function FloatingToday() {
         finish: () => setLoading(false),
       },
     )
-  }, [gate])
+  }, [gate, selectedDay, weekDays])
 
   useEffect(() => {
     gate.activate()
+    setLoading(true)
     void reload()
     // 定时刷新作为兜底（例如主窗口没开、事件丢了）
     const t = window.setInterval(() => void reload(), 60_000)
@@ -244,27 +282,6 @@ export function FloatingToday() {
     }
   }
 
-  /** 就地新增：默认计划在今天，且不带具体时刻 */
-  const addToday = async (text: string) => {
-    const title = text.trim()
-    if (!title) return
-    setBusy(true)
-    try {
-      const r = todayRange()
-      await ipc.createTask({
-        title,
-        plannedAt: r.start,
-        hasPlannedTime: false,
-      })
-      await reload()
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const open = total - doneTotal
   const clickThrough = state?.clickThrough ?? false
 
@@ -350,12 +367,30 @@ export function FloatingToday() {
       onMouseDown={(e) => void onMouseDown(e)}
     >
       <header className="floating__head" data-drag-region>
-        <span className="floating__title">今日</span>
+        <span className="floating__title">Lumen 待办</span>
         <span className="floating__count">
           {open > 0 ? `${open} 项待办` : total > 0 ? '全部完成 ✓' : '暂无安排'}
         </span>
         {!clickThrough && (
           <span className="floating__tools" data-no-drag>
+            <button
+              type="button"
+              className="floating__btn"
+              aria-label="AI 助手"
+              title="AI 助手"
+              onClick={() => setPanel(panel === 'ai' ? null : 'ai')}
+            >
+              <Icon name="star" size={15} />
+            </button>
+            <button
+              type="button"
+              className="floating__btn"
+              aria-label="打开主窗口"
+              title="打开主窗口"
+              onClick={() => void act('show_main')}
+            >
+              <Icon name="board" size={15} />
+            </button>
             <button
               type="button"
               className={`floating__btn${state?.alwaysOnTop ? ' floating__btn--on' : ''}`}
@@ -392,6 +427,142 @@ export function FloatingToday() {
         )}
       </header>
 
+      {!clickThrough && (
+        <>
+          <div className="floating__actions">
+            <button
+              type="button"
+              aria-expanded={panel === 'focus'}
+              onClick={() => setPanel(panel === 'focus' ? null : 'focus')}
+            >
+              <Icon name="play" size={16} />
+              开始专注
+            </button>
+            <button
+              type="button"
+              aria-expanded={panel === 'reminder'}
+              onClick={() => setPanel(panel === 'reminder' ? null : 'reminder')}
+            >
+              <Icon name="clock" size={16} />
+              添加提醒
+            </button>
+          </div>
+          <nav className="floating__week" aria-label="一周日期">
+            <button
+              type="button"
+              className="floating__week-arrow"
+              aria-label="上一周"
+              onClick={() =>
+                setSelectedDate(format(addDays(selectedDay, -7), 'yyyy-MM-dd'))
+              }
+            >
+              ‹
+            </button>
+            {weekDays.map((day, i) => {
+              const date = format(day, 'yyyy-MM-dd')
+              return (
+                <button
+                  key={date}
+                  type="button"
+                  className={`floating__day${selectedDate === date ? ' floating__day--selected' : ''}`}
+                  aria-pressed={selectedDate === date}
+                  aria-label={`${date}${weekCounts[i] ? `，${weekCounts[i]}项待办` : ''}`}
+                  onClick={() => {
+                    setSelectedDate(date)
+                    setNotice(null)
+                  }}
+                >
+                  <span>
+                    {
+                      ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][
+                        i
+                      ]
+                    }
+                  </span>
+                  <strong>{format(day, 'MM-dd')}</strong>
+                  {!!weekCounts[i] && (
+                    <i className="floating__day-dot" aria-hidden="true" />
+                  )}
+                </button>
+              )
+            })}
+            <button
+              type="button"
+              className="floating__week-arrow"
+              aria-label="下一周"
+              onClick={() =>
+                setSelectedDate(format(addDays(selectedDay, 7), 'yyyy-MM-dd'))
+              }
+            >
+              ›
+            </button>
+          </nav>
+        </>
+      )}
+
+      {!clickThrough && panel && (
+        <section
+          className="floating__panel"
+          aria-label={
+            panel === 'focus'
+              ? '专注面板'
+              : panel === 'ai'
+                ? 'AI 助手面板'
+                : '提醒面板'
+          }
+        >
+          <button
+            type="button"
+            className="floating__panel-close icon-btn"
+            aria-label="收起面板"
+            onClick={() => setPanel(null)}
+          >
+            <Icon name="close" size={14} />
+          </button>
+          {panel === 'focus' && <FocusPanel compact />}
+          {panel === 'ai' && <AiAssistant compact />}
+          {panel === 'reminder' && (
+            <>
+              <label className="formrow">
+                <span className="formlabel">给哪条任务提醒</span>
+                <select
+                  className="input"
+                  aria-label="选择提醒任务"
+                  value={reminderTask?.id ?? ''}
+                  onChange={(e) =>
+                    setReminderTask(
+                      tasks.find((t) => t.id === e.target.value) ?? null,
+                    )
+                  }
+                >
+                  <option value="">选择当天任务</option>
+                  {tasks
+                    .filter((t) => t.status !== 'done')
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.title}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {reminderTask ? (
+                <ReminderEditor
+                  key={reminderTask.id}
+                  taskId={reminderTask.id}
+                  hasPlanned={!!reminderTask.plannedAt}
+                  hasDue={!!reminderTask.dueAt}
+                  taskDone={reminderTask.status === 'done'}
+                />
+              ) : (
+                <p className="setgroup__hint">
+                  先选择任务；还没有任务时，点击下方 ＋ 新建。
+                </p>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
       {clickThrough && (
         <div className="floating__through" role="note">
           鼠标穿透已开启，本窗口不可点击。
@@ -415,127 +586,198 @@ export function FloatingToday() {
         </div>
       )}
 
-      {loading ? (
-        <div className="floating__empty">载入中…</div>
-      ) : tasks.length === 0 ? (
-        <div className="floating__empty">
-          今天还没有安排。
-          <br />
-          <span className="floating__hint">
-            在下面的输入框里直接添加，或在主窗口给任务设置「计划时间」为今天。
+      <div className="floating__workspace">
+        <div className="floating__list-head">
+          <span>
+            {selectedDate === format(new Date(), 'yyyy-MM-dd')
+              ? '今天'
+              : format(selectedDay, 'M月d日')}{' '}
+            · {open} 项待办
           </span>
+          <button
+            type="button"
+            onClick={() => setSelectedDate(format(new Date(), 'yyyy-MM-dd'))}
+          >
+            回到今天
+          </button>
         </div>
-      ) : (
-        <ul className="floating__list">
-          {tasks.map((t) => {
-            const isDone = t.status === 'done'
-            const overdue = isOverdue(t)
-            const at = fromUtcIso(t.plannedAt)
-            const editing = editingId === t.id
-            return (
-              <li
-                key={t.id}
-                className={`floating__item${isDone ? ' floating__item--done' : ''}${
-                  overdue ? ' floating__item--overdue' : ''
-                }`}
-              >
-                <button
-                  type="button"
-                  role="checkbox"
-                  aria-checked={isDone}
-                  aria-label={
-                    isDone
-                      ? `将「${t.title}」标记为未完成`
-                      : `完成「${t.title}」`
-                  }
-                  className="floating__check"
-                  disabled={clickThrough}
-                  onClick={() => void toggle(t.id, !isDone)}
-                >
-                  {isDone && <CheckMark size={11} />}
-                </button>
-
-                {editing ? (
-                  <input
-                    className="floating__edit selectable"
-                    value={draft}
-                    autoFocus
-                    aria-label={`修改「${t.title}」的标题`}
-                    disabled={busy}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        void saveTitle(t.id)
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault()
-                        setEditingId(null)
-                      }
-                    }}
-                    onBlur={() => void saveTitle(t.id)}
-                  />
-                ) : (
-                  <span
-                    className="floating__text selectable"
-                    title={`${t.title}\n双击可直接改名，点右侧 ✎ 打开完整编辑`}
-                    role="button"
-                    tabIndex={0}
-                    onDoubleClick={() => {
-                      if (clickThrough) return
-                      setDraft(t.title)
-                      setEditingId(t.id)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'F2' || e.key === 'Enter') {
-                        e.preventDefault()
-                        setDraft(t.title)
-                        setEditingId(t.id)
-                      }
-                    }}
+        {notice && (
+          <div className="floating__hint" role="status">
+            {notice}
+          </div>
+        )}
+        {loading ? (
+          <div className="floating__empty">载入中…</div>
+        ) : tasks.length === 0 ? (
+          <div className="floating__empty">
+            这一天还没有安排。
+            <br />
+            <span className="floating__hint">
+              点击下方 ＋，直接填写任务并选择选项。
+            </span>
+          </div>
+        ) : (
+          <ul className="floating__list">
+            {tasks
+              .filter((t) => !hideDone || t.status !== 'done')
+              .map((t) => {
+                const isDone = t.status === 'done'
+                const overdue = isOverdue(t)
+                const at = fromUtcIso(t.plannedAt)
+                const editing = editingId === t.id
+                return (
+                  <li
+                    key={t.id}
+                    className={`floating__item${isDone ? ' floating__item--done' : ''}${
+                      overdue ? ' floating__item--overdue' : ''
+                    }`}
                   >
-                    {t.title}
-                  </span>
-                )}
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={isDone}
+                      aria-label={
+                        isDone
+                          ? `将「${t.title}」标记为未完成`
+                          : `完成「${t.title}」`
+                      }
+                      className="floating__check"
+                      disabled={clickThrough}
+                      onClick={() => void toggle(t.id, !isDone)}
+                    >
+                      {isDone && <CheckMark size={11} />}
+                    </button>
+                    {(subtasks[t.id]?.length ?? 0) > 0 && (
+                      <span
+                        className="floating__progress"
+                        aria-label="子任务进度"
+                      >
+                        {
+                          (subtasks[t.id] ?? []).filter((s) => s.isDone === 1)
+                            .length
+                        }
+                        /{subtasks[t.id]?.length}
+                      </span>
+                    )}
 
-                {t.hasPlannedTime === 1 && at && (
-                  <span className="floating__time">
-                    {at.toLocaleTimeString('zh-CN', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
-                    })}
-                  </span>
-                )}
-                {t.seriesId && (
-                  <span className="floating__mark" title="重复任务的一次发生">
-                    <Icon name="repeat" size={13} />
-                  </span>
-                )}
+                    {editing ? (
+                      <input
+                        className="floating__edit selectable"
+                        value={draft}
+                        autoFocus
+                        aria-label={`修改「${t.title}」的标题`}
+                        disabled={busy}
+                        onChange={(e) => setDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            void saveTitle(t.id)
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault()
+                            setEditingId(null)
+                          }
+                        }}
+                        onBlur={() => void saveTitle(t.id)}
+                      />
+                    ) : (
+                      <span
+                        className="floating__text selectable"
+                        title={`${t.title}\n双击可直接改名，点右侧 ✎ 打开完整编辑`}
+                        role="button"
+                        tabIndex={0}
+                        onDoubleClick={() => {
+                          if (clickThrough) return
+                          setDraft(t.title)
+                          setEditingId(t.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'F2' || e.key === 'Enter') {
+                            e.preventDefault()
+                            setDraft(t.title)
+                            setEditingId(t.id)
+                          }
+                        }}
+                      >
+                        {t.title}
+                      </span>
+                    )}
 
-                {/* 完整编辑：打开与主窗口同一个表单，而不是只能改标题 */}
-                <button
-                  type="button"
-                  className="floating__item-btn"
-                  title="打开完整编辑（描述、时间、子任务、附件、提醒…）"
-                  aria-label={`编辑「${t.title}」`}
-                  disabled={clickThrough}
-                  onClick={() => setFullEditing(t)}
-                >
-                  <Icon name="edit" size={15} />
-                </button>
-                {(subtasks[t.id]?.length ?? 0) > 0 && (
-                  <SubtaskPreview
-                    items={subtasks[t.id] ?? []}
-                    disabled={clickThrough}
-                  />
-                )}
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                    {t.hasPlannedTime === 1 && at && (
+                      <span className="floating__time">
+                        {at.toLocaleTimeString('zh-CN', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          hour12: false,
+                        })}
+                      </span>
+                    )}
+                    {t.seriesId && (
+                      <span
+                        className="floating__mark"
+                        title="重复任务的一次发生"
+                      >
+                        <Icon name="repeat" size={13} />
+                      </span>
+                    )}
 
-      {!clickThrough && <FloatingAdd busy={busy} onAdd={addToday} />}
+                    {/* 完整编辑：打开与主窗口同一个表单，而不是只能改标题 */}
+                    <button
+                      type="button"
+                      className="floating__item-btn"
+                      title="打开完整编辑（描述、时间、子任务、附件、提醒…）"
+                      aria-label={`编辑「${t.title}」`}
+                      disabled={clickThrough}
+                      onClick={() => setFullEditing(t)}
+                    >
+                      <Icon name="edit" size={15} />
+                    </button>
+                    {(subtasks[t.id]?.length ?? 0) > 0 && (
+                      <SubtaskPreview
+                        items={subtasks[t.id] ?? []}
+                        disabled={clickThrough}
+                      />
+                    )}
+                  </li>
+                )
+              })}
+          </ul>
+        )}
+
+        {!clickThrough && (
+          <>
+            {adding && (
+              <QuickAdd
+                compact
+                onConfigureReminder={(task) => {
+                  setReminderTask(task)
+                  setPanel('reminder')
+                }}
+                defaultPlannedDate={selectedDate}
+                onCancel={() => setAdding(false)}
+                onCreated={(task) => {
+                  const date = fromUtcIso(task.plannedAt)
+                  if (date) setSelectedDate(format(date, 'yyyy-MM-dd'))
+                  else setNotice('任务已保存到收件箱（未设置计划日期）')
+                  void reload()
+                }}
+                onRecurringCreated={(warning) => {
+                  setNotice(warning ?? '重复任务已添加')
+                  void reload()
+                }}
+              />
+            )}
+            <button
+              type="button"
+              className="floating__new"
+              aria-label="新建任务"
+              onClick={() => setAdding(true)}
+            >
+              <Icon name="plus" size={18} />
+              <span>新建任务</span>
+            </button>
+          </>
+        )}
+      </div>
 
       {!clickThrough && (
         <footer className="floating__foot" data-drag-region>
@@ -557,7 +799,22 @@ export function FloatingToday() {
               {Math.round(opacity * 100)}%
             </span>
           </label>
-          <span className="floating__hint">按住空白处可移动窗口</span>
+          <div className="floating__foot-row">
+            <span className="floating__hint">拖动顶栏移动窗口</span>
+            <button
+              type="button"
+              className="floating__btn"
+              aria-label="隐藏已完成"
+              aria-pressed={hideDone}
+              title="显示 / 隐藏已完成"
+              onClick={() => setHideDone((v) => !v)}
+            >
+              <Icon name="completed" size={14} />
+            </button>
+            <span className="floating__hint">
+              完成 {doneTotal} / {total}
+            </span>
+          </div>
         </footer>
       )}
 
@@ -581,58 +838,6 @@ export function FloatingToday() {
           }}
         />
       )}
-    </div>
-  )
-}
-
-/** 悬浮窗底部的快速添加：回车即加到今天，不跳窗口 */
-function FloatingAdd({
-  busy,
-  onAdd,
-}: {
-  busy: boolean
-  onAdd: (text: string) => void | Promise<void>
-}) {
-  const [text, setText] = useState('')
-  const ref = useRef<HTMLInputElement>(null)
-
-  const submit = async () => {
-    const t = text.trim()
-    if (!t) return
-    await onAdd(t)
-    setText('')
-    ref.current?.focus()
-  }
-
-  return (
-    <div className="floating__add">
-      <input
-        ref={ref}
-        className="floating__add-input selectable"
-        value={text}
-        placeholder="加一条今天的任务，回车确认"
-        aria-label="在悬浮窗中添加今天的任务"
-        disabled={busy}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            void submit()
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            setText('')
-          }
-        }}
-      />
-      <button
-        type="button"
-        className="floating__add-btn"
-        aria-label="添加任务"
-        disabled={busy || !text.trim()}
-        onClick={() => void submit()}
-      >
-        <Icon name="plus" size={15} />
-      </button>
     </div>
   )
 }

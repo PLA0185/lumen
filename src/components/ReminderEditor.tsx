@@ -40,7 +40,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
   const [busy, setBusy] = useState(false)
 
   // 新建表单
-  const [kind, setKind] = useState<ReminderKind>('at_due')
+  const [kind, setKind] = useState<ReminderKind>(hasDue ? 'at_due' : hasPlanned ? 'at_planned' : 'custom')
   const [offset, setOffset] = useState(30)
   const [customAt, setCustomAt] = useState('')
 
