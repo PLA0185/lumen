@@ -98,7 +98,7 @@ check('只完成一个子任务时父任务保持未完成', invoke('task_get', 
 def progress_ratio():
     return f"(() => {{const card={card_node}, track=card?.querySelector('.task__progress .progress'), bar=track?.querySelector('.progress__bar'); return track && bar ? bar.getBoundingClientRect().width/track.getBoundingClientRect().width : -1}})()"
 check('完成一个子任务后进度条真实绘制一半', main.wait_for(f"Math.abs({progress_ratio()}-0.5)<0.02"))
-check('完成按钮只有居中的白色对勾而没有嵌套圆圈', main.eval(f"(() => {{const b={card_node}.querySelector('.subtask-preview button'),svg=b.querySelector('svg'),r=b.getBoundingClientRect(),s=svg.getBoundingClientRect();return b.querySelector('svg path')!==null && b.querySelector('svg circle')===null && getComputedStyle(b).color==='rgb(255, 255, 255)' && Math.abs(s.x+s.width/2-r.x-r.width/2)<1 && Math.abs(s.y+s.height/2-r.y-r.height/2)<1}})()"))
+check('完成按钮是无描边绿色圆与居中的粗白色对勾', main.eval(f"(() => {{const b={card_node}.querySelector('.subtask-preview button'),svg=b.querySelector('svg'),r=b.getBoundingClientRect(),s=svg.getBoundingClientRect(),c=getComputedStyle(b);return b.querySelector('svg path')!==null && b.querySelector('svg circle')===null && c.color==='rgb(255, 255, 255)' && c.backgroundColor==='rgb(75, 169, 79)' && c.borderTopColor==='rgba(0, 0, 0, 0)' && Number(svg.querySelector('path').getAttribute('stroke-width'))>=2.5 && Math.abs(s.x+s.width/2-r.x-r.width/2)<1 && Math.abs(s.y+s.height/2-r.y-r.height/2)<1}})()"))
 main.eval(f"{card_node}.scrollIntoView({{block:'center'}})")
 clip=main.eval(f"(() => {{const r={card_node}.getBoundingClientRect();return {{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}}}})()")
 shot=main.call('Page.captureScreenshot', {'format':'png','clip':clip})
