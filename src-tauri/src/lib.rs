@@ -102,6 +102,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         // 系统通知（§4.3）
         .plugin(tauri_plugin_notification::init())
         // 全局快捷键（§4.4 / §8.2 恢复入口）。

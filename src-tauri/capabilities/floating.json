@@ -18,6 +18,7 @@
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
     "core:window:allow-scale-factor",
-    "log:default"
+    "log:default",
+    "clipboard-manager:allow-read-text"
   ]
 }

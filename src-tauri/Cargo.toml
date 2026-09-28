@@ -105,6 +105,7 @@ sha2 = "0.10"
 hex = "0.4"
 tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
 tauri-plugin-process = "2"
+tauri-plugin-clipboard-manager = "2"
 
 # ---- Windows 专属：PDF 导出走 WebView2 自身的 PrintToPdf ----
 # 版本必须与 tauri 依赖的 webview2-com / windows 保持一致，

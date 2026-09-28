@@ -3,6 +3,20 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { FloatingToday, QuickAddWindow } from './components/FloatingToday'
 import './styles.css'
+import { readText } from '@tauri-apps/plugin-clipboard-manager'
+import { installFreshPaste } from './lib/fresh-paste'
+
+if ('__TAURI_INTERNALS__' in window) {
+  const removePasteHandler = installFreshPaste(readText, () => {
+    const alert = document.createElement('div')
+    alert.className = 'paste-error'
+    alert.setAttribute('role', 'alert')
+    alert.textContent = '无法读取当前剪贴板，请重新复制后再粘贴。'
+    document.body.append(alert)
+    window.setTimeout(() => alert.remove(), 5000)
+  })
+  if (import.meta.hot) import.meta.hot.dispose(removePasteHandler)
+}
 
 // 主题：读取用户上次选择（默认"跟随系统"，由 CSS 的 prefers-color-scheme 处理）
 const savedTheme = localStorage.getItem('lumen.theme')
