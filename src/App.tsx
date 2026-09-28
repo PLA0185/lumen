@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp, PAGE_SIZE, buildQuery } from './lib/store'
+import type { SubtaskSummary } from './lib/store'
 import { IpcError } from './lib/ipc'
 import * as ipc from './lib/ipc'
 import { Sidebar, VIEW_META } from './components/Sidebar'
@@ -22,7 +23,6 @@ import { BoardView } from './components/BoardView'
 import { TaskEditor } from './components/TaskEditor'
 import { ScopeDialog } from './components/ScopeDialog'
 import * as recurrence from './lib/recurrence-ipc'
-import { RecurringTaskDialog } from './components/RecurringTaskDialog'
 import { bucketOf } from './lib/datetime'
 import { buildPrintDocument } from './lib/report-export'
 import { onDataChanged } from './lib/data-change'
@@ -96,8 +96,6 @@ export default function App() {
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
   const [deletingRecurring, setDeletingRecurring] = useState<Task | null>(null)
-  /** 新建重复任务对话框 */
-  const [showRecurring, setShowRecurring] = useState(false)
   const [exporting, setExporting] = useState(false)
   /** 导出进度：只保存计数，**不保存行数据**（第三轮任务书 §7） */
   const [exportProgress, setExportProgress] = useState<{ loaded: number; total: number } | null>(
@@ -587,15 +585,6 @@ export default function App() {
 
             <button
               type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => setShowRecurring(true)}
-              title="新建可以按规则重复的任务"
-            >
-              <Icon name="repeat" size={15} /> 重复任务
-            </button>
-
-            <button
-              type="button"
               className="btn btn--primary btn--sm"
               onClick={() => setShowQuickAdd((v) => !v)}
               title="新建任务（Ctrl+N）"
@@ -610,6 +599,11 @@ export default function App() {
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
                 onCreated={onCreated}
+                onRecurringCreated={async (warning) => {
+                  pushToast(warning ? 'error' : 'success', warning ?? '重复任务已创建')
+                  await reload()
+                  await useApp.getState().refreshOverview()
+                }}
                 onCancel={() => setShowQuickAdd(false)}
                 autoFocus
               />
@@ -737,19 +731,6 @@ export default function App() {
         />
       )}
 
-      {/* 新建重复任务（§5） */}
-      {showRecurring && (
-        <RecurringTaskDialog
-          onClose={() => setShowRecurring(false)}
-          onCreated={async (_seriesId, warning) => {
-            pushToast(warning ? 'error' : 'success',
-              warning ?? '重复任务已创建，后续发生已按规则生成')
-            await reload()
-            await useApp.getState().refreshOverview()
-          }}
-        />
-      )}
-
       {/* 提示条（§3 保存失败等要有明确反馈） */}
       <div className="toasts" role="status" aria-live="polite">
         {toasts.map((t) => (
@@ -815,7 +796,7 @@ interface TaskAreaProps {
   view: ViewId
   tasks: Task[]
   /** 任务 ID → 子任务进度（列表页批量取得） */
-  progressMap: Record<string, { total: number; done: number; percent: number | null }>
+  progressMap: Record<string, SubtaskSummary>
   loadState: string
   loadError: string | null
   search: string

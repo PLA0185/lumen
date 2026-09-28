@@ -13,10 +13,14 @@ import { IpcError } from '../lib/ipc'
 import { parseQuickInput } from '../lib/nlp'
 import { combineDateTime } from '../lib/datetime'
 import type { PeriodType, Task } from '../lib/types'
+import * as rec from '../lib/recurrence-ipc'
+import { RuleEditor } from './RuleEditor'
+import type { RuleEditorValue } from './RuleEditor'
 
 interface QuickAddProps {
   /** 保存成功后回调，用于刷新列表 */
   onCreated: (t: Task) => void
+  onRecurringCreated?: (warning: string | null) => void | Promise<void>
   /** 是否自动聚焦（打开快速添加窗口时为真） */
   autoFocus?: boolean
   /** 取消（关闭） */
@@ -25,11 +29,26 @@ interface QuickAddProps {
   tags?: { id: string; name: string }[]
 }
 
-export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: QuickAddProps) {
+export function QuickAdd({
+  onCreated,
+  onRecurringCreated,
+  autoFocus = true,
+  onCancel,
+  tags = [],
+}: QuickAddProps) {
   const [text, setText] = useState('')
   const [dateStr, setDateStr] = useState('')
   const [timeStr, setTimeStr] = useState('')
   const [priority, setPriority] = useState(0)
+  const [repeat, setRepeat] = useState('none')
+  const [rule, setRule] = useState<RuleEditorValue>({
+    rrule: 'FREQ=WEEKLY',
+    dtstartLocal: '',
+    hasStartTime: false,
+  })
+  const [description, setDescription] = useState('')
+  const [materializeDays, setMaterializeDays] = useState(90)
+  const savingRef = useRef(false)
   /** 周期跨度：这周/这个月做完就行，不必定到某天 */
   const [periodType, setPeriodType] = useState<PeriodType>('none')
   const [saving, setSaving] = useState(false)
@@ -64,43 +83,85 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
     setPeriodType('none')
     setError(null)
     setDateTouched(false)
+    setRepeat('none')
+    setDescription('')
+    setMaterializeDays(90)
+    setRule({ rrule: 'FREQ=WEEKLY', dtstartLocal: '', hasStartTime: false })
   }, [])
 
   const save = useCallback(async () => {
+    if (savingRef.current) return
     const title = (parsed.title || text).trim()
     if (!title) {
       setError('请输入任务标题')
       inputRef.current?.focus()
       return
     }
+    savingRef.current = true
     setSaving(true)
     setError(null)
     try {
       const dt = dateStr ? combineDateTime(dateStr, timeStr) : null
       const tagIds = parsed.tags
-        .map((name) => tags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id)
+        .map(
+          (name) =>
+            tags.find((t) => t.name.toLowerCase() === name.toLowerCase())?.id,
+        )
         .filter((x): x is string => Boolean(x))
 
-      const task = await ipc.createTask({
-        title,
-        priority: priority || undefined,
-        periodType: periodType === 'none' ? undefined : periodType,
-        plannedAt: dt?.utc ?? null,
-        hasPlannedTime: dt?.hasTime ?? false,
-        tagIds,
-      })
-      onCreated(task)
+      if (repeat !== 'none') {
+        if (!rule.dtstartLocal) throw new Error('请选择首次发生的日期')
+        const result = await rec.recurringCreate({
+          title,
+          description: description.trim() || undefined,
+          priority: priority || undefined,
+          tagIds,
+          rrule: rule.rrule,
+          dtstartLocal: rule.dtstartLocal,
+          hasStartTime: rule.hasStartTime,
+          materializeDays,
+          tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        })
+        await onRecurringCreated?.(result.warning)
+        if (result.warning && !onRecurringCreated) setError(result.warning)
+      } else {
+        const task = await ipc.createTask({
+          title,
+          priority: priority || undefined,
+          periodType: periodType === 'none' ? undefined : periodType,
+          plannedAt: dt?.utc ?? null,
+          hasPlannedTime: dt?.hasTime ?? false,
+          tagIds,
+        })
+        onCreated(task)
+      }
       // createTask 的统一 mutation 层已通知所有数据视图。
       reset()
       inputRef.current?.focus()
     } catch (e) {
       setError(e instanceof IpcError ? e.userMessage() : String(e))
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
     // `periodType` 必须列进来：它参与请求体（周期跨度），
     // 漏掉会让"先选周期再回车"保存成上一次的值。
-  }, [parsed, text, dateStr, timeStr, priority, periodType, tags, onCreated, reset])
+  }, [
+    parsed,
+    text,
+    dateStr,
+    timeStr,
+    priority,
+    periodType,
+    tags,
+    onCreated,
+    onRecurringCreated,
+    reset,
+    repeat,
+    rule,
+    description,
+    materializeDays,
+  ])
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -112,7 +173,9 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
     }
   }
 
-  const hasParseHints = Boolean(parsed.matched || parsed.tags.length > 0 || parsed.priority)
+  const hasParseHints = Boolean(
+    parsed.matched || parsed.tags.length > 0 || parsed.priority,
+  )
 
   return (
     <div className="quickadd">
@@ -137,37 +200,45 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
           {saving ? '保存中…' : '添加'}
         </button>
         {onCancel && (
-          <button type="button" className="btn btn--quiet btn--sm" onClick={onCancel}>
+          <button
+            type="button"
+            className="btn btn--quiet btn--sm"
+            onClick={onCancel}
+          >
             取消
           </button>
         )}
       </div>
 
       <div className="quickadd__row quickadd__row--meta">
-        <label className="field">
-          计划
-          <input
-            type="date"
-            value={dateStr}
-            aria-label="计划执行日期"
-            onChange={(e) => {
-              setDateStr(e.target.value)
-              setDateTouched(true)
-            }}
-          />
-        </label>
-        <label className="field">
-          时间
-          <input
-            type="time"
-            value={timeStr}
-            aria-label="计划执行时间（留空表示仅日期）"
-            onChange={(e) => {
-              setTimeStr(e.target.value)
-              setDateTouched(true)
-            }}
-          />
-        </label>
+        {repeat === 'none' && (
+          <label className="field">
+            计划
+            <input
+              type="date"
+              value={dateStr}
+              aria-label="计划执行日期"
+              onChange={(e) => {
+                setDateStr(e.target.value)
+                setDateTouched(true)
+              }}
+            />
+          </label>
+        )}
+        {repeat === 'none' && (
+          <label className="field">
+            时间
+            <input
+              type="time"
+              value={timeStr}
+              aria-label="计划执行时间（留空表示仅日期）"
+              onChange={(e) => {
+                setTimeStr(e.target.value)
+                setDateTouched(true)
+              }}
+            />
+          </label>
+        )}
         <label className="field">
           优先级
           <select
@@ -185,23 +256,56 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
         {/* 周期跨度：用于"这周/这个月做完就行"的任务。
             选中后**不需要**填具体日期，因此这里不做联动清空，
             用户想同时指定日期也可以。 */}
+        {repeat === 'none' && (
+          <label className="field">
+            周期
+            <select
+              value={periodType}
+              aria-label="周期跨度"
+              title="标记为某个周期内完成即可，不必绑定到具体某一天"
+              onChange={(e) => setPeriodType(e.target.value as PeriodType)}
+            >
+              <option value="none">不限</option>
+              <option value="day">今日内</option>
+              <option value="week">本周内</option>
+              <option value="month">本月内</option>
+              <option value="quarter">本季度内</option>
+              <option value="year">今年内</option>
+            </select>
+          </label>
+        )}
         <label className="field">
-          周期
+          重复
           <select
-            value={periodType}
-            aria-label="周期跨度"
-            title="标记为某个周期内完成即可，不必绑定到具体某一天"
-            onChange={(e) => setPeriodType(e.target.value as PeriodType)}
+            aria-label="任务重复"
+            value={repeat}
+            onChange={(e) => {
+              const next = e.target.value
+              setRepeat(next)
+              if (next !== 'none')
+                setRule({
+                  rrule:
+                    next === 'custom'
+                      ? rule.rrule
+                      : `FREQ=${next.toUpperCase()}`,
+                  dtstartLocal:
+                    rule.dtstartLocal ||
+                    `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
+                  hasStartTime: rule.dtstartLocal
+                    ? rule.hasStartTime
+                    : Boolean(timeStr),
+                })
+            }}
           >
-            <option value="none">不限</option>
-            <option value="day">今日内</option>
-            <option value="week">本周内</option>
-            <option value="month">本月内</option>
-            <option value="quarter">本季度内</option>
-            <option value="year">今年内</option>
+            <option value="none">不重复</option>
+            <option value="daily">每天</option>
+            <option value="weekly">每周</option>
+            <option value="monthly">每月</option>
+            <option value="yearly">每年</option>
+            <option value="custom">自定义规则</option>
           </select>
         </label>
-        {dateStr && (
+        {repeat === 'none' && dateStr && (
           <button
             type="button"
             className="btn btn--quiet btn--sm"
@@ -216,6 +320,38 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
         )}
       </div>
 
+      {repeat !== 'none' && (
+        <fieldset className="formfieldset quickadd__repeat">
+          <legend>重复规则</legend>
+          <RuleEditor key={repeat} value={rule} onChange={setRule} />
+          <label className="field">
+            描述
+            <input
+              className="input"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              aria-label="重复任务描述"
+            />
+          </label>
+          <label className="field">
+            提前生成
+            <input
+              type="number"
+              min={1}
+              max={730}
+              value={materializeDays}
+              onChange={(e) =>
+                setMaterializeDays(
+                  Math.max(1, Math.min(730, Number(e.target.value) || 90)),
+                )
+              }
+              aria-label="提前生成多少天内的实例"
+            />
+            天内
+          </label>
+        </fieldset>
+      )}
+
       {/* 解析结果预览：用户在保存前就能看见系统识别到了什么（§4.4） */}
       {hasParseHints && (
         <div className="quickadd__hint">
@@ -225,9 +361,9 @@ export function QuickAdd({ onCreated, autoFocus = true, onCancel, tags = [] }: Q
             <span key={t}> #{t}</span>
           ))}
           {parsed.priority ? <span> 优先级 {parsed.priority}</span> : null}
-          {parsed.tags.some((t) => !tags.find((x) => x.name.toLowerCase() === t.toLowerCase())) && (
-            <span>（灰色标签尚未创建，保存后不会自动建标签）</span>
-          )}
+          {parsed.tags.some(
+            (t) => !tags.find((x) => x.name.toLowerCase() === t.toLowerCase()),
+          ) && <span>（灰色标签尚未创建，保存后不会自动建标签）</span>}
         </div>
       )}
 
