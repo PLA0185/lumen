@@ -37,6 +37,7 @@ import { TaskEditor } from './TaskEditor'
 import type { FloatingState } from '../lib/window-ipc'
 import type { Task, TaskQuery } from '../lib/types'
 import { Icon } from './Icons'
+import { CheckMark } from './CheckMark'
 
 /** 拖动结束后再落库的延迟：拖动过程中会连续触发 resize 事件 */
 const SIZE_SAVE_DELAY = 400
@@ -451,9 +452,7 @@ export function FloatingToday() {
                   disabled={clickThrough}
                   onClick={() => void toggle(t.id, !isDone)}
                 >
-                  {isDone ? (
-                    <Icon name="completed" size={11} strokeWidth={2.4} />
-                  ) : null}
+                  {isDone && <CheckMark />}
                 </button>
 
                 {editing ? (

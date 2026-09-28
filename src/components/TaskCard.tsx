@@ -22,6 +22,7 @@ import { FocusPanel } from './FocusPanel'
 import * as rec from '../lib/recurrence-ipc'
 import type { ScopeInfo } from '../lib/recurrence-ipc'
 import { Icon } from './Icons'
+import { CheckMark } from './CheckMark'
 import { onDataChanged } from '../lib/data-change'
 
 /**
@@ -259,23 +260,7 @@ export function TaskCard({
             className="task__check"
             onClick={() => onToggle(task.id, !done)}
           >
-            {done && (
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 12 12"
-                aria-hidden="true"
-              >
-                <path
-                  d="M2.5 6.2l2.3 2.3L9.5 3.8"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            )}
+            {done && <CheckMark />}
           </button>
         )}
 
@@ -338,7 +323,14 @@ export function TaskCard({
                 className="task__progress"
                 title={`已完成 ${progress.done} / ${progress.total}`}
               >
-                <span className="progress progress--inline">
+                <span
+                  className="progress progress--inline"
+                  role="progressbar"
+                  aria-label="子任务完成进度"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={progress.percent ?? 0}
+                >
                   <span
                     className="progress__bar"
                     style={{ width: `${progress.percent ?? 0}%` }}

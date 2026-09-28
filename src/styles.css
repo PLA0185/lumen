@@ -1444,6 +1444,7 @@ input[type='color'] {
 }
 
 .progress__bar {
+  display: block;
   height: 100%;
   background: var(--c-accent);
   border-radius: 999px;

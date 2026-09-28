@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Subtask } from '../lib/organize-ipc'
 import { subtaskUpdate } from '../lib/organize-ipc'
 import { IpcError } from '../lib/ipc'
-import { Icon } from './Icons'
+import { CheckMark } from './CheckMark'
 
 /** 已经由父视图批量取得的子任务；简览本身不产生逐卡查询。 */
 export function SubtaskPreview({
@@ -43,7 +43,7 @@ export function SubtaskPreview({
               disabled={disabled || saving !== null}
               onClick={() => void toggle(item)}
             >
-              {item.isDone === 1 && <Icon name="completed" size={9} />}
+              {item.isDone === 1 && <CheckMark />}
             </button>
             <span className="subtask-preview__title selectable">
               {item.title}

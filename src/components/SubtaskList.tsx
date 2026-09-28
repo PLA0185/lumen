@@ -12,6 +12,7 @@ import { IpcError } from '../lib/ipc'
 import { onDataChanged } from '../lib/data-change'
 import type { Subtask } from '../lib/organize-ipc'
 import { Icon } from './Icons'
+import { CheckMark } from './CheckMark'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -94,7 +95,8 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
   }
 
   const done = items.filter((s) => s.isDone === 1).length
-  const percent = items.length > 0 ? Math.round((done * 100) / items.length) : null
+  const percent =
+    items.length > 0 ? Math.round((done * 100) / items.length) : null
 
   return (
     <div className="subtasks">
@@ -103,7 +105,10 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
         {percent !== null && (
           <>
             <span className="progress">
-              <span className="progress__bar" style={{ width: `${percent}%` }} />
+              <span
+                className="progress__bar"
+                style={{ width: `${percent}%` }}
+              />
             </span>
             <span>
               {done}/{items.length}（{percent}%）
@@ -115,33 +120,29 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
       {loading ? (
         <div className="skeleton" style={{ height: 26 }} />
       ) : items.length === 0 ? (
-        <p className="reminders__empty">还没有子任务。把这件事拆成几步会更清楚。</p>
+        <p className="reminders__empty">
+          还没有子任务。把这件事拆成几步会更清楚。
+        </p>
       ) : (
         <ul className="sublist">
           {items.map((s) => (
-            <li key={s.id} className={`subtask${s.isDone === 1 ? ' subtask--done' : ''}`}>
+            <li
+              key={s.id}
+              className={`subtask${s.isDone === 1 ? ' subtask--done' : ''}`}
+            >
               <button
                 type="button"
                 role="checkbox"
                 aria-checked={s.isDone === 1}
                 aria-label={
-                  s.isDone === 1 ? `将子任务「${s.title}」标记为未完成` : `完成子任务「${s.title}」`
+                  s.isDone === 1
+                    ? `将子任务「${s.title}」标记为未完成`
+                    : `完成子任务「${s.title}」`
                 }
                 className="task__check task__check--sm"
                 onClick={() => void toggle(s)}
               >
-                {s.isDone === 1 && (
-                  <svg width="9" height="9" viewBox="0 0 12 12" aria-hidden="true">
-                    <path
-                      d="M2.5 6.2l2.3 2.3L9.5 3.8"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
+                {s.isDone === 1 && <CheckMark />}
               </button>
 
               {editingId === s.id ? (
@@ -208,7 +209,12 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
       {error && (
         <div className="alert alert--error" role="alert">
           <span className="selectable">{error}</span>
-          <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setError(null)}>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="关闭"
+            onClick={() => setError(null)}
+          >
             <Icon name="close" size={14} />
           </button>
         </div>

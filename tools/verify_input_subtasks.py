@@ -1,6 +1,7 @@
 """桌面回归：只允许指定的隔离 profile；使用真实鼠标与键盘事件。"""
 from __future__ import annotations
 import argparse
+import base64
 import json
 import subprocess
 import time
@@ -56,6 +57,7 @@ card_node = f"Array.from(document.querySelectorAll('.task')).find(x=>x.querySele
 planned = main.eval('new Date().toISOString()')
 task = invoke('task_create', {'input': {'title': title, 'plannedAt': planned, 'hasPlannedTime': False}})
 child = invoke('subtask_create', {'taskId': task['id'], 'title': '子任务验收-' + stamp})
+sibling = invoke('subtask_create', {'taskId': task['id'], 'title': '第二个子任务-' + stamp})
 main.eval("Array.from(document.querySelectorAll('.sidebar button')).find(b=>b.innerText.includes('全部任务')).click()")
 check('折叠卡片显示子任务名称', main.wait_for(f"Array.from(document.querySelectorAll('.subtask-preview')).some(x=>x.innerText.includes({json.dumps(child['title'])}))", timeout=15))
 main.eval(f"{card_node}.dataset.inputTest={json.dumps(stamp)}")
@@ -92,6 +94,18 @@ floating.eval(f"Array.from(document.querySelectorAll('.subtask-preview')).find(x
 floating_child = f'[data-input-test="{stamp}"] button[role=checkbox]'
 real_click(floating, floating_child)
 check('悬浮窗勾选后基础列表同步', main.wait_for(f"{card_node}?.querySelector('.subtask-preview button')?.getAttribute('aria-checked')==='true'"))
+check('只完成一个子任务时父任务保持未完成', invoke('task_get', {'id':task['id']})['status']=='todo')
+def progress_ratio():
+    return f"(() => {{const card={card_node}, track=card?.querySelector('.task__progress .progress'), bar=track?.querySelector('.progress__bar'); return track && bar ? bar.getBoundingClientRect().width/track.getBoundingClientRect().width : -1}})()"
+check('完成一个子任务后进度条真实绘制一半', main.wait_for(f"Math.abs({progress_ratio()}-0.5)<0.02"))
+check('完成按钮只有白色对勾而没有嵌套圆圈', main.eval(f"(() => {{const b={card_node}.querySelector('.subtask-preview button');return b.querySelector('svg path')!==null && b.querySelector('svg circle')===null && getComputedStyle(b).color==='rgb(255, 255, 255)'}})()"))
+main.eval(f"{card_node}.scrollIntoView({{block:'center'}})")
+clip=main.eval(f"(() => {{const r={card_node}.getBoundingClientRect();return {{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}}}})()")
+shot=main.call('Page.captureScreenshot', {'format':'png','clip':clip})
+(expected.parent/'half-progress.png').write_bytes(base64.b64decode(shot['data']))
+floating.eval(f"Array.from(document.querySelectorAll('.subtask-preview__item')).find(x=>x.innerText.includes({json.dumps(sibling['title'])})).dataset.siblingTest={json.dumps(stamp)}")
+real_click(floating, f'[data-sibling-test="{stamp}"] button')
+check('完成第二个子任务后进度条真实绘制全部', main.wait_for(f"Math.abs({progress_ratio()}-1)<0.02"))
 parent = invoke('task_get', {'id': task['id']})
 check('最后一个子任务完成后父任务自动完成并记录时间', parent['status']=='done' and parent['completedAt'] is not None)
 check('基础列表同步父任务完成状态', main.wait_for(f"{card_node}?.querySelector('.task__main > button[role=checkbox]')?.getAttribute('aria-checked')==='true'"))
