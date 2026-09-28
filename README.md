@@ -419,5 +419,7 @@ pnpm typecheck                # 类型检查
 | `docs/test-report.md` | 测试报告：环境、测试分布、端到端验证记录、发现并修复的真实缺陷 |
 | `docs/data-structure.md` | 数据结构与迁移策略 |
 | `docs/design-recurrence.md` | 重复规则与例外的设计说明 |
+| `docs/design-workday-calendar.md` | 每日默认双休、法定节假日过滤、调休补班及日历覆盖边界 |
+| `docs/design-task-creation-context.md` | 从所在列表、日历或组织归属新建任务的默认值与验证 |
 | `docs/tech-selection.md` | 技术选型记录 |
 | `docs/api-research*.md` | 三家 AI 服务商与 Tauri 能力的官方文档核实记录 |
