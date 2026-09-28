@@ -92,6 +92,10 @@ floating.eval(f"Array.from(document.querySelectorAll('.subtask-preview')).find(x
 floating_child = f'[data-input-test="{stamp}"] button[role=checkbox]'
 real_click(floating, floating_child)
 check('悬浮窗勾选后基础列表同步', main.wait_for(f"{card_node}?.querySelector('.subtask-preview button')?.getAttribute('aria-checked')==='true'"))
+parent = invoke('task_get', {'id': task['id']})
+check('最后一个子任务完成后父任务自动完成并记录时间', parent['status']=='done' and parent['completedAt'] is not None)
+check('基础列表同步父任务完成状态', main.wait_for(f"{card_node}?.querySelector('.task__main > button[role=checkbox]')?.getAttribute('aria-checked')==='true'"))
+check('悬浮窗同步父任务完成状态', floating.wait_for(f"Array.from(document.querySelectorAll('.floating__item')).find(x=>x.innerText.includes({json.dumps(title)}))?.querySelector('.floating__check')?.getAttribute('aria-checked')==='true'"))
 main.eval(f"{card_node}.dataset.inputTest={json.dumps(stamp)}")
 real_click(main, card + ' .subtask-preview button')
 check('基础列表取消勾选后悬浮窗同步', floating.wait_for(f"Array.from(document.querySelectorAll('.subtask-preview')).find(x=>x.innerText.includes({json.dumps(child['title'])}))?.querySelector('button')?.getAttribute('aria-checked')==='false'"))
