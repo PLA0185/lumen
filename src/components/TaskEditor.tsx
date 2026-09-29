@@ -410,23 +410,23 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           )}
         </div>
 
-        <details className="editor-advanced editor-advanced--compact" open={detailsOpen}
-          onToggle={(e) => setDetailsOpen(e.currentTarget.open)}>
-          <summary>说明与链接</summary>
         <div className="formrow">
           <label className="formlabel" htmlFor="ed-desc">
-            描述
+            任务描述
           </label>
           <textarea
             id="ed-desc"
             className="input input--area selectable"
-            rows={2}
+            rows={5}
             value={description}
-            placeholder="一句话说明这件事要做什么"
+            placeholder="要完成什么、交付要求、注意事项…可分行填写"
             onChange={(e) => setDescription(e.target.value)}
           />
         </div>
 
+        <details className="editor-advanced editor-advanced--compact" open={detailsOpen}
+          onToggle={(e) => setDetailsOpen(e.currentTarget.open)}>
+          <summary>链接</summary>
         <div className="formrow">
           <label className="formlabel" htmlFor="ed-link">
             链接

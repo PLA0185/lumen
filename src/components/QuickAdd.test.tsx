@@ -13,4 +13,8 @@ describe('统一新建任务入口', () => {
     expect(html).toContain('aria-label="任务重复"')
     expect(html).toContain('不重复')
   })
+  it('普通新建提供多行任务描述', () => {
+    const html = renderToStaticMarkup(<QuickAdd onCreated={() => {}} />)
+    expect(html).toMatch(/<textarea[^>]+aria-label="任务描述"/)
+  })
 })

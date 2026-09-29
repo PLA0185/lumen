@@ -157,6 +157,7 @@ export function QuickAdd({
       } else {
         const task = await ipc.createTask({
           title,
+          description: description.trim() || undefined,
           projectId: context?.projectId,
           categoryId: context?.categoryId,
           priority: priority || undefined,
@@ -409,6 +410,19 @@ export function QuickAdd({
           添加后设置提醒
         </label>
       )}
+      {optionsOpen && (
+        <label className="formrow">
+          <span className="formlabel">任务描述</span>
+          <textarea
+            className="input input--area selectable"
+            rows={3}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            aria-label="任务描述"
+            placeholder="要完成什么、交付要求、注意事项…可分行填写"
+          />
+        </label>
+      )}
       {repeat !== 'none' && (
         <fieldset className="formfieldset quickadd__repeat">
           <legend>重复规则</legend>
@@ -418,15 +432,6 @@ export function QuickAdd({
             onChange={setRule}
             periodType={periodType}
           />
-          <label className="field">
-            描述
-            <input
-              className="input"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              aria-label="重复任务描述"
-            />
-          </label>
           <label className="field">
             提前生成
             <input
