@@ -23,12 +23,17 @@ import { IpcError } from '../lib/ipc'
 import { useApp } from '../lib/store'
 import type { WindowConfig, WindowConfigState } from '../lib/window-ipc'
 import { Icon } from './Icons'
+import { AutostartSettings } from './AutostartSettings'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
 }
 
 export function WindowSettings() {
+  return <><AutostartSettings /><WindowOptions /></>
+}
+
+function WindowOptions() {
   const pushToast = useApp((s) => s.pushToast)
   const [state, setState] = useState<WindowConfigState | null>(null)
   const [cfg, setCfg] = useState<WindowConfig | null>(null)

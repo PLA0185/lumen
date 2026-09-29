@@ -304,7 +304,7 @@ export function SettingsView() {
   // ------------------------------ 渲染 ------------------------------
   const tabs: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
-    { id: 'window', label: '窗口' },
+    { id: 'window', label: '窗口与启动' },
     { id: 'ai', label: 'AI' },
     { id: 'data', label: '数据与备份' },
     { id: 'reminders', label: '提醒' },
