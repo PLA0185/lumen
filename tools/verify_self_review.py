@@ -113,6 +113,12 @@ try:
     first = invoke('backup_export')
     second = invoke('backup_export')
     check('连续备份路径不冲突且两份都保留', first['path'] != second['path'] and Path(first['path']).is_file() and Path(second['path']).is_file())
+    legacy['data']['series'] = []
+    legacy['checksum'] = hashlib.sha256(json.dumps(legacy['data'], ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    old = write_backup('legacy-without-series', legacy)
+    preview = invoke('backup_preview', {'path': old})
+    restored = invoke('backup_restore', {'path': old})
+    check('没有重复系列的旧格式2备份可真实恢复', not preview['blockingIssues'] and restored['imported']['tasks'] == 1 and restored['imported']['series'] == 0)
     print(json.dumps({'passed': len(checks), 'isolatedProfile': True}), flush=True)
 finally:
     main.close()
