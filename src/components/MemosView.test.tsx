@@ -17,9 +17,12 @@ afterEach(() => {
   vi.useRealTimers()
   document.body.innerHTML = ''
 })
-async function mount(query = '') {
+async function mount(
+  query = '',
+  rows: memo.MemoSummary[] | Promise<memo.MemoSummary[]> = [],
+) {
   vi.useFakeTimers()
-  vi.spyOn(memo, 'memoList').mockResolvedValue([])
+  vi.spyOn(memo, 'memoList').mockImplementation(() => Promise.resolve(rows))
   window.confirm = vi.fn(() => true)
   const host = document.createElement('div')
   document.body.append(host)
@@ -47,6 +50,59 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  const row: memo.MemoSummary = {
+    id: 'audit-own',
+    title: '验收备忘',
+    category: '学习',
+    kind: 'memo',
+    revision: 1,
+    createdAt: '',
+    updatedAt: '',
+    deletedAt: null,
+  }
+  it('搜索无匹配时仍显示生效中的分类，用户可以清除筛选', async () => {
+    await mount('', [row])
+    const select = document.querySelector(
+      '[aria-label="备忘分类筛选"]',
+    ) as HTMLSelectElement
+    await act(async () => {
+      select.value = '学习'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    vi.mocked(memo.memoList).mockResolvedValue([])
+    await act(async () => root!.render(<MemosView query="无匹配" />))
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(select.value).toBe('学习')
+    expect(select.selectedOptions[0]?.textContent).toBe('学习')
+  })
+  it('搜索条件改变后，防抖期间旧请求不能覆盖列表', async () => {
+    let resolve!: (rows: memo.MemoSummary[]) => void
+    await mount(
+      '',
+      new Promise((r) => {
+        resolve = r
+      }),
+    )
+    await act(async () => root!.render(<MemosView query="新搜索" />))
+    await act(async () => resolve([row]))
+    expect(document.querySelector('.memos__item')).toBeNull()
+    vi.mocked(memo.memoList).mockResolvedValue([{ ...row, title: '新的结果' }])
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(document.querySelector('.memos__item')?.textContent).toContain(
+      '新的结果',
+    )
+  })
+  it('列表刷新成功不会抹掉保存失败的原因', async () => {
+    vi.spyOn(memo, 'memoSave').mockRejectedValue(new Error('版本冲突验收'))
+    await mount()
+    await click('新建备忘')
+    await fill('备忘标题', '保留草稿')
+    await click('保存并查看')
+    await click('刷新列表')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+      '版本冲突验收',
+    )
+  })
   it('添加步骤并调序，按用户顺序保存，保存后展示负责人和路线', async () => {
     const save = vi
       .spyOn(memo, 'memoSave')

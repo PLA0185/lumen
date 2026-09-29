@@ -40,6 +40,7 @@ export function MemosView({
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const listGate = useRef(createRequestGate()).current
   const detailGate = useRef(createRequestGate()).current
@@ -51,9 +52,9 @@ export function MemosView({
     await runLatestRequest(listGate, () => memo.memoList(query, trash), {
       apply: (rows) => {
         setItems(rows)
-        setError(null)
+        setListError(null)
       },
-      reject: (e) => setError(errorText(e)),
+      reject: (e) => setListError(errorText(e)),
       finish: () => setLoading(false),
     })
   }, [listGate, query, trash])
@@ -70,9 +71,10 @@ export function MemosView({
     const off = onDataChanged(['memos'], () => void reload())
     return () => {
       clearTimeout(timer)
+      listGate.invalidate()
       off()
     }
-  }, [reload])
+  }, [reload, listGate])
   useEffect(() => {
     onDirtyChange?.(dirty || busy)
   }, [dirty, busy, onDirtyChange])
@@ -182,7 +184,7 @@ export function MemosView({
     patch({ steps })
   }
   const categories = [
-    ...new Set(items.map((i) => i.category).filter(Boolean)),
+    ...new Set([category, ...items.map((i) => i.category)].filter(Boolean)),
   ].sort()
   const visible = category
     ? items.filter((i) => i.category === category)
@@ -241,9 +243,9 @@ export function MemosView({
           刷新列表
         </button>
       </div>
-      {error && (
+      {(error || listError) && (
         <p className="alert alert--error selectable" role="alert">
-          {error}
+          {error || listError}
         </p>
       )}
       {notice && (
