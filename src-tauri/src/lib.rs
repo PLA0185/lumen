@@ -33,6 +33,7 @@ pub mod db;
 pub mod error;
 pub mod focus;
 pub mod holiday_calendar;
+pub mod memos;
 pub mod models;
 pub mod organize;
 pub mod pdf;
@@ -360,6 +361,10 @@ pub fn run() {
             backup::backup_auto,
             backup::export_csv,
             backup::export_markdown,
+            memos::memo_list,
+            memos::memo_get,
+            memos::memo_save,
+            memos::memo_set_deleted,
             // ---- PDF 导出（§6 中文可读）----
             pdf::export_pdf,
             commands::task_report,

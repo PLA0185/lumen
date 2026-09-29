@@ -31,7 +31,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 1;
+pub const BACKUP_FORMAT_VERSION: u32 = 2;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -85,6 +85,8 @@ pub struct BackupStats {
     pub series: usize,
     pub segments: usize,
     pub settings: usize,
+    #[serde(default)]
+    pub memo_documents: usize,
 }
 
 /// 备份承载的数据。全部使用 `serde_json::Value` 行式存储，
@@ -108,6 +110,9 @@ pub struct BackupData {
     /// 附件未随备份打包的说明（始终存在，避免用户误以为备份包含文件本体）
     #[serde(default)]
     pub attachments_note: String,
+    // 空集合不参与序列化，保留格式 1 备份的原校验和。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub memo_documents: Vec<serde_json::Value>,
 }
 
 /// 导出结果
@@ -213,6 +218,7 @@ async fn dump_table(db: &Db, table: &str) -> AppResult<Vec<serde_json::Value>> {
         "task_series" => "SELECT * FROM task_series",
         "task_series_segments" => "SELECT * FROM task_series_segments",
         "settings" => "SELECT * FROM settings",
+        "memo_documents" => "SELECT * FROM memo_documents",
         _ => return Err(AppError::internal("内部错误：非法表名")),
     };
 
@@ -282,7 +288,8 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
             (SELECT COUNT(*) FROM attachments) AS attachments,
             (SELECT COUNT(*) FROM task_series) AS series,
             (SELECT COUNT(*) FROM task_series_segments) AS segments,
-            (SELECT COUNT(*) FROM settings) AS settings",
+            (SELECT COUNT(*) FROM settings) AS settings,
+            (SELECT COUNT(*) FROM memo_documents) AS memo_documents",
     )
     .fetch_one(db.pool())
     .await?;
@@ -300,6 +307,7 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
         series: row.try_get::<i64, _>("series")? as usize,
         segments: row.try_get::<i64, _>("segments")? as usize,
         settings: row.try_get::<i64, _>("settings")? as usize,
+        memo_documents: row.try_get::<i64, _>("memo_documents")? as usize,
     })
 }
 
@@ -323,6 +331,7 @@ async fn build_backup_data(db: &Db) -> AppResult<BackupData> {
         series: dump_table(db, "task_series").await?,
         segments: dump_table(db, "task_series_segments").await?,
         settings: dump_table(db, "settings").await?,
+        memo_documents: dump_table(db, "memo_documents").await?,
         attachments_note: if attachment_count > 0 {
             format!(
                 "本备份包含 {attachment_count} 条附件记录，但**不包含附件文件本身**。\
@@ -355,6 +364,7 @@ pub async fn backup_export(
         series: data.series.len(),
         segments: data.segments.len(),
         settings: data.settings.len(),
+        memo_documents: data.memo_documents.len(),
     };
     let checksum = checksum_of(&data)?;
 
@@ -647,6 +657,7 @@ pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResu
         "categories",
         "projects",
         "settings",
+        "memo_documents",
     ] {
         // 表名来自上面这个内部字面量数组，非用户输入
         let sql = format!("DELETE FROM {t}");
@@ -656,7 +667,7 @@ pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResu
     }
 
     // 插入顺序与外键方向一致：父表先插
-    let plan: [(&str, &[serde_json::Value]); 12] = [
+    let plan: [(&str, &[serde_json::Value]); 13] = [
         ("projects", &file.data.projects),
         ("categories", &file.data.categories),
         ("tags", &file.data.tags),
@@ -669,6 +680,7 @@ pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResu
         ("reminders", &file.data.reminders),
         ("attachments", &file.data.attachments),
         ("settings", &file.data.settings),
+        ("memo_documents", &file.data.memo_documents),
     ];
 
     // 预先取好各表列名（避免在事务里反复 PRAGMA 查询）
@@ -696,6 +708,7 @@ pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResu
             "reminders" => imported.reminders = n,
             "attachments" => imported.attachments = n,
             "settings" => imported.settings = n,
+            "memo_documents" => imported.memo_documents = n,
             _ => {}
         }
     }
@@ -833,6 +846,7 @@ pub async fn backup_auto(state: State<'_, AppState>, keep: Option<i64>) -> AppRe
         series: data.series.len(),
         segments: data.segments.len(),
         settings: data.settings.len(),
+        memo_documents: data.memo_documents.len(),
     };
     let checksum = checksum_of(&data)?;
     let file = BackupFile {
@@ -1245,6 +1259,52 @@ mod tests {
         (db, dir)
     }
 
+    #[tokio::test]
+    async fn memo_documents_are_migrated_and_included_in_backup() {
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT INTO memo_documents (id,title,category,kind,body_md,steps_json,revision,created_at,updated_at) VALUES ('memo-test','业务验收','学习','flow','操作说明','[]',1,'2026-09-29','2026-09-29')")
+            .execute(db.pool()).await.expect("正式迁移应创建备忘表");
+        let data = build_backup_data(&db).await.unwrap();
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["memoDocuments"][0]["title"], "业务验收");
+        let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        let cols = table_columns(&db, "memo_documents").await.unwrap();
+        let mut tx = db.pool().begin().await.unwrap();
+        sqlx::query("DELETE FROM memo_documents")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let restored = insert_rows(&mut tx, "memo_documents", &data.memo_documents, &cols)
+            .await
+            .unwrap();
+        assert_eq!(restored, 1);
+        tx.commit().await.unwrap();
+        assert_eq!(
+            dump_table(&db, "memo_documents").await.unwrap(),
+            data.memo_documents
+        );
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count_before, count_after);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn format_one_checksum_remains_compatible_without_memos() {
+        use sha2::{Digest, Sha256};
+        let raw = r#"{"projects":[],"categories":[],"tags":[],"tasks":[],"taskTags":[],"subtasks":[],"dependencies":[],"reminders":[],"attachments":[],"series":[],"segments":[],"settings":[],"attachmentsNote":""}"#;
+        let legacy: BackupData = serde_json::from_str(raw).unwrap();
+        assert!(legacy.memo_documents.is_empty());
+        let expected = hex::encode(Sha256::digest(raw.as_bytes()));
+        assert_eq!(checksum_of(&legacy).unwrap(), expected);
+    }
+
     /// 完整往返：导出 → 清空 → 恢复 → 数据必须与原来逐项一致。
     ///
     /// 这是 §11 明确要求的自动化覆盖项，也是"数据不丢"这一阻断性问题的
@@ -1277,6 +1337,7 @@ mod tests {
             "categories",
             "projects",
             "settings",
+            "memo_documents",
         ] {
             let sql = format!("DELETE FROM {t}");
             sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -1292,7 +1353,7 @@ mod tests {
 
         // 恢复：走与命令相同的插入路径
         let mut tx = db.pool().begin().await.unwrap();
-        let plan: [(&str, &[serde_json::Value]); 12] = [
+        let plan: [(&str, &[serde_json::Value]); 13] = [
             ("projects", &data.projects),
             ("categories", &data.categories),
             ("tags", &data.tags),
@@ -1305,6 +1366,7 @@ mod tests {
             ("reminders", &data.reminders),
             ("attachments", &data.attachments),
             ("settings", &data.settings),
+            ("memo_documents", &data.memo_documents),
         ];
         for (table, rows) in plan.iter() {
             let cols = table_columns(&db, table).await.unwrap();
@@ -1600,6 +1662,7 @@ mod tests {
             series: vec![],
             segments: vec![],
             settings: vec![],
+            memo_documents: vec![],
             attachments_note: String::new(),
         };
         let d2 = d1.clone();
@@ -1622,6 +1685,7 @@ mod tests {
             series: vec![],
             segments: vec![],
             settings: vec![],
+            memo_documents: vec![],
             attachments_note: String::new(),
         };
         let mut changed = base.clone();
@@ -1647,6 +1711,7 @@ mod tests {
             series: vec![],
             segments: vec![],
             settings: vec![],
+            memo_documents: vec![],
             attachments_note: String::new(),
         };
         // 用字符串构造，键顺序相反
@@ -1672,6 +1737,7 @@ mod tests {
             series: vec![],
             segments: vec![],
             settings: vec![],
+            memo_documents: vec![],
             attachments_note: String::new(),
         };
         let c = checksum_of(&d).unwrap();
@@ -1709,6 +1775,7 @@ mod tests {
                 series: vec![],
                 segments: vec![],
                 settings: vec![],
+                memo_documents: vec![],
                 attachments_note: "无附件".into(),
             },
         };
