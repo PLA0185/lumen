@@ -36,6 +36,8 @@ export interface WindowConfig {
   shortcutToggle: string
   shortcutQuickAdd: string
   shortcutToday: string
+  /** 呼出悬浮窗，并恢复为可点击状态 */
+  shortcutFloating: string
 }
 
 /** 窗口配置查询结果 */
@@ -108,6 +110,7 @@ export type WindowAction =
   | 'toggle_floating_click_through'
   | 'toggle_tray'
   | 'show_floating'
+  | 'summon_floating'
   | 'hide_floating'
   | 'show_main'
 
@@ -161,6 +164,7 @@ export const SHORTCUT_PRESETS: string[] = [
   'CmdOrCtrl+Alt+D',
   'CmdOrCtrl+Alt+N',
   'CmdOrCtrl+Alt+Q',
+  'CmdOrCtrl+Alt+G',
   'CmdOrCtrl+Shift+A',
   'CmdOrCtrl+Shift+T',
   'Alt+Shift+A',

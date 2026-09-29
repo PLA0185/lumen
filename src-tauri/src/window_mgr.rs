@@ -107,6 +107,8 @@ pub struct WindowConfig {
     pub shortcut_quick_add: String,
     /// 今日概览的全局快捷键
     pub shortcut_today: String,
+    /// 呼出悬浮窗并恢复可交互状态的全局快捷键
+    pub shortcut_floating: String,
 }
 
 impl Default for WindowConfig {
@@ -131,6 +133,7 @@ impl Default for WindowConfig {
             shortcut_toggle: "CmdOrCtrl+Alt+A".to_string(),
             shortcut_quick_add: "CmdOrCtrl+Alt+N".to_string(),
             shortcut_today: "CmdOrCtrl+Alt+D".to_string(),
+            shortcut_floating: "CmdOrCtrl+Alt+Q".to_string(),
         }
     }
 }
@@ -466,6 +469,7 @@ pub async fn window_set_config(
         || cfg.shortcut_toggle != old.shortcut_toggle
         || cfg.shortcut_quick_add != old.shortcut_quick_add
         || cfg.shortcut_today != old.shortcut_today
+        || cfg.shortcut_floating != old.shortcut_floating
     {
         if let Err(e) = crate::shortcuts::reload(&app, &cfg) {
             // 快捷键注册失败不应让整个设置更新失败，但必须让用户知道
@@ -520,6 +524,10 @@ pub async fn window_apply_action(
         }
         "toggle_tray" => cfg.tray_enabled = !cfg.tray_enabled,
         "show_floating" => cfg.floating_enabled = true,
+        "summon_floating" => {
+            cfg.floating_enabled = true;
+            cfg.floating_click_through = false;
+        }
         "hide_floating" => cfg.floating_enabled = false,
         "show_main" => {
             if let Some(w) = app.get_webview_window(MAIN) {
@@ -538,7 +546,19 @@ pub async fn window_apply_action(
     cfg.normalize();
 
     // 复用完整设置路径的安全校验
-    window_set_config(app, state, cfg).await
+    let cfg = window_set_config(app.clone(), state, cfg).await?;
+    if action == "summon_floating" {
+        let window = app
+            .get_webview_window(FLOATING)
+            .ok_or_else(|| crate::error::AppError::internal("悬浮窗没有创建成功"))?;
+        window
+            .unminimize()
+            .map_err(|e| crate::error::AppError::internal(format!("恢复悬浮窗失败：{e}")))?;
+        window
+            .set_focus()
+            .map_err(|e| crate::error::AppError::internal(format!("聚焦悬浮窗失败：{e}")))?;
+    }
+    Ok(cfg)
 }
 
 /// 重置窗口状态到安全的默认值。
@@ -559,6 +579,7 @@ pub async fn window_reset_safe(
         shortcut_toggle: old.shortcut_toggle.clone(),
         shortcut_quick_add: old.shortcut_quick_add.clone(),
         shortcut_today: old.shortcut_today.clone(),
+        shortcut_floating: old.shortcut_floating.clone(),
         // 主窗口恢复为可见、非置顶、在任务栏显示
         main_show_in_taskbar: true,
         ..WindowConfig::default()

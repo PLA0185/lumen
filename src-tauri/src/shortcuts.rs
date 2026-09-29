@@ -50,10 +50,11 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
     let mut failures: Vec<String> = Vec::new();
 
     // 每个快捷键单独注册，任何一个失败都不影响其它（并记录原因）
-    let items: [(&str, &str); 3] = [
+    let items: [(&str, &str); 4] = [
         (&cfg.shortcut_toggle, "打开/隐藏主窗口"),
         (&cfg.shortcut_quick_add, "快速添加"),
         (&cfg.shortcut_today, "今日概览"),
+        (&cfg.shortcut_floating, "呼出悬浮窗"),
     ];
 
     // 去重：两个功能配同一个键时，只有先注册的那个生效，
@@ -86,6 +87,23 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
             match action.as_str() {
                 "打开/隐藏主窗口" => crate::window_mgr::toggle_main(app),
                 "快速添加" => crate::window_mgr::toggle_quick_add(app),
+                "呼出悬浮窗" => {
+                    // 快捷键回调是同步上下文，数据库配置走异步任务，不嵌套 block_on。
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = app.state::<crate::commands::AppState>();
+                        if let Err(e) = crate::window_mgr::window_apply_action(
+                            app.clone(),
+                            state,
+                            "summon_floating".to_string(),
+                        )
+                        .await
+                        {
+                            log::warn!("呼出悬浮窗失败：{e}");
+                            let _ = tauri::Emitter::emit(&app, "shortcut-error", e.to_string());
+                        }
+                    });
+                }
                 "今日概览" => {
                     // 显示主窗口并切到「今天」视图
                     if let Some(w) = app.get_webview_window(crate::window_mgr::MAIN) {
@@ -126,6 +144,17 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn floating_shortcut_is_defaulted_for_existing_window_configs() {
+        let old = r#"{"shortcutToggle":"Ctrl+Shift+L","floatingWidth":520,"floatingOpacity":0.6}"#;
+        let cfg: WindowConfig = serde_json::from_str(old).unwrap();
+        let json = serde_json::to_value(cfg).unwrap();
+        assert_eq!(json["shortcutFloating"], "CmdOrCtrl+Alt+Q");
+        assert_eq!(json["shortcutToggle"], "Ctrl+Shift+L");
+        assert_eq!(json["floatingWidth"], 520.0);
+        assert_eq!(json["floatingOpacity"], 0.6);
+    }
+
     /// 合法的加速键写法应当能解析
     #[test]
     fn valid_accelerators_parse() {
@@ -149,7 +178,7 @@ mod tests {
         }
     }
 
-    /// 默认配置的三个快捷键必须互不相同，否则会有一个注册不上
+    /// 默认配置的四个快捷键必须互不相同，否则会有一个注册不上
     #[test]
     fn default_config_shortcuts_are_unique() {
         let c = WindowConfig::default();
@@ -157,6 +186,7 @@ mod tests {
             c.shortcut_toggle.clone(),
             c.shortcut_quick_add.clone(),
             c.shortcut_today.clone(),
+            c.shortcut_floating.clone(),
         ];
         let n = v.len();
         v.sort();
@@ -175,5 +205,10 @@ mod tests {
             c.shortcut_quick_add
         );
         assert!(parse(&c.shortcut_today).is_ok(), "{}", c.shortcut_today);
+        assert!(
+            parse(&c.shortcut_floating).is_ok(),
+            "{}",
+            c.shortcut_floating
+        );
     }
 }

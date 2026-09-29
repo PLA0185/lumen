@@ -537,6 +537,7 @@ function WindowOptions() {
                 ['shortcutToggle', '打开/隐藏主窗口'],
                 ['shortcutQuickAdd', '快速添加'],
                 ['shortcutToday', '今日概览'],
+                ['shortcutFloating', '呼出悬浮窗'],
               ] as const
             ).map(([key, label]) => (
               <div className="setrow" key={key}>
@@ -564,6 +565,7 @@ function WindowOptions() {
             <p className="setgroup__hint">
               若某个组合已被其它程序占用，注册会失败并在页面顶部给出提示——
               此时换一个组合即可。修改后立即生效，无需重启。
+              呼出悬浮窗会显示并聚焦小窗，同时关闭鼠标穿透，方便直接操作。
             </p>
           </>
         )}
