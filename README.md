@@ -160,6 +160,17 @@ Rust（Tauri 2）+ React 19 + TypeScript + SQLite。
 
 ---
 
+### 3.6 备忘与业务流程
+
+侧栏「备忘与流程」独立保存公司业务资料，不计入待办任务。
+可新建 Markdown 备忘，或按顺序添加流程步骤，记录负责人、材料和注意事项，
+调整步骤顺序后以编号卡片和箭头显示路线。支持分类、正文/步骤搜索、编辑、复制、
+删除至备忘回收站及恢复。编辑后点击「保存并查看」保存到本机。
+
+完整备份包含备忘与流程；新版兼容旧备份，但恢复旧备份可能覆盖目前的新记录，
+恢复预览会显示数量并提醒。当前流程为顺序步骤，没有条件分支或自由连线。
+详见 [使用与数据说明](docs/design-business-handbook.md)。
+
 ## 4. 备份与恢复
 
 ### 导出
@@ -373,6 +384,7 @@ pnpm typecheck                # 类型检查
 - `verify_reminders.py`：提醒调度的端到端验证
 - `verify_window.py`：窗口配置注入与安全恢复验证
 - `verify_autostart.py`：真实点击验收 Windows 自启注册与关闭，完整恢复原有启动项
+- `verify_memos.py`：隔离数据中验收备忘与流程调序、搜索、删除恢复及完整备份往返
 - `verify_period.py`：周期跨度迁移与查询口径验证
 
 ---
@@ -430,5 +442,6 @@ pnpm typecheck                # 类型检查
 | `docs/design-workday-calendar.md` | 每日默认双休、法定节假日过滤、调休补班及日历覆盖边界 |
 | `docs/design-task-creation-context.md` | 从所在列表、日历或组织归属新建任务的默认值与验证 |
 | `docs/design-floating-assistant.md` | 一周浮窗、直接编辑新建选项与文本生成待办及日周月年总结 |
+| [备忘与业务流程](docs/design-business-handbook.md) | 公司业务手册、顺序流程路线、独立数据与备份兼容说明 |
 | `docs/tech-selection.md` | 技术选型记录 |
 | `docs/api-research*.md` | 三家 AI 服务商与 Tauri 能力的官方文档核实记录 |
