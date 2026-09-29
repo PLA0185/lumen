@@ -20,6 +20,10 @@
 *.mjs       text
 *.cjs       text
 *.sql       text
+# sqlx 的迁移校验和取原始字节。旧库 0001–0007 已使用 CRLF，不能改写；
+# 新迁移固定 LF，避免 Windows/Git 配置改变新库的迁移校验和。
+src-tauri/migrations/*.sql text eol=lf
+src-tauri/migrations/000[1-7]_*.sql text eol=crlf
 *.nsi       text
 
 # Windows 专属脚本保持 CRLF，避免 cmd/PowerShell 解析异常
