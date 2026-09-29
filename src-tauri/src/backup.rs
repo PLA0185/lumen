@@ -31,7 +31,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 3;
+pub const BACKUP_FORMAT_VERSION: u32 = 4;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -536,6 +536,19 @@ fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
         {
             issues.push("备份中的重复系列缺少持久化模板，无法安全恢复。旧版备份未保存这项数据，请从仍有原始数据的新版 Lumen 重新导出".into());
             break;
+        }
+    }
+    for template in &file.data.series_templates {
+        let raw = template
+            .get("subtasks_json")
+            .and_then(serde_json::Value::as_str);
+        if file.format_version >= 4 && raw.is_none() {
+            issues.push("格式 4 备份缺少重复子任务模板字段，拒绝恢复".into());
+        }
+        if let Some(raw) = raw {
+            if let Err(error) = crate::recurrence_subtasks::parse_templates(raw) {
+                issues.push(error.to_string());
+            }
         }
     }
     Ok(issues)
@@ -1459,6 +1472,8 @@ mod tests {
         let (db, dir) = make_db_with_data().await;
         for sql in [
             "INSERT INTO task_series_template (series_id,title,note_md,project_id) VALUES ('s1','验收模板','长期操作说明','p1')",
+            r#"UPDATE task_series_template SET subtasks_json='[{"id":"00000000-0000-7000-8000-000000000001","title":"模板步骤","sortOrder":1}]' WHERE series_id='s1'"#,
+            "INSERT INTO subtasks (id,task_id,title,sort_order,series_template_id,is_done,completed_at,created_at,updated_at) VALUES ('template-child','t1','模板步骤',1,'00000000-0000-7000-8000-000000000001',1,'2026-09-20T02:23:45.000Z','2026-09-20','2026-09-20')",
             "INSERT INTO task_series_tags (series_id,tag_id) VALUES ('s1','g1')",
             "INSERT INTO task_series_skips (id,series_id,occurrence_key,created_at) VALUES ('skip-own','s1','2026-09-23T01:00:00.000Z','2026-09-20')",
             "INSERT INTO task_series_rebuilds (series_id,range_start_utc,range_end_utc,requested_at,last_error) VALUES ('s1','2026-09-21','2026-12-21','2026-09-20','需要重试')",
@@ -1502,11 +1517,41 @@ mod tests {
         let restored = restore_from(&db, path.to_str().unwrap()).await.unwrap();
         assert_eq!(restored.imported.focus_sessions, 1);
         assert_eq!(restored.imported.goals, 1);
+        assert!(restored.imported.subtasks > 0);
         let after = build_backup_data(&db).await.unwrap();
         assert_eq!(
             serde_json::to_value(&after).unwrap(),
             json,
             "真实恢复必须逐行还原所有表并清除备份以外的旧记录"
+        );
+        let mut old_format = file.clone();
+        old_format.format_version = 3;
+        for row in &mut old_format.data.series_templates {
+            row.as_object_mut().unwrap().remove("subtasks_json");
+        }
+        for row in &mut old_format.data.subtasks {
+            row.as_object_mut().unwrap().remove("series_template_id");
+        }
+        old_format.checksum = checksum_of(&old_format.data).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&old_format).unwrap()).unwrap();
+        restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        let raw: String = sqlx::query_scalar(
+            "SELECT subtasks_json FROM task_series_template WHERE series_id='s1'",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(raw, "[]", "格式 3 旧备份恢复为原来的单次子任务，不猜测模板");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        let mut invalid = file.clone();
+        invalid.data.series_templates[0]["subtasks_json"] = "[{\"title\":\"缺少身份\"}]".into();
+        invalid.checksum = checksum_of(&invalid.data).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(restore_from(&db, path.to_str().unwrap()).await.is_err());
+        assert_eq!(
+            serde_json::to_value(build_backup_data(&db).await.unwrap()).unwrap(),
+            json
         );
         let mut legacy = file;
         legacy.format_version = 2;

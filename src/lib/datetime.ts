@@ -217,6 +217,12 @@ export function formatTaskTime(task: Task, now: Date = new Date()): string {
   return parts.join(' · ')
 }
 
+/** 完成时间使用实际 UTC 记录，不用计划日期补造历史。 */
+export function formatCompletionTime(value: string | null | undefined): string {
+  const time = fromUtcIso(value ?? null)
+  return time ? `${format(time, 'yyyy-MM-dd HH:mm:ss')} 完成` : '完成时间未记录'
+}
+
 /** 进度文案：已完成子任务 / 总数 */
 export function formatProgress(done: number, total: number): string {
   if (total <= 0) return ''

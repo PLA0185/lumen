@@ -4512,3 +4512,8 @@ body {
   .memos__workspace { grid-template-columns: 1fr; }
   .memos__list { max-height: 220px; }
 }
+.task-description__content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.task-description { padding: 10px 0; border-bottom: 1px solid var(--c-border); }
+.subtask__completed, .task__completed { font-size: .75rem; color: var(--c-text-3); white-space: nowrap; }
+.floating .subtask-preview__item { flex-wrap: wrap; }
+.floating .subtask__completed { flex-basis: 100%; padding-left: 22px; }

@@ -41,6 +41,7 @@ pub mod recurrence;
 #[cfg(test)]
 mod recurrence_e2e;
 pub mod recurrence_service;
+pub mod recurrence_subtasks;
 #[cfg(test)]
 mod remediation2_e2e;
 pub mod reminders;
@@ -332,6 +333,7 @@ pub fn run() {
             organize::task_tags_set,
             // ---- 子任务与依赖（§4.1）----
             subtasks::subtask_create,
+            recurrence_subtasks::subtask_change,
             subtasks::subtask_list,
             subtasks::subtask_update,
             subtasks::subtask_delete,

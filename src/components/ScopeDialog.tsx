@@ -42,6 +42,7 @@ interface ScopeDialogProps {
   allowThisAndFuture?: boolean
   allowWholeSeries?: boolean
   restrictedReason?: string
+  subtaskOperation?: string
 }
 
 export function ScopeDialog({
@@ -53,6 +54,7 @@ export function ScopeDialog({
   allowThisAndFuture = true,
   allowWholeSeries = true,
   restrictedReason,
+  subtaskOperation,
 }: ScopeDialogProps) {
   const [info, setInfo] = useState<ScopeInfo | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -82,7 +84,7 @@ export function ScopeDialog({
 
   /** 会影响历史时，必须额外确认 */
   const affectsHistory = (info?.completedBefore ?? 0) > 0
-  const needHistoryCheck = (scope === 'whole_series' || scope === 'this_and_future') && affectsHistory
+  const needHistoryCheck = !subtaskOperation && (scope === 'whole_series' || scope === 'this_and_future') && affectsHistory
   const canConfirm = scope !== null && (!needHistoryCheck || confirmHistory) && !busy
 
   const submit = async () => {
@@ -99,7 +101,7 @@ export function ScopeDialog({
   }
 
   const isDelete = intent === 'delete'
-  const title = isDelete ? '删除重复任务' : '修改重复任务'
+  const title = subtaskOperation ? `${subtaskOperation}的范围` : isDelete ? '删除重复任务' : '修改重复任务'
 
   /** 每个选项的影响说明 */
   const notes = info?.notes
@@ -141,6 +143,13 @@ export function ScopeDialog({
       disabledReason: allowWholeSeries ? undefined : (restrictedReason ?? '此次改期只支持「仅此次」。'),
     },
   ]
+  const shownOptions = subtaskOperation ? options.filter((option) => option.value !== 'this_and_future').map((option) => ({
+    ...option,
+    label: option.value === 'this_only' ? '仅这一次' : '每次重复（整个系列）',
+    desc: option.value === 'this_only'
+      ? '只改变本次的子任务，其它日期和重复模板不变。'
+      : '更新系列子任务模板及现有未完成的发生；以后每次都带这些子任务，完成状态和完成时间各自独立。已完成、已归档的历史保留。',
+  })) : options
 
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="scope-title">
@@ -185,7 +194,7 @@ export function ScopeDialog({
             </div>
 
             <div className="radio-group">
-              {options.map((o) => (
+              {shownOptions.map((o) => (
                 <label
                   key={o.value}
                   className={`radio${o.disabled ? ' radio--disabled' : ''}`}

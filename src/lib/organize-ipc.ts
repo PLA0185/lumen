@@ -137,6 +137,7 @@ export const ORG_CMD = {
   taskTagsSet: 'task_tags_set',
 
   subtaskCreate: 'subtask_create',
+  subtaskChange: 'subtask_change',
   subtaskList: 'subtask_list',
   subtaskUpdate: 'subtask_update',
   subtaskDelete: 'subtask_delete',
@@ -276,6 +277,12 @@ export const taskTagsSet = (taskId: string, tagIds: string[]): Promise<number> =
 
 export const subtaskCreate = (taskId: string, title: string): Promise<Subtask> =>
   call(ORG_CMD.subtaskCreate, { taskId, title })
+
+export type SubtaskScope = 'this_only' | 'whole_series'
+export type SubtaskAction = { kind: 'create'; title: string } | { kind: 'rename'; id: string; title: string }
+  | { kind: 'delete'; id: string } | { kind: 'copy_previous' }
+export const subtaskChange = (taskId: string, action: SubtaskAction, scope?: SubtaskScope): Promise<Subtask[]> =>
+  call(ORG_CMD.subtaskChange, { input: { taskId, action, scope } })
 
 export const subtaskList = (taskId: string): Promise<Subtask[]> =>
   call(ORG_CMD.subtaskList, { taskId })

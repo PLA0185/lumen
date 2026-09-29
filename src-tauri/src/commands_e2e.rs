@@ -32,6 +32,22 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn recurring_subtasks_have_persistent_template_schema() {
+    let (state, dir) = setup("subtask-template-schema").await;
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_table_info('task_series_template')")
+            .fetch_all(state.db.pool())
+            .await
+            .unwrap();
+    assert!(
+        columns.iter().any(|c| c == "subtasks_json"),
+        "重复系列没有子任务模板存储，新实例因此丢失子任务"
+    );
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn subtask_batch_returns_ordered_titles_and_live_completion_for_requested_tasks() {
     let (state, dir) = setup("subtask-summary").await;
     let parent = create_task_impl(&state.db, task("有子任务")).await.unwrap();
@@ -113,7 +129,17 @@ async fn last_completed_subtask_completes_parent_atomically() {
         Some("done")
     );
     let completed = col_str(db, &parent.id, "completed_at").await.unwrap();
+    let child_completed = update_subtask_impl(db, &last.id, done())
+        .await
+        .unwrap()
+        .completed_at;
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     update_subtask_impl(db, &last.id, done()).await.unwrap();
+    let stable_child = update_subtask_impl(db, &last.id, done()).await.unwrap();
+    assert_eq!(
+        stable_child.completed_at, child_completed,
+        "重复的完成请求不能改掉原点击完成时间"
+    );
     assert_eq!(
         col_str(db, &parent.id, "completed_at").await,
         Some(completed)

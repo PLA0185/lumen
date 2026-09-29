@@ -491,6 +491,14 @@ async fn materialize_range(
             continue;
         }
 
+        let raw: String =
+            sqlx::query_scalar("SELECT subtasks_json FROM task_series_template WHERE series_id=?1")
+                .bind(series_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let subtasks = crate::recurrence_subtasks::parse_templates(&raw)?;
+        crate::recurrence_subtasks::insert_templates(&mut tx, &id, &subtasks, &now).await?;
+
         sqlx::query(
             "INSERT OR IGNORE INTO task_tags (task_id, tag_id)
              SELECT ?1, tag_id FROM task_series_tags WHERE series_id = ?2",
@@ -994,7 +1002,11 @@ async fn is_occurrence_rebuild_safe(
              AND t.planned_at IS t.occurrence_key AND t.due_at IS NULL
              AND t.has_due_time = 0 AND t.period_type = 'none'
              AND t.has_planned_time = s.has_start_time
-             AND NOT EXISTS (SELECT 1 FROM subtasks x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM subtasks x WHERE x.task_id = t.id AND (
+                 x.is_done != 0 OR x.completed_at IS NOT NULL OR x.created_at != x.updated_at
+                 OR NOT EXISTS (SELECT 1 FROM task_series_template st, json_each(st.subtasks_json) j
+                    WHERE st.series_id=t.series_id AND json_extract(j.value,'id')=x.series_template_id
+                    AND json_extract(j.value,'title')=x.title AND json_extract(j.value,'sortOrder')=x.sort_order)))
              AND NOT EXISTS (SELECT 1 FROM attachments x WHERE x.task_id = t.id)
              AND NOT EXISTS (SELECT 1 FROM reminders x WHERE x.task_id = t.id)
              AND NOT EXISTS (SELECT 1 FROM focus_sessions x WHERE x.task_id = t.id)

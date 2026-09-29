@@ -60,6 +60,7 @@ pub async fn subtask_create(
     task_id: String,
     title: String,
 ) -> AppResult<Subtask> {
+    crate::recurrence_subtasks::require_non_recurring(&state.db, &task_id).await?;
     create_subtask_impl(&state.db, &task_id, &title).await
 }
 
@@ -147,6 +148,10 @@ pub async fn subtask_update(
     is_done: Option<bool>,
     sort_order: Option<f64>,
 ) -> AppResult<Subtask> {
+    if title.is_some() || sort_order.is_some() {
+        let existing = get_subtask(&state.db, &id).await?;
+        crate::recurrence_subtasks::require_non_recurring(&state.db, &existing.task_id).await?;
+    }
     update_subtask_impl(
         &state.db,
         &id,
@@ -189,8 +194,13 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
     if let Some(d) = patch.is_done {
         sep.push("is_done = ").push_bind_unseparated(d as i64);
         // 完成时间必须真实记录，与主任务同一规则（§4.1）
-        sep.push("completed_at = ")
-            .push_bind_unseparated(if d { Some(now.clone()) } else { None });
+        if d {
+            sep.push("completed_at = CASE WHEN is_done = 1 THEN completed_at ELSE ")
+                .push_bind_unseparated(now.clone())
+                .push_unseparated(" END");
+        } else {
+            sep.push("completed_at = NULL");
+        }
     }
     if let Some(o) = patch.sort_order {
         sep.push("sort_order = ").push_bind_unseparated(o);
@@ -224,7 +234,8 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
 /// 删除子任务
 #[tauri::command]
 pub async fn subtask_delete(state: State<'_, AppState>, id: String) -> AppResult<i64> {
-    get_subtask(&state.db, &id).await?;
+    let existing = get_subtask(&state.db, &id).await?;
+    crate::recurrence_subtasks::require_non_recurring(&state.db, &existing.task_id).await?;
     let n = sqlx::query("DELETE FROM subtasks WHERE id = ?1")
         .bind(&id)
         .execute(state.db.pool())

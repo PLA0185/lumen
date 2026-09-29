@@ -13,6 +13,8 @@ import { onDataChanged } from '../lib/data-change'
 import type { Subtask } from '../lib/organize-ipc'
 import { Icon } from './Icons'
 import { CheckMark } from './CheckMark'
+import { formatCompletionTime } from '../lib/datetime'
+import { ScopeDialog } from './ScopeDialog'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -20,9 +22,11 @@ function errText(e: unknown): string {
 
 interface SubtaskListProps {
   taskId: string
+  isRecurring?: boolean
+  taskTitle?: string
 }
 
-export function SubtaskList({ taskId }: SubtaskListProps) {
+export function SubtaskList({ taskId, isRecurring = false, taskTitle = '' }: SubtaskListProps) {
   const [items, setItems] = useState<Subtask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -30,6 +34,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
   const [adding, setAdding] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
+  const [pending, setPending] = useState<org.SubtaskAction | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -48,20 +53,26 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
     return onDataChanged(['subtasks', 'tasks', 'all'], () => void reload())
   }, [reload])
 
-  const add = async () => {
-    const t = newTitle.trim()
-    if (!t) return
+  const apply = async (action: org.SubtaskAction, scope?: org.SubtaskScope) => {
     setAdding(true)
     setError(null)
     try {
-      await org.subtaskCreate(taskId, t)
-      setNewTitle('')
-      await reload()
-    } catch (e) {
-      setError(errText(e))
+      setItems(await org.subtaskChange(taskId, action, scope))
+      if (action.kind === 'create') setNewTitle('')
+      setEditingId(null)
+      setPending(null)
     } finally {
       setAdding(false)
     }
+  }
+  const request = async (action: org.SubtaskAction) => {
+    if (adding || pending) return
+    if (isRecurring) { setPending(action); return }
+    try { await apply(action) } catch (e) { setError(errText(e)) }
+  }
+  const add = () => {
+    const title = newTitle.trim()
+    if (title) void request({ kind: 'create', title })
   }
 
   const toggle = async (s: Subtask) => {
@@ -75,23 +86,12 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
 
   const saveRename = async (s: Subtask) => {
     const t = editTitle.trim()
-    setEditingId(null)
-    if (!t || t === s.title) return
-    try {
-      await org.subtaskUpdate(s.id, { title: t })
-      await reload()
-    } catch (e) {
-      setError(errText(e))
-    }
+    if (!t || t === s.title) { setEditingId(null); return }
+    await request({ kind: 'rename', id: s.id, title: t })
   }
 
   const remove = async (s: Subtask) => {
-    try {
-      await org.subtaskDelete(s.id)
-      await reload()
-    } catch (e) {
-      setError(errText(e))
-    }
+    await request({ kind: 'delete', id: s.id })
   }
 
   const done = items.filter((s) => s.isDone === 1).length
@@ -122,6 +122,10 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
       ) : items.length === 0 ? (
         <p className="reminders__empty">
           还没有子任务。把这件事拆成几步会更清楚。
+          {isRecurring && <button type="button" className="btn btn--quiet btn--sm"
+            disabled={adding || pending !== null} onClick={() => void request({ kind: 'copy_previous' })}>
+            从上一次复制子任务
+          </button>}
         </p>
       ) : (
         <ul className="sublist">
@@ -171,6 +175,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
                 </span>
               )}
 
+              {s.isDone === 1 && <span className="subtask__completed selectable">{formatCompletionTime(s.completedAt)}</span>}
               <button
                 type="button"
                 className="icon-btn icon-btn--danger"
@@ -199,7 +204,7 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
         <button
           type="button"
           className="btn btn--ghost btn--sm"
-          disabled={adding || !newTitle.trim()}
+          disabled={adding || pending !== null || !newTitle.trim()}
           onClick={() => void add()}
         >
           添加
@@ -219,6 +224,13 @@ export function SubtaskList({ taskId }: SubtaskListProps) {
           </button>
         </div>
       )}
+      {pending && <ScopeDialog taskId={taskId} taskTitle={taskTitle} intent={pending.kind === 'delete' ? 'delete' : 'edit'}
+        subtaskOperation={{ create: '添加子任务', rename: '重命名子任务', delete: '删除子任务', copy_previous: '复制子任务' }[pending.kind]}
+        onCancel={() => { setPending(null); setEditingId(null) }}
+        onConfirm={(scope) => {
+          if (scope !== 'this_only' && scope !== 'whole_series') throw new Error('子任务只支持本次或整个系列')
+          return apply(pending, scope)
+        }} />}
     </div>
   )
 }

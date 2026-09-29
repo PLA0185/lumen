@@ -52,6 +52,7 @@ export const MUTATION_DOMAINS = {
   tag_merge: ['tasks', 'organization'],
   task_tags_set: ['tasks', 'organization'],
   subtask_create: ['tasks', 'subtasks', 'stats'],
+  subtask_change: ['tasks', 'subtasks', 'recurrence', 'stats'],
   subtask_update: ['tasks', 'subtasks', 'stats'],
   subtask_delete: ['tasks', 'subtasks', 'stats'],
   dependency_add: ['dependencies', 'tasks'],

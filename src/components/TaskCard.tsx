@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react'
 import type { Task } from '../lib/types'
 import { PERIOD_BADGES, PERIOD_LABELS } from '../lib/types'
-import { formatTaskTime, isOverdue } from '../lib/datetime'
+import { formatCompletionTime, formatTaskTime, isOverdue } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
 import { SubtaskPreview } from './SubtaskPreview'
@@ -291,6 +291,7 @@ export function TaskCard({
 
             {overdue && <span className="badge badge--overdue">已逾期</span>}
             {done && <span className="badge badge--done">已完成</span>}
+            {done && <span className="task__completed selectable">{formatCompletionTime(task.completedAt)}</span>}
             {/* 周期跨度徽标：让用户一眼看出这是"这周做完就行"而不是某天的具体安排 */}
             {task.periodType && task.periodType !== 'none' && (
               <span
@@ -422,7 +423,18 @@ export function TaskCard({
       {expanded && hasDetail && (
         <div className="task__detail">
           {isRecurring && <SeriesInfo taskId={task.id} />}
-          <SubtaskList taskId={task.id} />
+          <section className="task-description">
+            <div className="subtasks__head">
+              <span>任务描述</span>
+              {onEdit && <button type="button" className="btn btn--quiet btn--sm" onClick={() => onEdit(task)}>
+                {task.description ? '编辑描述' : '添加描述'}
+              </button>}
+            </div>
+            {task.description
+              ? <div className="task-description__content selectable">{task.description}</div>
+              : <p className="reminders__empty">填写要完成什么、交付要求和注意事项。</p>}
+          </section>
+          <SubtaskList taskId={task.id} isRecurring={isRecurring} taskTitle={task.title} />
           <AttachmentList taskId={task.id} />
           {/* 专注计时绑定到这个任务：结束后时长累加到 actual_minutes */}
           <div className="focusblock">
