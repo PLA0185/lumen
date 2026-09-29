@@ -21,6 +21,12 @@ export interface BackupStats {
   segments: number
   settings: number
   memoDocuments: number
+  seriesTemplates: number
+  seriesTags: number
+  seriesSkips: number
+  seriesRebuilds: number
+  focusSessions: number
+  goals: number
 }
 
 /** 导出结果 */

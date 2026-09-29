@@ -679,6 +679,8 @@ export function SettingsView() {
                       子任务 {preview.stats.subtasks}　依赖 {preview.stats.dependencies}　提醒{' '}
                       {preview.stats.reminders}　重复系列 {preview.stats.series}
                       <br />备忘与流程 {preview.stats.memoDocuments ?? 0}
+                      <br />专注记录 {preview.stats.focusSessions}　个人目标 {preview.stats.goals}
+                      <br />重复模板 {preview.stats.seriesTemplates}　跳过记录 {preview.stats.seriesSkips}
                     </td>
                   </tr>
                   <tr>
@@ -687,6 +689,8 @@ export function SettingsView() {
                       任务 {preview.current.tasks}　项目 {preview.current.projects}　标签{' '}
                       {preview.current.tags}　提醒 {preview.current.reminders}
                       <br />备忘与流程 {preview.current.memoDocuments ?? 0}
+                      <br />专注记录 {preview.current.focusSessions}　个人目标 {preview.current.goals}
+                      <br />重复模板 {preview.current.seriesTemplates}　跳过记录 {preview.current.seriesSkips}
                     </td>
                   </tr>
                   <tr>
@@ -719,6 +723,10 @@ export function SettingsView() {
               {preview.current.memoDocuments > 0 && <p className="alert alert--warn">
                 当前 {preview.current.memoDocuments} 条备忘与流程也会被备份中的 {preview.stats.memoDocuments ?? 0} 条替换。
                 恢复旧版备份时，备份可能没有这些记录。请先导出当前完整备份。
+              </p>}
+              {preview.formatVersion < 3 && <p className="alert alert--warn">
+                旧版备份没有保存专注记录、个人目标及完整的重复配置。
+                恢复会整体替换这些数据，请先导出当前新版完整备份。
               </p>}
 
               <div className="setactions">

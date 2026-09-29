@@ -180,9 +180,13 @@ impl Db {
     }
 }
 
-/// UTC 时间戳，形如 `20260923T111530Z`，用于文件名。
+/// UTC 时间戳加唯一编号，避免同秒内备份重名。
 pub fn now_stamp() -> String {
-    chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
+    format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ"),
+        uuid::Uuid::now_v7()
+    )
 }
 
 /// 打开一个**不启用 WAL、不执行迁移**的临时连接。
@@ -367,6 +371,11 @@ pub fn utc_now() -> chrono::DateTime<chrono::Utc> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rapid_backup_names_do_not_collide() {
+        let names: std::collections::HashSet<_> = (0..100).map(|_| super::now_stamp()).collect();
+        assert_eq!(names.len(), 100, "同一秒内的备份不能重名覆盖或阻断恢复");
+    }
     use super::*;
 
     /// 整改任务书 §4.6：迁移前备份必须包含**还留在 WAL 里**的最新数据。
