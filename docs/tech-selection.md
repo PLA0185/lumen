@@ -164,7 +164,7 @@
 | 拖拽排序库 | **暂用 dnd-kit 经典版** | `@dnd-kit/core` 6.3.1 自 2024-12 起无新发布，开发重心转向 beta 的 `@dnd-kit/react`。经典版 peer 覆盖 React 19，可用；已在依赖中锁定 |
 | PDF 导出 | **未定，倾向前端生成** | Rust 侧 `printpdf` 对非 ASCII 直接乱码（官方 issue 原文 "all non-ASCII text is mojibake'd"），中文需自嵌字体且 CJK 子集化有未解决 bug；`genpdf` 停更于 2021。**前置验证项**：Tauri/WebView2 上 `window.print()` 的确切行为尚未核实 |
 | Markdown 渲染 | 已选 react-markdown + `rehype-sanitize` 6.0.0 | 默认白名单即 GitHub 渲染白名单；代码高亮与数学公式**默认会被丢弃**，需按官方示例扩展 schema 后才能支持 |
-| 云同步服务端 | **本轮不做**（用户决定） | 数据模型已预留 `sync_rev` / `sync_state` 字段，避免将来加同步时做破坏性迁移 |
+| 云同步服务端 | 原始选型轮次不做；2026-09-29 新需求已形成研究方案，功能仍未实现 | 首版优先备忘 / 顺序流程，采用存储驱动与本地同步引擎；不以 `sync_rev` / `sync_state` 预留字段宣称已同步，见 [同步设计](design-cloud-sync.md) |
 | 自动更新 | 未启用（`createUpdaterArtifacts: false`） | 需要签名密钥与分发端点；未配置前不启用，避免留下无法工作的更新按钮 |
 
 ## 8. 依赖版本锁定策略

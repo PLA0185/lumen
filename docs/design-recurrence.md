@@ -269,8 +269,8 @@ WHERE series_id = ?1 AND occurrence_key >= ?2
 
 - 迁移文件位于 `src-tauri/migrations/`，由 `sqlx::migrate!` 在编译期嵌入二进制；
 - 启动时自动执行未应用的迁移；
-- **迁移前自动复制数据库文件**到 `backups/pre-migrate-<时间戳>.db`；
-- `app_meta.schema_version` 记录应用级版本（当前为 4）；
+- **迁移前生成一致性快照**到 `backups/pre-migrate-<时间戳及唯一编号>.db`，包含 WAL 最新提交；快照失败中止升级；
+- 实际迁移版本以 `_sqlx_migrations` 为准，`app_meta.schema_version` 的历史显示字段不作为迁移判断；
 - 全部写操作走事务，避免"半条规则"。
 
 | 版本 | 内容 |
@@ -279,6 +279,11 @@ WHERE series_id = ?1 AND occurrence_key >= ?2
 | 0002 | `task_series_skips`（单次跳过）+ occurrence 覆盖索引 |
 | 0003 | `goals`（个人目标） |
 | 0004 | `tasks.period_type`（周期跨度）+ 部分索引 |
+| 0005 | 提醒禁用原因 |
+| 0006 | 持久化系列内容与标签模板 |
+| 0007 | 用户修改标记、规则重建记录及历史保护 |
+| 0008 | 独立备忘与顺序流程 |
+| 0009 | 重复子任务模板与实例关联 |
 
 实机验证：`tools/verify_db.py` 检查表、索引、触发器与迁移状态。
 
