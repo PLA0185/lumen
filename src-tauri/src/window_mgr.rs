@@ -397,6 +397,7 @@ pub async fn window_get_config(
     Ok(serde_json::json!({
         "config": cfg,
         "opacityMin": OPACITY_MIN,
+        "defaultFloatingSize": {"width": FLOATING_W, "height": FLOATING_H},
         "hasRecoveryPath": cfg.has_recovery_path(),
     }))
 }

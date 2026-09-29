@@ -41,6 +41,7 @@ export interface WindowConfig {
 /** 窗口配置查询结果 */
 export interface WindowConfigState {
   config: WindowConfig
+  defaultFloatingSize: { width: number; height: number }
   /** 不透明度下限（由后端定义，前端不重复硬编码） */
   opacityMin: number
   /** 当前是否至少存在一条恢复路径 */

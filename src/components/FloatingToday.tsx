@@ -31,6 +31,7 @@ import { subtaskProgressBatch } from '../lib/organize-ipc'
 import type { Subtask } from '../lib/organize-ipc'
 import { SubtaskPreview } from './SubtaskPreview'
 import { onDataChanged } from '../lib/data-change'
+import { listenEvent } from '../lib/event-listener'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
 import { TaskEditor } from './TaskEditor'
@@ -168,40 +169,26 @@ export function FloatingToday() {
 
   /** 监听后端广播的配置变化，实时更新不透明度与穿透提示 */
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen<win.WindowConfig>('floating-config', (e) => {
-          const cfg = e.payload
-          setState((s) =>
-            s
-              ? {
-                  ...s,
-                  clickThrough: cfg.floatingClickThrough,
-                  alwaysOnTop: cfg.floatingAlwaysOnTop,
-                  opacity: cfg.floatingOpacity,
-                  enabled: cfg.floatingEnabled,
-                  width: cfg.floatingWidth,
-                  height: cfg.floatingHeight,
-                }
-              : s,
-          )
-          // 不透明度用 CSS 应用：比整窗 alpha 更可控，且能保证文字对比度（§8.3）
-          setOpacity(cfg.floatingOpacity)
-          document.documentElement.style.setProperty(
-            '--floating-opacity',
-            String(cfg.floatingOpacity),
-          )
-        })
-      } catch (e) {
+    return listenEvent<win.WindowConfig>('floating-config', (e) => {
+      const cfg = e.payload
+      setState((s) => s ? {
+        ...s,
+        clickThrough: cfg.floatingClickThrough,
+        alwaysOnTop: cfg.floatingAlwaysOnTop,
+        opacity: cfg.floatingOpacity,
+        enabled: cfg.floatingEnabled,
+        width: cfg.floatingWidth,
+        height: cfg.floatingHeight,
+      } : s)
+      // 不透明度用 CSS 应用，保证文字对比度（§8.3）。
+      setOpacity(cfg.floatingOpacity)
+      document.documentElement.style.setProperty('--floating-opacity', String(cfg.floatingOpacity))
+    }, (e) => {
         // 事件监听不可用时不影响主流程，但要说明原因，避免"改了不生效"却查不到
         setError(
           `悬浮窗实时同步不可用：${e instanceof Error ? e.message : String(e)}`,
         )
-      }
-    })()
-    return () => unlisten?.()
+    })
   }, [])
 
   /**

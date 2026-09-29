@@ -24,6 +24,7 @@ import { useApp } from '../lib/store'
 import type { WindowConfig, WindowConfigState } from '../lib/window-ipc'
 import { Icon } from './Icons'
 import { AutostartSettings } from './AutostartSettings'
+import { listenEvent } from '../lib/event-listener'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -58,24 +59,11 @@ function WindowOptions() {
 
   /** 监听后端广播的配置变化（托盘操作也会改配置） */
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    let unlistenErr: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen<WindowConfig>('window-config-changed', (e) => {
-          setCfg(e.payload)
-        })
-        unlistenErr = await listen<string>('shortcut-error', (e) => {
-          setShortcutError(e.payload)
-        })
-      } catch {
-        // 非 Tauri 环境忽略
-      }
-    })()
+    const unlisten = listenEvent<WindowConfig>('window-config-changed', (e) => setCfg(e.payload))
+    const unlistenErr = listenEvent<string>('shortcut-error', (e) => setShortcutError(e.payload))
     return () => {
-      unlisten?.()
-      unlistenErr?.()
+      unlisten()
+      unlistenErr()
     }
   }, [])
 
@@ -367,17 +355,24 @@ function WindowOptions() {
               type="button"
               className="btn btn--ghost btn--sm"
               disabled={busy}
-              title="恢复为默认尺寸 320 × 460"
+              title={`恢复为默认尺寸 ${state?.defaultFloatingSize.width} × ${state?.defaultFloatingSize.height}`}
               onClick={() =>
                 void (async () => {
+                  if (!state) return
+                  setBusy(true)
+                  setError(null)
                   try {
-                    const applied = await win.windowSetFloatingSize(320, 460)
-                    await apply({
+                    const applied = await win.windowSetFloatingSize(
+                      state.defaultFloatingSize.width, state.defaultFloatingSize.height,
+                    )
+                    setCfg((c) => c && ({ ...c,
                       floatingWidth: applied.width,
                       floatingHeight: applied.height,
-                    })
+                    }))
                   } catch (e) {
                     setError(errText(e))
+                  } finally {
+                    setBusy(false)
                   }
                 })()
               }

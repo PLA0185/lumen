@@ -31,6 +31,7 @@ import * as recurrence from './lib/recurrence-ipc'
 import { bucketOf } from './lib/datetime'
 import { buildPrintDocument } from './lib/report-export'
 import { onDataChanged } from './lib/data-change'
+import { listenEvent } from './lib/event-listener'
 import * as win from './lib/window-ipc'
 import type { Task, ViewId } from './lib/types'
 import { Icon } from './components/Icons'
@@ -149,18 +150,9 @@ export default function App() {
 
   // 从设置页或托盘改动时保持同步
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen<win.WindowConfig>('floating-config', (e) => {
-          setFloatingOn(e.payload.floatingEnabled)
-        })
-      } catch {
-        // 忽略：不同步只是显示状态旧一点，不影响功能
-      }
-    })()
-    return () => unlisten?.()
+    return listenEvent<win.WindowConfig>('floating-config', (e) => {
+      setFloatingOn(e.payload.floatingEnabled)
+    })
   }, [])
 
   const toggleFloating = useCallback(async () => {
@@ -210,19 +202,10 @@ export default function App() {
 
   // --------------------- 后端事件（托盘菜单等） ---------------------
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen<string>('navigate', (e) => {
-          const v = e.payload as ViewId
-          if (v) navigate(v)
-        })
-      } catch {
-        // 非 Tauri 环境下忽略
-      }
-    })()
-    return () => unlisten?.()
+    return listenEvent<string>('navigate', (e) => {
+      const v = e.payload as ViewId
+      if (v) navigate(v)
+    })
   }, [navigate])
 
   // --------------------- 启动后静默检查更新（§9） ---------------------
@@ -286,22 +269,12 @@ export default function App() {
   )
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined
-    void (async () => {
-      try {
-        const { listen } = await import('@tauri-apps/api/event')
-        unlisten = await listen<{ id: string; taskId: string; title: string }>(
-          'reminder-fired',
-          (e) => {
-            pushReminder(`提醒：${e.payload.title}`, e.payload.taskId)
-            void reload()
-          },
-        )
-      } catch {
-        // 非 Tauri 环境下忽略
-      }
-    })()
-    return () => unlisten?.()
+    return listenEvent<{ id: string; taskId: string; title: string }>(
+      'reminder-fired', (e) => {
+        pushReminder(`提醒：${e.payload.title}`, e.payload.taskId)
+        void reload()
+      },
+    )
   }, [pushReminder, reload])
 
   // --------------------------- 键盘快捷键 ---------------------------
