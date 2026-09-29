@@ -20,6 +20,7 @@ export interface BackupStats {
   series: number
   segments: number
   settings: number
+  memoDocuments: number
 }
 
 /** 导出结果 */

@@ -52,6 +52,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '整理',
     items: [
+      { id: 'memos', icon: 'edit', label: '备忘与流程' },
       { id: 'projects', icon: 'projects', label: '项目与分类' },
       { id: 'tags', icon: 'tags', label: '标签' },
       { id: 'completed', icon: 'completed', label: '已完成' },
@@ -70,6 +71,7 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** 视图标题与说明。说明文字用于向用户解释该视图的口径（§4.2 要求规则明确）。 */
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
+  memos: { title: '备忘与流程', subtitle: '随手记录业务要点，把操作步骤整理成随时可查的流程' },
   assistant: { title: 'AI 助手', subtitle: '一段话生成计划待办，日、周、月、年总结' },
   today: { title: '今天', subtitle: '计划时间落在今天的所有任务' },
   tomorrow: { title: '明天', subtitle: '计划时间落在明天的所有任务' },

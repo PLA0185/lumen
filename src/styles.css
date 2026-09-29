@@ -4479,3 +4479,36 @@ body {
 .diffitem__editor .field:first-child { flex: 1 0 100%; }
 .floating .modal { max-height: 94vh; width: calc(100% - 16px); padding: 12px; }
 @container (max-width: 360px) { .floating__count { display: none; } .floating__tools { margin-left: auto; } }
+/* 备忘与业务流程：摘要列表与可阅读的操作路线。 */
+.memos { max-width: 1400px; margin: 0 auto; }
+.memos__toolbar, .memos__document-actions, .memos__step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.memos__toolbar { margin-bottom: 14px; }
+.memos__workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 16px; align-items: start; }
+.memos__list, .memos__document { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 10px; padding: 16px; min-width: 0; }
+.memos__list { max-height: calc(100vh - 230px); overflow-y: auto; }
+.memos__count { color: var(--c-text-3); font-size: 12px; margin-bottom: 12px; }
+.memos__item { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 12px; width: 100%; color: var(--c-text); cursor: pointer; overflow-wrap: anywhere; }
+.memos__item:hover, .memos__item--active { background: var(--c-surface-2); border-color: var(--c-accent); }
+.memos__item span { color: var(--c-text-3); font-size: 12px; }
+.memos__document { min-height: 420px; }
+.memos__document-actions { padding-bottom: 14px; border-bottom: 1px solid var(--c-border); margin-bottom: 20px; }
+.memos__editor { display: grid; gap: 16px; }
+.memos__editor label { display: grid; gap: 7px; color: var(--c-text-2); font-size: 13px; }
+.memos .memos__editor textarea { min-height: 150px; resize: vertical; line-height: 1.7; }
+.memos__step-fields { display: grid; gap: 10px; min-width: 0; margin: 14px 0; padding: 16px; border: 1px solid var(--c-border); border-radius: 8px; }
+.memos__step-fields legend { color: var(--c-accent); padding: 0 6px; }
+.memos .memos__step-fields textarea { min-height: 80px; }
+.memos__empty { padding: 30px 10px; color: var(--c-text-2); line-height: 1.8; }
+.memos__reading { overflow-wrap: anywhere; }
+.memos__reading h2 { font-size: 22px; margin-bottom: 10px; }
+.memos__reading .mdpreview { border: 0; background: transparent; padding: 0; }
+.memos__flow { list-style: none; padding: 0; margin: 28px auto 0; max-width: 720px; }
+.memos__node { position: relative; display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; border: 1px solid var(--c-border); border-left: 3px solid var(--c-accent); border-radius: 9px; background: var(--c-surface-2); padding: 20px; margin-bottom: 42px; }
+.memos__node:not(:last-child)::after { content: '↓'; position: absolute; left: calc(50% - 10px); top: 100%; line-height: 40px; font-size: 26px; color: var(--c-accent); }
+.memos__node h3 { margin: 3px 0 10px; font-size: 16px; }
+.memos__step-number { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--c-accent); color: white; font-weight: 700; }
+.memos__owner { color: var(--c-text-2); font-size: 13px; margin-bottom: 12px; }
+@media (max-width: 850px) {
+  .memos__workspace { grid-template-columns: 1fr; }
+  .memos__list { max-height: 220px; }
+}

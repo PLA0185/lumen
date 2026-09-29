@@ -21,6 +21,7 @@ import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
 import { AiAssistant } from './components/AiAssistant'
+import { MemosView } from './components/MemosView'
 import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
@@ -36,6 +37,7 @@ import { Icon } from './components/Icons'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
+  'memos',
   'assistant',
   'today',
   'tomorrow',
@@ -98,6 +100,13 @@ export default function App() {
   } = useApp()
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
+  const [memoSearch, setMemoSearch] = useState('')
+  const [memoDirty, setMemoDirty] = useState(false)
+  const navigate = useCallback((next: ViewId) => {
+    if (view === 'memos' && next !== view && memoDirty && !window.confirm('备忘修改尚未保存。放弃修改并离开吗？')) return
+    setShowQuickAdd(false)
+    setView(next)
+  }, [view, memoDirty, setView])
   const [creationContext, setCreationContext] = useState<TaskCreationContext>()
   const [calendarDate, setCalendarDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const defaults = creationDefaults(view, calendarDate)
@@ -207,14 +216,14 @@ export default function App() {
         const { listen } = await import('@tauri-apps/api/event')
         unlisten = await listen<string>('navigate', (e) => {
           const v = e.payload as ViewId
-          if (v) setView(v)
+          if (v) navigate(v)
         })
       } catch {
         // 非 Tauri 环境下忽略
       }
     })()
     return () => unlisten?.()
-  }, [setView])
+  }, [navigate])
 
   // --------------------- 启动后静默检查更新（§9） ---------------------
   /**
@@ -304,6 +313,10 @@ export default function App() {
       if (!mod) return
       if (e.key === 'n') {
         e.preventDefault()
+        if (view === 'memos') {
+          pushToast('info', '请使用「新建备忘」或「新建流程」')
+          return
+        }
         if (ORGANIZE_VIEWS.has(view)) {
           pushToast('info', '请点击具体项目、分类或标签旁的加号新建任务')
           return
@@ -475,7 +488,7 @@ export default function App() {
   return (
     <>
     <div className="app">
-      <Sidebar current={view} onSelect={setView} counts={counts} version={appInfo?.version} />
+      <Sidebar current={view} onSelect={navigate} counts={counts} version={appInfo?.version} />
 
       <div className="main">
         <header className="topbar">
@@ -492,20 +505,21 @@ export default function App() {
               <input
                 className="search__input selectable"
                 type="search"
-                value={search}
-                placeholder="搜索标题、描述、备注、项目、标签"
-                aria-label="搜索任务"
-                onChange={(e) => setSearch(e.target.value)}
+                value={view === 'memos' ? memoSearch : search}
+                placeholder={view === 'memos' ? '搜索备忘、分类、流程步骤和负责人' : '搜索标题、描述、备注、项目、标签'}
+                aria-label={view === 'memos' ? '搜索备忘与流程' : '搜索任务'}
+                onChange={(e) => view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') void reload()
+                  if (e.key === 'Enter' && view !== 'memos') void reload()
                 }}
               />
-              {search && (
+              {(view === 'memos' ? memoSearch : search) && (
                 <button
                   type="button"
                   className="search__clear"
                   aria-label="清除搜索"
                   onClick={() => {
+                    if (view === 'memos') { setMemoSearch(''); return }
                     setSearch('')
                     void reload()
                   }}
@@ -532,7 +546,7 @@ export default function App() {
               悬浮窗
             </button>
 
-            <button
+            {view !== 'memos' && <><button
               type="button"
               className={`btn btn--ghost btn--sm${overdueOnly ? ' btn--filter-on' : ''}`}
               aria-pressed={overdueOnly}
@@ -607,10 +621,12 @@ export default function App() {
             >
               <Icon name="plus" size={15} /> 新建
             </button>
+            </>}
           </div>
         </header>
 
         <main className="content">
+          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} /> : <>
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
@@ -731,6 +747,7 @@ export default function App() {
                 else await remove(id)
               } catch (e) { pushToast('error', e instanceof IpcError ? e.userMessage() : String(e)) }
             })() }} onDuplicate={(task) => void duplicate(task.id)} />}
+          </>}
         </main>
       </div>
 

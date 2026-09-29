@@ -142,7 +142,7 @@ export function SettingsView() {
         filters: [{ name: 'Lumen 备份', extensions: ['json'] }],
       })
       const r = await bk.backupExport(typeof target === 'string' ? target : undefined)
-      pushToast('success', `已导出 ${r.stats.tasks} 个任务到 ${r.path}`)
+      pushToast('success', `已导出 ${r.stats.tasks} 个任务、${r.stats.memoDocuments} 条备忘与流程到 ${r.path}`)
       if (r.attachmentWarning) {
         pushToast('info', r.attachmentWarning)
       }
@@ -505,7 +505,7 @@ export function SettingsView() {
           <div className="setgroup">
             <h3 className="setgroup__title">导出</h3>
             <p className="setgroup__desc">
-              完整备份包含任务、重复规则、标签、子任务、依赖、提醒与设置，并附带版本号与
+              完整备份包含任务、重复规则、标签、子任务、依赖、提醒、备忘与流程及设置，并附带版本号与
               SHA-256 校验和。恢复时会先校验，校验不通过将拒绝导入。
             </p>
             <div className="setactions">
@@ -678,6 +678,7 @@ export function SettingsView() {
                       <br />
                       子任务 {preview.stats.subtasks}　依赖 {preview.stats.dependencies}　提醒{' '}
                       {preview.stats.reminders}　重复系列 {preview.stats.series}
+                      <br />备忘与流程 {preview.stats.memoDocuments ?? 0}
                     </td>
                   </tr>
                   <tr>
@@ -685,6 +686,7 @@ export function SettingsView() {
                     <td className="setgroup__hint">
                       任务 {preview.current.tasks}　项目 {preview.current.projects}　标签{' '}
                       {preview.current.tags}　提醒 {preview.current.reminders}
+                      <br />备忘与流程 {preview.current.memoDocuments ?? 0}
                     </td>
                   </tr>
                   <tr>
@@ -714,6 +716,10 @@ export function SettingsView() {
                   JSON 备份不包含附件文件本体，安全快照也不保证能恢复附件文件。
                 </div>
               )}
+              {preview.current.memoDocuments > 0 && <p className="alert alert--warn">
+                当前 {preview.current.memoDocuments} 条备忘与流程也会被备份中的 {preview.stats.memoDocuments ?? 0} 条替换。
+                恢复旧版备份时，备份可能没有这些记录。请先导出当前完整备份。
+              </p>}
 
               <div className="setactions">
                 <button

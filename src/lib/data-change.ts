@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { emit, listen } from '@tauri-apps/api/event'
 
 export type DataDomain =
+  | 'memos'
   | 'tasks'
   | 'organization'
   | 'subtasks'
@@ -15,6 +16,8 @@ export type DataDomain =
 
 /** A command has one authoritative invalidation policy, regardless of its caller. */
 export const MUTATION_DOMAINS = {
+  memo_save: ['memos'],
+  memo_set_deleted: ['memos'],
   task_create: ['tasks', 'organization', 'stats'],
   task_update: ['tasks', 'organization', 'reminders', 'stats'],
   task_save: ['tasks', 'organization', 'reminders', 'stats'],

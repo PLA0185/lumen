@@ -287,6 +287,7 @@ export interface BackendError {
 
 /** 侧边栏导航项标识（§3：主界面至少包含这些入口） */
 export type ViewId =
+  | 'memos'
   | 'assistant'
   | 'inbox'
   | 'today'
