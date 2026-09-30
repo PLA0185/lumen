@@ -50,6 +50,21 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('输入停顿自动保存，写入期间的新文字保留并进入下一次保存', async () => {
+    let finish!: (doc: memo.MemoDocument) => void
+    const save = vi.spyOn(memo, 'memoSave').mockImplementationOnce(() => new Promise(r => { finish = r })).mockImplementation(async input => ({ ...input, id: 'saved-id', revision: 2, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount()
+    await click('新建备忘')
+    await fill('备忘标题', '家里流程')
+    await fill('备忘内容', '第一版')
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(save).toHaveBeenCalledTimes(1)
+    await fill('备忘内容', '第二版，不应丢失')
+    await act(async () => finish({ id: 'saved-id', title: '家里流程', category: '', kind: 'memo', bodyMd: '第一版', steps: [], revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    expect((document.querySelector('[aria-label="备忘内容"]') as HTMLTextAreaElement).value).toBe('第二版，不应丢失')
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'saved-id', expectedRevision: 1, bodyMd: '第二版，不应丢失' }))
+  })
   const row: memo.MemoSummary = {
     id: 'audit-own',
     title: '验收备忘',

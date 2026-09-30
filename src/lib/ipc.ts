@@ -133,6 +133,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
     throw err
   }
 }
+export { call as callBackend }
 
 // =============================================================================
 // 应用级

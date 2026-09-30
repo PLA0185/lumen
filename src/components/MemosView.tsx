@@ -7,6 +7,7 @@ import { IpcError } from '../lib/ipc'
 import { onDataChanged } from '../lib/data-change'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { Icon } from './Icons'
+import { CloudHistory } from './CloudHistory'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -38,6 +39,9 @@ export function MemosView({
   const [editing, setEditing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [autoSaving, setAutoSaving] = useState(false)
+  const [historyId, setHistoryId] = useState('')
+  const saving = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -67,16 +71,24 @@ export function MemosView({
   }, [listGate, detailGate])
   useEffect(() => {
     const timer = setTimeout(() => void reload(), 250)
-    const off = onDataChanged(['memos'], () => void reload())
+    const off = onDataChanged(['memos'], () => {
+      void reload()
+      if (selected && !editing && !busy) {
+        void runLatestRequest(detailGate, () => memo.memoGet(selected.id), {
+          apply: doc => { setSelected(doc); setDraft(draftOf(doc)) },
+          reject: e => setError(errorText(e)),
+        })
+      }
+    })
     return () => {
       clearTimeout(timer)
       listGate.invalidate()
       off()
     }
-  }, [reload, listGate])
+  }, [reload, listGate, selected, editing, busy, detailGate])
   useEffect(() => {
-    onDirtyChange?.(dirty || busy)
-  }, [dirty, busy, onDirtyChange])
+    onDirtyChange?.(dirty || busy || autoSaving)
+  }, [dirty, busy, autoSaving, onDirtyChange])
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -87,7 +99,7 @@ export function MemosView({
   }, [dirty])
 
   const canLeave = () =>
-    !busy && (!dirty || window.confirm('当前修改尚未保存。放弃修改吗？'))
+    !busy && !saving.current && (!dirty || window.confirm('当前修改尚未保存。放弃修改吗？'))
   const open = async (id: string) => {
     if (!canLeave()) return
     setBusy(true)
@@ -123,24 +135,34 @@ export function MemosView({
           : [],
     })
   }
-  const save = async () => {
-    if (!draft || busy) return
-    setBusy(true)
+  const save = useCallback(async (automatic = false) => {
+    if (!draft || busy || saving.current) return
+    saving.current = true
+    if (automatic) setAutoSaving(true)
+    else setBusy(true)
     setError(null)
     setNotice(null)
     try {
       const doc = await memo.memoSave(draft)
       setSelected(doc)
-      setDraft(draftOf(doc))
-      setEditing(false)
+      // Keep text typed while the automatic write was pending; only rebase its version.
+      if (automatic) setDraft(current => current ? { ...current, id: doc.id, expectedRevision: doc.revision } : current)
+      else { setDraft(draftOf(doc)); setEditing(false) }
       setNotice('已保存到本机')
       await reload()
     } catch (e) {
       setError(errorText(e))
     } finally {
       setBusy(false)
+      setAutoSaving(false)
+      saving.current = false
     }
-  }
+  }, [draft, busy, reload])
+  useEffect(() => {
+    if (!editing || !dirty || busy || autoSaving || error || !draft?.title.trim() || (draft.kind === 'flow' && (!draft.steps.length || draft.steps.some(s => !s.title.trim())))) return
+    const timer = setTimeout(() => void save(true), 1000)
+    return () => clearTimeout(timer)
+  }, [editing, dirty, busy, autoSaving, error, draft, save])
   const removeOrRestore = async () => {
     if (!selected || !canLeave()) return
     const deleted = !selected.deletedAt
@@ -164,8 +186,10 @@ export function MemosView({
       setBusy(false)
     }
   }
-  const patch = (changes: Partial<memo.SaveMemoInput>) =>
+  const patch = (changes: Partial<memo.SaveMemoInput>) => {
+    setError(null)
     setDraft((d) => (d ? { ...d, ...changes } : d))
+  }
   const patchStep = (index: number, changes: Partial<memo.FlowStep>) => {
     if (draft)
       patch({
@@ -300,21 +324,22 @@ export function MemosView({
                 <span className="chip">
                   {draft.kind === 'flow' ? '业务流程' : '备忘录'}
                 </span>
-                {dirty && <span className="setgroup__hint">尚未保存</span>}
+                {dirty && <span className="setgroup__hint">{autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
+                {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
                   (editing ? (
                     <>
                       <button
                         className="btn btn--primary"
                         disabled={
-                          busy ||
+                          busy || autoSaving ||
                           !draft.title.trim() ||
                           (draft.kind === 'flow' && draft.steps.length === 0) ||
                           draft.steps.some((s) => !s.title.trim())
                         }
-                        onClick={() => void save()}
+                        onClick={() => void save(false)}
                       >
-                        {busy ? '保存中…' : '保存并查看'}
+                        {busy || autoSaving ? '保存中…' : '保存并查看'}
                       </button>
                       <button
                         className="btn btn--ghost"
@@ -543,6 +568,7 @@ export function MemosView({
           )}
         </article>
       </div>
+      {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
     </section>
   )
 }

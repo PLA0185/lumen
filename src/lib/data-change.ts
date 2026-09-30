@@ -18,6 +18,8 @@ export type DataDomain =
 export const MUTATION_DOMAINS = {
   memo_save: ['memos'],
   memo_set_deleted: ['memos'],
+  cloud_sync_restore: ['memos'],
+  cloud_sync_business_resolve: ['all'],
   task_create: ['tasks', 'organization', 'stats'],
   task_update: ['tasks', 'organization', 'reminders', 'stats'],
   task_save: ['tasks', 'organization', 'reminders', 'stats'],

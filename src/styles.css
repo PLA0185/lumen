@@ -4528,3 +4528,8 @@ body {
 .subtask__completed, .task__completed { font-size: .75rem; color: var(--c-text-3); white-space: nowrap; }
 .floating .subtask-preview__item { flex-wrap: wrap; }
 .floating .subtask__completed { flex-basis: 100%; padding-left: 22px; }
+.cloud-settings__fields { display: grid; gap: 12px; border: 0; padding: 0; max-width: 700px; }
+.cloud-settings__fields label { display: grid; gap: 6px; }
+.cloud-settings__version { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
+.cloud-history { position: fixed; inset: 0; background: #0009; display: grid; place-items: center; z-index: 1000; padding: 20px; }
+.cloud-history__panel { background: var(--bg-panel, #171a21); border: 1px solid var(--border, #343b49); border-radius: 12px; padding: 20px; width: min(800px, 95vw); max-height: 90vh; overflow: auto; }

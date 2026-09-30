@@ -117,7 +117,7 @@ export function QuickAdd({
     setMaterializeDays(90)
     setConfigureReminder(false)
     setRule({ rrule: 'FREQ=WEEKLY', dtstartLocal: '', hasStartTime: false })
-  }, [defaultPlannedDate, defaultPeriodType])
+  }, [defaultPlannedDate, defaultPeriodType, defaultRepeat])
 
   const save = useCallback(async () => {
     if (savingRef.current) return
