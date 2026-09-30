@@ -1372,8 +1372,18 @@ async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
         verify_space(db, &dav, &c, &key).await?;
     }
     let device = runtime(db).await?;
+    sync_exchange(db, &dav, &c, &key, &device, scan).await
+}
+async fn sync_exchange(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    device: &str,
+    scan: bool,
+) -> AppResult<bool> {
     rebase_restore(db).await?;
-    upload(db, &dav, &c, &key, &device).await?;
+    upload(db, dav, c, key, device).await?;
     // Publish memos immediately; a large first task upload must not hold them back.
     let dirty: bool = sqlx::query_scalar(
         "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
@@ -1381,20 +1391,37 @@ async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
     .fetch_one(db.pool())
     .await?;
     if dirty {
-        publish_head(db, &dav, &c, &key, &device).await?;
+        publish_head(db, dav, c, key, device).await?;
     }
-    business::capture(db).await?;
-    business::upload(db, &dav, &c, &key).await?;
+    let business_result: AppResult<()> = async {
+        business::capture(db).await?;
+        business::upload(db, dav, c, key).await?;
+        Ok(())
+    }
+    .await;
+    if let Err(error) = business_result {
+        // Uncaptured local task changes must not be overwritten. Memo history is
+        // independent and can still arrive when an old attachment is missing.
+        if scan {
+            let mut memos_only = c.clone();
+            memos_only.inherit_all = false;
+            download(db, dav, &memos_only, key).await?;
+        }
+        return Err(AppError {
+            message: format!("备忘和流程仍会同步；其它业务同步失败：{}", error.message),
+            ..error
+        });
+    }
     let dirty: bool = sqlx::query_scalar(
         "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
     )
     .fetch_one(db.pool())
     .await?;
     if dirty {
-        publish_head(db, &dav, &c, &key, &device).await?;
+        publish_head(db, dav, c, key, device).await?;
     }
     if scan {
-        download(db, &dav, &c, &key).await
+        download(db, dav, c, key).await
     } else {
         Ok(false)
     }

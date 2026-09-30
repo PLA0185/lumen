@@ -400,6 +400,55 @@ async fn add_task(db: &Db, id: &str, title: &str) {
         .unwrap();
 }
 #[tokio::test]
+async fn missing_task_attachment_does_not_block_memo_upload_or_download() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [3; 32];
+    let memo = memos::save_impl(&home, input("家里写的流程"))
+        .await
+        .unwrap();
+    push(&home, &dav, &c, &key).await;
+    add_task(&company, "local-task", "公司已有任务").await;
+    sqlx::query("INSERT INTO attachments(id,task_id,file_name,byte_size,storage_mode,external_path,created_at) VALUES('missing-file','local-task','找不到的附件.txt',1,'reference',?,?)")
+        .bind(company.data_dir().join("absent.txt").to_string_lossy().as_ref()).bind(stamp()).execute(company.pool()).await.unwrap();
+    let local = memos::save_impl(&company, input("公司写的说明"))
+        .await
+        .unwrap();
+    let device = runtime(&company).await.unwrap();
+    assert!(sync_exchange(&company, &dav, &c, &key, &device, true)
+        .await
+        .is_err());
+    assert_eq!(
+        memos::get_impl(&company, &memo.summary.id)
+            .await
+            .unwrap()
+            .summary
+            .title,
+        "家里写的流程"
+    );
+    download(&home, &dav, &c, &key).await.unwrap();
+    assert_eq!(
+        memos::get_impl(&home, &local.summary.id)
+            .await
+            .unwrap()
+            .summary
+            .title,
+        "公司写的说明"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tasks WHERE id='local-task'")
+            .fetch_one(company.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    close(home).await;
+    close(company).await;
+}
+#[tokio::test]
 async fn all_business_sync_merges_separate_records_and_selective_download_keeps_tasks_in_cloud() {
     let mock = Mock::new();
     let dav = mock.dav();
