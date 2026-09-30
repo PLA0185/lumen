@@ -78,12 +78,12 @@
 ```powershell
 pnpm install --frozen-lockfile
 pnpm typecheck
-pnpm test          # 前端 101 项
+pnpm test          # 前端 220 项（会随迭代增长）
 pnpm build         # 必须先跑，见下方说明
 pnpm lint
 cd src-tauri
 cargo fmt --check
-cargo test --lib   # 323 项（会随迭代增长）
+cargo test --lib   # 417 项（会随迭代增长）
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 

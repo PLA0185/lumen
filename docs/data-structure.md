@@ -7,6 +7,10 @@
 
 ## 一、整体约定
 
+当前数据库迁移版本为 12，设置页读取 `_sqlx_migrations` 中已成功应用的实际版本，
+不再使用停留在 4 的历史 `app_meta.schema_version`。完整备份当前为格式 6，兼容格式 1–5。
+迁移 0012 新增加密 WebDAV 同步的持久队列、因果历史及附件缓存，详见 [云同步实现](cloud-sync-implementation-2026-09-30.md)。
+
 2026-09-30：正式迁移 0010 新增不可变 `content_assets` 表，正文中的
 `lumen-asset:<UUID>` 对应名称、MIME、实际 Base64 字节、长度与 SHA-256。
 完整备份现为格式 5，兼容格式 1–4；读取和恢复均验证资源内容。
@@ -280,12 +284,20 @@ CREATE TABLE focus_sessions (
 | 2 | `0002_recurrence_skips.sql` | `task_series_skips` + occurrence 覆盖索引 |
 | 3 | `0003_goals.sql` | `goals` |
 | 4 | `0004_period_type.sql` | `tasks.period_type` + 部分索引 |
+| 5 | `0005_reminder_disabled_reason.sql` | 提醒停用原因 |
+| 6 | `0006_recurrence_template.sql` | 重复系列模板 |
+| 7 | `0007_occurrence_preservation.sql` | 发生身份及历史保护 |
+| 8 | `0008_memo_documents.sql` | 独立备忘与业务流程 |
+| 9 | `0009_recurrence_subtasks.sql` | 重复子任务模板 |
+| 10 | `0010_content_assets.sql` | 图片及文件内容资源 |
+| 11 | `0011_floating_shortcut.sql` | 默认浮窗快捷键迁移 |
+| 12 | `0012_memo_cloud_sync.sql` | 云同步队列、因果历史及附件缓存 |
 
 机制：
 
 - 迁移文件由 `sqlx::migrate!` 在**编译期嵌入二进制**，随程序分发；
 - 启动时自动执行未应用的迁移；
-- **迁移前自动复制数据库**到 `backups/pre-migrate-<时间戳>.db`；
+- **迁移前生成一致性数据库快照**到 `backups/pre-migrate-<时间戳>-<唯一编号>.db`，包含 WAL 中已提交数据；快照失败中止升级；
 - 迁移失败会中止启动并给出可读错误（不会带着半套结构继续运行）。
 
 ---
@@ -304,19 +316,9 @@ CREATE TABLE focus_sessions (
 
 ---
 
-## 七、同步策略（未实现）
+## 七、同步策略
 
-任务书 §9 允许"可选择启用"账号与云同步。本轮按用户决定**不做同步**。
-
-为避免将来加同步时做破坏性迁移，`tasks` 表已预留
-`sync_rev` 与 `sync_state` 两个字段（当前恒为 `0` / `'local'`）。
-
-若将来实现，需要补充的设计至少包括：
-
-- 离线修改的合并规则与冲突检测（任务书要求"冲突时不静默覆盖数据"）
-- 重复系列的冲突解决——分段与跳过的合并语义（不是简单的行级合并）
-- 删除的同步策略（软删除如何传播、是否需要墓碑）
-- 附件同步（体积、去重、断点续传）
-- 身份与访问控制、服务端部署与备份
-
-**这些均未设计，不应被视为已就绪。**
+已实现可选的加密 WebDAV 同步；本机 SQLite 是离线数据源，凭据和恢复码保存在系统凭据管理器。
+实体采用因果版本而非修改时间覆盖，并发版本全部保留；删除传播和业务关联冲突有独立保护。
+图片与缓存附件同步实际字节。完整备份格式 6 保存同步历史，恢复后暂停同步并更换设备身份。
+真实服务验收、传输中断和当前限制以 [云同步实现与交付状态](cloud-sync-implementation-2026-09-30.md) 及 [工作记录](work-log.md) 为准。
