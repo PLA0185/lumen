@@ -676,6 +676,50 @@ impl Dav {
         }
         Ok(Some(bytes))
     }
+    async fn workspace(&self, db: &Db) -> AppResult<Option<Vec<u8>>> {
+        // Some WebDAV servers return 409 for a GET whose parent collection is absent.
+        // Create only our collection; genuine read conflicts must remain errors.
+        self.mkdir(db, "").await?;
+        self.read(db, "workspace.json", MAX_JSON).await
+    }
+    async fn verify_publication(&self, db: &Db, key: &[u8; 32]) -> AppResult<()> {
+        let probe = format!("connection-check-{}.json", uuid::Uuid::now_v7());
+        let value = encrypt(key, "connection-check", &"check")?;
+        let result = async {
+            let first = self.stage(db, &probe, value.clone(), false).await?;
+            if !matches!(first, 201 | 204) {
+                return Err(AppError::new(
+                    ErrorCode::Network,
+                    "网盘无法创建连接验证文件",
+                ));
+            }
+            let second = self
+                .stage(
+                    db,
+                    &probe,
+                    encrypt(key, "connection-check", &"second")?,
+                    false,
+                )
+                .await?;
+            let preserved =
+                self.read(db, &probe, MAX_JSON).await?.as_deref() == Some(value.as_slice());
+            if !matches!(second, 409 | 412) || !preserved {
+                return Err(AppError::validation(
+                    "这个 WebDAV 服务没有正确支持禁止覆盖发布，不能安全启用同步",
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        let cleanup = self.request(db, "DELETE", &probe, None).await?;
+        if !cleanup.status().is_success() && cleanup.status().as_u16() != 404 {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                "连接验证文件未能清理，请检查网盘权限后重试",
+            ));
+        }
+        result
+    }
     async fn mkdir(&self, db: &Db, path: &str) -> AppResult<()> {
         let cached = self
             .folders
@@ -895,7 +939,7 @@ pub async fn cloud_sync_connect(
         &input.password,
     )?;
     runtime(db).await?;
-    let existing = dav.read(db, "workspace.json", MAX_JSON).await?;
+    let existing = dav.workspace(db).await?;
     let create = existing.is_none();
     let previous = config(db).await?;
     let mut key = [0; 32];
@@ -960,44 +1004,8 @@ pub async fn cloud_sync_connect(
         }),
     )?;
     store_config(db, &c).await?;
+    dav.verify_publication(db, &key).await?;
     if create {
-        dav.mkdir(db, "").await?;
-        let probe = format!("connection-check-{}.json", uuid::Uuid::now_v7());
-        let first = dav
-            .request(
-                db,
-                "PUT_ONCE",
-                &probe,
-                Some(encrypt(&key, "connection-check", &"check")?),
-            )
-            .await?;
-        if !first.status().is_success() {
-            return Err(AppError::new(
-                ErrorCode::Network,
-                "网盘无法创建连接验证文件",
-            ));
-        }
-        let second = dav
-            .request(
-                db,
-                "PUT_ONCE",
-                &probe,
-                Some(encrypt(&key, "connection-check", &"second")?),
-            )
-            .await?;
-        let conditional = second.status().as_u16() == 412;
-        let cleanup = dav.request(db, "DELETE", &probe, None).await?;
-        if !cleanup.status().is_success() {
-            return Err(AppError::new(
-                ErrorCode::Network,
-                "连接验证文件未能清理，请检查网盘权限后重试",
-            ));
-        }
-        if !conditional {
-            return Err(AppError::validation(
-                "这个 WebDAV 服务没有正确支持不可覆盖创建，不能安全启用同步",
-            ));
-        }
         let code = dav
             .stage(
                 db,
@@ -1090,7 +1098,9 @@ async fn upload_immutable<T: Serialize + serde::de::DeserializeOwned>(
     if matches!(status, 201 | 204) {
         return Ok(());
     }
-    if status == 412 {
+    // Nutstore returns 409 for MOVE with Overwrite:F when the destination exists.
+    // It is a successful retry only after decrypting and comparing the complete object.
+    if matches!(status, 409 | 412) {
         let bytes = dav
             .read(db, path, max)
             .await?

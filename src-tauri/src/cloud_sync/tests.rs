@@ -12,6 +12,10 @@ struct Mock {
     files: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
     fail: Arc<AtomicBool>,
     partial_put: Arc<AtomicBool>,
+    folder_exists: Arc<AtomicBool>,
+    read_conflict: Arc<AtomicBool>,
+    ignore_put_condition: Arc<AtomicBool>,
+    ignore_move_condition: Arc<AtomicBool>,
 }
 impl Mock {
     fn new() -> Self {
@@ -25,6 +29,14 @@ impl Mock {
         let failure = fail.clone();
         let partial_put = Arc::new(AtomicBool::new(false));
         let partial = partial_put.clone();
+        let folder_exists = Arc::new(AtomicBool::new(true));
+        let folder = folder_exists.clone();
+        let read_conflict = Arc::new(AtomicBool::new(false));
+        let conflict = read_conflict.clone();
+        let ignore_put_condition = Arc::new(AtomicBool::new(false));
+        let ignore_put = ignore_put_condition.clone();
+        let ignore_move_condition = Arc::new(AtomicBool::new(false));
+        let ignore_move = ignore_move_condition.clone();
         std::thread::spawn(move || {
             for socket in listener.incoming() {
                 let Ok(mut socket) = socket else { break };
@@ -71,12 +83,19 @@ impl Mock {
                     500
                 } else {
                     match method {
-                        "MKCOL" => 201,
+                        "MKCOL" => {
+                            if path == "/Lumen/" && folder.swap(true, Ordering::SeqCst) {
+                                405
+                            } else {
+                                201
+                            }
+                        }
                         "PUT" => {
                             if partial.swap(false, Ordering::SeqCst) {
                                 files.insert(path, b"broken partial upload".to_vec());
                                 500
                             } else if headers.to_lowercase().contains("if-none-match: *")
+                                && !ignore_put.load(Ordering::SeqCst)
                                 && files.contains_key(&path)
                             {
                                 412
@@ -86,7 +105,9 @@ impl Mock {
                             }
                         }
                         "GET" => {
-                            if let Some(v) = files.get(&path) {
+                            if !folder.load(Ordering::SeqCst) || conflict.load(Ordering::SeqCst) {
+                                409
+                            } else if let Some(v) = files.get(&path) {
                                 body = v.clone();
                                 200
                             } else {
@@ -113,9 +134,14 @@ impl Mock {
                                 .path()
                                 .to_owned();
                             if headers.to_lowercase().contains("overwrite: f")
+                                && !ignore_move.load(Ordering::SeqCst)
                                 && files.contains_key(&destination)
                             {
-                                412
+                                if ignore_put.load(Ordering::SeqCst) {
+                                    409
+                                } else {
+                                    412
+                                }
                             } else if let Some(value) = files.remove(&path) {
                                 files.insert(destination, value);
                                 201
@@ -150,6 +176,10 @@ impl Mock {
             files,
             fail,
             partial_put,
+            folder_exists,
+            read_conflict,
+            ignore_put_condition,
+            ignore_move_condition,
         }
     }
     fn dav(&self) -> Dav {
@@ -161,6 +191,138 @@ impl Mock {
             folders: std::sync::Mutex::new(HashSet::new()),
         }
     }
+}
+#[tokio::test]
+async fn first_connection_creates_missing_folder_before_reading_workspace() {
+    let mock = Mock::new();
+    mock.folder_exists.store(false, Ordering::SeqCst);
+    let dav = mock.dav();
+    let a = db().await;
+    let result = dav.workspace(&a).await.unwrap();
+    assert!(result.is_none());
+    assert!(mock.folder_exists.load(Ordering::SeqCst));
+    close(a).await;
+}
+#[tokio::test]
+async fn workspace_open_preserves_existing_data_and_real_errors() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let a = db().await;
+    mock.files.lock().unwrap().insert(
+        "/Lumen/workspace.json".into(),
+        b"existing encrypted space".to_vec(),
+    );
+    assert_eq!(
+        dav.workspace(&a).await.unwrap().unwrap(),
+        b"existing encrypted space"
+    );
+    mock.read_conflict.store(true, Ordering::SeqCst);
+    let error = dav.workspace(&a).await.unwrap_err();
+    assert!(error.message.contains("409"));
+    assert_eq!(
+        mock.files
+            .lock()
+            .unwrap()
+            .get("/Lumen/workspace.json")
+            .unwrap(),
+        b"existing encrypted space"
+    );
+    close(a).await;
+}
+#[tokio::test]
+async fn failed_folder_creation_does_not_read_or_create_workspace() {
+    let mock = Mock::new();
+    mock.folder_exists.store(false, Ordering::SeqCst);
+    mock.fail.store(true, Ordering::SeqCst);
+    let a = db().await;
+    let error = mock.dav().workspace(&a).await.unwrap_err();
+    assert!(error.message.contains("建立文件夹"));
+    assert!(!mock.folder_exists.load(Ordering::SeqCst));
+    assert!(mock.files.lock().unwrap().is_empty());
+    close(a).await;
+}
+#[tokio::test]
+async fn publication_probe_uses_move_protection_when_put_condition_is_ignored() {
+    let mock = Mock::new();
+    mock.ignore_put_condition.store(true, Ordering::SeqCst);
+    let a = db().await;
+    mock.dav().verify_publication(&a, &[9; 32]).await.unwrap();
+    assert!(mock.files.lock().unwrap().is_empty());
+    close(a).await;
+}
+#[tokio::test]
+async fn publication_probe_rejects_overwriting_server_and_cleans_probe() {
+    let mock = Mock::new();
+    mock.ignore_put_condition.store(true, Ordering::SeqCst);
+    mock.ignore_move_condition.store(true, Ordering::SeqCst);
+    let a = db().await;
+    assert!(mock.dav().verify_publication(&a, &[9; 32]).await.is_err());
+    assert!(mock.files.lock().unwrap().is_empty());
+    close(a).await;
+}
+#[tokio::test]
+async fn immutable_retry_verifies_content_after_move_conflict_409() {
+    let mock = Mock::new();
+    mock.ignore_put_condition.store(true, Ordering::SeqCst);
+    let a = db().await;
+    let dav = mock.dav();
+    let c = cfg();
+    let key = [4; 32];
+    let path = bucket("events", &uuid::Uuid::now_v7().to_string()).unwrap();
+    let value = "existing immutable revision".to_owned();
+    upload_immutable(&dav, &a, &c, &key, &path, &value, MAX_JSON)
+        .await
+        .unwrap();
+    upload_immutable(&dav, &a, &c, &key, &path, &value, MAX_JSON)
+        .await
+        .unwrap();
+    let different = "different revision".to_owned();
+    assert!(
+        upload_immutable(&dav, &a, &c, &key, &path, &different, MAX_JSON)
+            .await
+            .is_err()
+    );
+    let bytes = dav.read(&a, &path, MAX_JSON).await.unwrap().unwrap();
+    assert_eq!(
+        decrypt::<String>(&key, &aad(&c, &path), &bytes).unwrap(),
+        value
+    );
+    close(a).await;
+}
+#[tokio::test]
+async fn concurrent_workspace_publication_never_overwrites_winning_key() {
+    let mock = Mock::new();
+    let a = db().await;
+    let b = db().await;
+    let first = mock.dav();
+    let second = mock.dav();
+    let (left, right) = tokio::join!(
+        first.stage(&a, "workspace.json", b"first space and key".to_vec(), false),
+        second.stage(
+            &b,
+            "workspace.json",
+            b"second space and key".to_vec(),
+            false
+        )
+    );
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert!(matches!((left, right), (201, 412) | (412, 201)));
+    let expected = if left == 201 {
+        b"first space and key".as_slice()
+    } else {
+        b"second space and key".as_slice()
+    };
+    assert_eq!(
+        first
+            .read(&a, "workspace.json", MAX_JSON)
+            .await
+            .unwrap()
+            .unwrap(),
+        expected
+    );
+    assert_eq!(mock.files.lock().unwrap().len(), 1);
+    close(a).await;
+    close(b).await;
 }
 #[tokio::test]
 async fn interrupted_put_keeps_published_head_and_can_retry() {
