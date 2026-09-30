@@ -879,6 +879,7 @@ fn purge_query(query: Option<TaskQuery>) -> TaskQuery {
     // **强制**只看回收站：无论调用方传了什么条件，这条路径都绝不允许碰到未删除的任务
     // （`deleted_only` 在 `apply_task_filters` 里优先于 `include_deleted`）。
     q.deleted_only = true;
+    q.group_recurring = false;
     q.limit = None;
     q.offset = None;
     q.sort_by = q.sort_by.or_else(|| Some("manual".into()));
@@ -1082,8 +1083,18 @@ pub async fn task_count(state: State<'_, AppState>, query: TaskQuery) -> AppResu
 }
 
 /// 计数实现（同样与 Tauri 解耦，便于集成测试直接调用）。
+fn series_group_key() -> &'static str {
+    "CASE WHEN series_id IS NULL THEN 'task:'||id ELSE 'series:'||series_id END"
+}
 pub async fn count_tasks_impl(db: &Db, query: &TaskQuery) -> AppResult<i64> {
-    let mut b = QueryBuilder::<Sqlite>::new("SELECT COUNT(*) FROM tasks WHERE 1 = 1");
+    let mut b = QueryBuilder::<Sqlite>::new(if query.group_recurring {
+        "SELECT COUNT(DISTINCT "
+    } else {
+        "SELECT COUNT(*) FROM tasks WHERE 1 = 1"
+    });
+    if query.group_recurring {
+        b.push(series_group_key()).push(") FROM tasks WHERE 1=1");
+    }
     apply_task_filters(&mut b, query)?;
     let n: i64 = b.build_query_scalar().fetch_one(db.pool()).await?;
     Ok(n)
@@ -1247,8 +1258,18 @@ async fn run_task_query(
     limit: i64,
     offset: i64,
 ) -> AppResult<Vec<Task>> {
-    let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM tasks WHERE 1 = 1");
+    let mut b = QueryBuilder::<Sqlite>::new(if query.group_recurring {
+        "WITH filtered AS (SELECT tasks.*,ROW_NUMBER() OVER(PARTITION BY "
+    } else {
+        "SELECT * FROM tasks WHERE 1 = 1"
+    });
+    if query.group_recurring {
+        b.push(series_group_key()).push(" ORDER BY CASE status WHEN 'doing' THEN 0 WHEN 'waiting' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END,CASE WHEN status IN ('todo','doing','waiting') THEN COALESCE(planned_at,due_at,created_at) END ASC,completed_at DESC,id ASC) AS series_rank FROM tasks WHERE 1=1");
+    }
     apply_task_filters(&mut b, query)?;
+    if query.group_recurring {
+        b.push(") SELECT * FROM filtered AS tasks WHERE series_rank=1");
+    }
     push_task_order(&mut b, query)?;
 
     b.push(" LIMIT ").push_bind(limit);

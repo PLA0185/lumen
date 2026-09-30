@@ -152,6 +152,7 @@ export interface UpdateTaskInput {
 
 /** 列表查询条件（§4.1 组合筛选 + 搜索） */
 export interface TaskQuery {
+  groupRecurring?: boolean
   statuses?: TaskStatus[]
   projectId?: string | null
   /**

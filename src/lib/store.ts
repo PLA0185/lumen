@@ -156,6 +156,7 @@ export function buildQuery(s: {
   overdueOnly: boolean
 }): TaskQuery {
   const q: TaskQuery = {
+    groupRecurring: true,
     sortBy: s.sortBy,
     sortDesc: s.sortDesc,
     search: s.search.trim() || null,

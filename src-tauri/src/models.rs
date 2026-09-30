@@ -247,6 +247,9 @@ pub struct UpdateTaskInput {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskQuery {
+    /// 列表按重复系列折叠；实际发生仍分别保存。
+    #[serde(default)]
+    pub group_recurring: bool,
     /// 状态集合；空表示"全部未归档"
     #[serde(default)]
     pub statuses: Vec<String>,

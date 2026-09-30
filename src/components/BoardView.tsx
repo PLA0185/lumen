@@ -51,6 +51,7 @@ const COLUMNS: { status: TaskStatus; label: string; hint: string }[] = [
 /** 看板的查询条件（不显示归档与回收站内容） */
 function boardQuery(): TaskQuery {
   return {
+    groupRecurring: true,
     statuses: ['todo', 'doing', 'waiting', 'done'],
     sortBy: 'manual',
   }

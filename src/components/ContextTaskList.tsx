@@ -24,7 +24,7 @@ export function ContextTaskList({context, onEdit, onToggle, onDelete, onDuplicat
   const reload = useCallback(async () => {
     setLoading(true)
     await runLatestRequest(gate, async () => {
-      const query = { projectId:context.projectId, categoryId:context.categoryId, tagIds:context.tagIds,
+      const query = { groupRecurring:true, projectId:context.projectId, categoryId:context.categoryId, tagIds:context.tagIds,
         statuses:['todo','doing','waiting','done'] as Task['status'][], sortBy:'created' as const, sortDesc:true }
       const count = await ipc.countTasks(query)
       const tasks: Task[] = []

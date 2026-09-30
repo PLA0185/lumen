@@ -32,6 +32,89 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn recurring_groups_are_counted_before_paging_and_preserve_occurrences() {
+    let (state, dir) = setup("group-series").await;
+    let db = &state.db;
+    sqlx::query("INSERT INTO task_series(id,rrule,tzid,dtstart_local,created_at,updated_at) VALUES('repeat','FREQ=DAILY','UTC','2026-09-30T09:00:00','2026-09-30T00:00:00.000Z','2026-09-30T00:00:00.000Z')").execute(db.pool()).await.unwrap();
+    for n in 0..205 {
+        sqlx::query("INSERT INTO tasks(id,title,series_id,status,created_at,updated_at,sort_order) VALUES(?,?,'repeat',?,'2026-09-30T00:00:00.000Z','2026-09-30T00:00:00.000Z',?)")
+            .bind(format!("r-{n:03}")).bind(if n==204 {"搜索特殊实例"} else {"每日工作"}).bind(if n==0 {"done"} else {"todo"}).bind(n as f64).execute(db.pool()).await.unwrap();
+    }
+    create_task_impl(db, task("单独任务")).await.unwrap();
+    let q = TaskQuery {
+        group_recurring: true,
+        limit: Some(1),
+        ..Default::default()
+    };
+    assert_eq!(crate::commands::count_tasks_impl(db, &q).await.unwrap(), 2);
+    let a = list_tasks_impl(db, q.clone()).await.unwrap();
+    let b = list_tasks_impl(
+        db,
+        TaskQuery {
+            offset: Some(1),
+            ..q.clone()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(a.len(), 1);
+    assert_eq!(b.len(), 1);
+    assert_ne!(a[0].id, b[0].id);
+    assert_eq!(
+        a.iter()
+            .chain(&b)
+            .find(|t| t.series_id.is_some())
+            .unwrap()
+            .status,
+        "todo"
+    );
+    let completed = TaskQuery {
+        group_recurring: true,
+        statuses: vec!["done".into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        crate::commands::count_tasks_impl(db, &completed)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(list_tasks_impl(db, completed).await.unwrap()[0].id, "r-000");
+    sqlx::query("UPDATE tasks SET status='doing' WHERE id='r-100'")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let active = list_tasks_impl(
+        db,
+        TaskQuery {
+            group_recurring: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(active.len(), 2);
+    assert_eq!(
+        active.iter().find(|t| t.series_id.is_some()).unwrap().id,
+        "r-100"
+    );
+    let search = TaskQuery {
+        search: Some("搜索特殊实例".into()),
+        group_recurring: true,
+        ..Default::default()
+    };
+    assert_eq!(list_tasks_impl(db, search).await.unwrap()[0].id, "r-204");
+    assert_eq!(
+        crate::commands::count_tasks_impl(db, &TaskQuery::default())
+            .await
+            .unwrap(),
+        206
+    );
+    db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn recurring_subtasks_have_persistent_template_schema() {
     let (state, dir) = setup("subtask-template-schema").await;
     let columns: Vec<String> =
