@@ -143,20 +143,6 @@ impl Db {
         Ok(Self { pool, data_dir })
     }
 
-    /// 在单个事务中执行写操作。
-    ///
-    /// 任务书 §9 要求"不可留下半条规则"——所有跨表写入必须走这里。
-    pub async fn with_tx<T, F, Fut>(&self, f: F) -> Result<T, DbError>
-    where
-        F: FnOnce(sqlx::Transaction<'static, Sqlite>) -> Fut,
-        Fut: std::future::Future<Output = Result<(sqlx::Transaction<'static, Sqlite>, T), DbError>>,
-    {
-        let tx = self.pool.begin().await?;
-        let (tx, out) = f(tx).await?;
-        tx.commit().await?;
-        Ok(out)
-    }
-
     /// 生成数据库文件的一致性备份（供 §9 手动/自动备份复用）。
     pub async fn backup_to(&self, dest: &Path) -> Result<(), DbError> {
         if let Some(parent) = dest.parent() {

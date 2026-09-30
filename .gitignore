@@ -84,5 +84,8 @@ temp/
 !*.example
 !*.template
 
-# 实机验收脚本的 Python 缓存
+# Python acceptance script cache
 tools/__pycache__/
+
+# Updater manifests are generated and published as Release assets.
+/latest.json
