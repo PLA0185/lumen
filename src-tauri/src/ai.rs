@@ -46,7 +46,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// 单次请求的最大输出 token（§6 要求"可设置的单次输出限制"）
 pub const MAX_OUTPUT_TOKENS_CAP: i64 = 32_000;
 /// 默认输出上限
-pub const DEFAULT_MAX_OUTPUT_TOKENS: i64 = 2_048;
+pub const DEFAULT_MAX_OUTPUT_TOKENS: i64 = 8_192;
 
 // =============================================================================
 // 提供商定义
@@ -806,6 +806,11 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
         "max_tokens": max_tokens,
         "stream": false,
     });
+    if req.config.provider == Provider::DeepSeek {
+        // Tasks and connection probes need a visible answer, not a hidden chain
+        // consuming the entire output budget (DeepSeek defaults to thinking).
+        body["thinking"] = serde_json::json!({ "type": "disabled" });
+    }
 
     if req.json_output {
         // DeepSeek 支持 `response_format: {"type":"json_object"}`，
@@ -1028,6 +1033,13 @@ fn parse_openai_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
 
     // DeepSeek 官方提示"偶发返回空内容"，这种情况要明确告知而不是当成成功
     if text.trim().is_empty() {
+        if choice.get("finish_reason").and_then(|v| v.as_str()) == Some("length") {
+            return Err(
+                AppError::validation("输出上限已耗尽，模型尚未返回正文").with_hint(
+                    "请在 AI 设置提高单次输出上限，或缩短输入后重新生成。推理内容不会冒充正文。",
+                ),
+            );
+        }
         return Err(
             AppError::new(crate::error::ErrorCode::Internal, "服务商返回了空内容").with_hint(
                 "DeepSeek 官方提示存在偶发返回空内容的情况，可重试一次；若持续出现请更换模型",
@@ -1119,7 +1131,15 @@ pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResp
     cfg.validate_for_run()?;
     crate::ai_media::validate_media(cfg.provider, &req.media)?;
 
-    let api_key = load_api_key(cfg.provider)?.ok_or_else(|| {
+    chat_with_api_key(cfg, req, load_api_key(cfg.provider)?).await
+}
+
+async fn chat_with_api_key(
+    cfg: &ProviderConfig,
+    req: &ChatRequest,
+    api_key: Option<String>,
+) -> AppResult<ChatResponse> {
+    let api_key = api_key.ok_or_else(|| {
         AppError::new(
             crate::error::ErrorCode::NotConfigured,
             format!("尚未配置 {} 的 API Key", cfg.provider.label()),
@@ -1638,6 +1658,18 @@ mod tests {
     }
 
     /// Anthropic 的 system 必须是**顶层字段**，messages 里不能有 system
+    #[test]
+    fn deepseek_small_budget_disables_reasoning_and_explains_exhaustion() {
+        let mut req = sample_req(Provider::DeepSeek);
+        req.max_output_tokens = Some(32);
+        assert_eq!(build_openai_body(&req)["thinking"]["type"], "disabled");
+        assert!(build_openai_body(&sample_req(Provider::Custom))
+            .get("thinking")
+            .is_none());
+        let value = serde_json::json!({"choices":[{"message":{"content":"","reasoning_content":"只有推理"},"finish_reason":"length"}]});
+        let error = parse_openai_response(&value).unwrap_err();
+        assert!(error.message.contains("输出上限"));
+    }
     #[test]
     fn anthropic_body_puts_system_at_top_level() {
         let b = build_anthropic_body(&sample_req(Provider::Claude));
@@ -2294,7 +2326,7 @@ mod tests {
     #[tokio::test]
     async fn missing_api_key_is_reported_before_request() {
         let c = cfg(Provider::DeepSeek);
-        // 测试环境没有凭据管理器里的 key，因此这里必然走到 NotConfigured
+        // Explicitly absent credentials: never read or modify the user's keyring.
         let req = ChatRequest {
             config: c.clone(),
             system: None,
@@ -2306,7 +2338,7 @@ mod tests {
             max_output_tokens: None,
             media: vec![],
         };
-        let err = chat(&c, &req).await.unwrap_err();
+        let err = chat_with_api_key(&c, &req, None).await.unwrap_err();
         assert!(
             matches!(err.code, crate::error::ErrorCode::NotConfigured),
             "应报未配置，实际 {:?}：{}",

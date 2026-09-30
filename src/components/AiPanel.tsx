@@ -193,6 +193,8 @@ export function AiPanel() {
         )
       } else if (r.models.length === 0) {
         setModelHint('服务商没有返回任何模型，可直接手动填写模型名称。')
+      } else {
+        setModelHint(`已读取 ${r.models.length} 个可用模型。请从下拉列表选择，保存后生效。`)
       }
     } catch (e) {
       setModelHint(errText(e))
@@ -282,6 +284,12 @@ export function AiPanel() {
                     <option key={m} value={m} />
                   ))}
                 </datalist>
+                {models.length > 0 && (
+                  <select className="input" aria-label="读取到的可用模型" value={models.includes(cfg.model) ? cfg.model : ''} onChange={(e) => patch({ model: e.target.value })}>
+                    <option value="" disabled>选择读取到的模型</option>
+                    {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                )}
               </label>
             </div>
 
@@ -348,13 +356,13 @@ export function AiPanel() {
                   max={32000}
                   value={cfg.maxOutputTokens}
                   onChange={(e) =>
-                    patch({ maxOutputTokens: Number(e.target.value) || 2048 })
+                    patch({ maxOutputTokens: Number(e.target.value) || defaults?.maxOutputTokens || cfg.maxOutputTokens })
                   }
                 />
               </label>
             </div>
             <p className="setgroup__hint">
-              输出上限用于控制单次调用的规模。API 费用由你自己的服务商账户产生，
+              新配置默认 8192，可按长计划、月总结需要提高至 16384 或 32000；上限不是每次必定使用的数量。DeepSeek 使用非思考模式，避免推理耗尽预算而无正文。API 费用由你自己的服务商账户产生，
               Lumen 无法代你计费，也无法限制你的账户支出。
             </p>
 
