@@ -88,7 +88,7 @@ jobs:
           fi
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
-      - name: 构建并发布
+      - name: 构建签名包并保存草稿
         if: steps.guard.outputs.ok == 'true'
         uses: tauri-apps/tauri-action@v1
         env:
@@ -99,19 +99,25 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Lumen ${{ github.ref_name }}'
           releaseBody: |
-            > **从 v0.3.0 或更早版本升级**
-            >
-            > 本版本重置了自动更新签名密钥。
-            > v0.3.0 及更早版本无法通过旧签名链自动安装 v0.4.0。
-            > 请手动下载安装 v0.4.0 一次。
-            > 从 v0.4.0 开始，后续版本恢复应用内自动更新。
-
+            修复含子任务的重复规则无法保存、已完成任务展开编辑过暗。
+            新增 WebDAV 自动同步、继承范围选择与备忘流程版本历史。
+            沿用 v0.4.0 的签名链和本地数据目录，无需重建任务。
             完整更新内容见仓库中的 RELEASE_NOTES.md。安装包、签名与 latest.json 见下方 Assets。
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
+
+      - name: 验证实际安装包签名及篡改拒绝
+        if: steps.guard.outputs.ok == 'true'
+        shell: pwsh
+        run: |
+          [array]$installers = Get-ChildItem -LiteralPath src-tauri/target/release/bundle/nsis -Filter '*_x64-setup.exe'
+          if ($installers.Count -ne 1) { throw '预期恰好一个 NSIS 安装包' }
+          $artifact = $installers[0].FullName
+          node tools/verify-updater-signature.mjs $artifact "$artifact.sig"
+          if ($LASTEXITCODE -ne 0) { throw '安装包验签失败，Release 保持草稿，不发布更新' }
 
       # tauri-action v1 目前把 updater URL 写成 GitHub API asset URL；客户端公开分发
       # 使用无需 API Accept header 的 Releases 匿名直链更稳妥，也与应用 endpoint 约定一致。
@@ -122,6 +128,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --pattern latest.json --clobber
+          if ($LASTEXITCODE -ne 0) { throw '读取 updater manifest 失败' }
           $release = gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --json assets | ConvertFrom-Json
           [array]$installers = $release.assets | Where-Object { $_.name -match '_x64-setup\.exe$' }
           if ($installers.Count -ne 1) {
@@ -132,4 +139,15 @@ jobs:
             --tag=$env:GITHUB_REF_NAME `
             --asset=$($installers[0].name) `
             --path=latest.json
+          if ($LASTEXITCODE -ne 0) { throw '规范 updater manifest 失败' }
           gh release upload $env:GITHUB_REF_NAME latest.json --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw '上传 updater manifest 失败' }
+
+      - name: 发布已验签的 Release
+        if: steps.guard.outputs.ok == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release 发布失败' }

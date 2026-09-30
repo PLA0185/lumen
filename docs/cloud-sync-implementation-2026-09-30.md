@@ -68,3 +68,14 @@ GitHub Runner [36665564712](https://github.com/PLA0185/lumen/actions/runs/366655
 - `src-tauri/src/cloud_sync.rs`、`src-tauri/src/cloud_sync/business.rs`
 - `src-tauri/src/cloud_sync/tests.rs`、`src/components/CloudSettings.tsx`
 - [本轮工作记录](work-log.md)、[更新签名核验](updater-key-verification-2026-09-30.md)
+
+
+## 第 29 轮收尾补充
+
+上一节描述第 28 轮检查点，以下是本轮的新结果：
+
+- 暂存文件加 MOVE 已实现并用真实 HTTP 故障服务验收；目标文件未完整上传时不发布。
+- 完整备份的缓存附件本体已能落回控制目录；损坏历史拒绝并回滚。备份提示已区分缓存文件与原路径依赖。
+- 原生隔离 profile 已实际完成云设置、自动保存、历史恢复及备份恢复检查。
+- 设置入口在新版「设置 → 云同步」，旧版 0.4.0 没有此选项。账户及应用密码只在本机设置中填写，首次创建云空间后保存恢复码，公司电脑连接同一空间并填写恢复码，可选择只继承备忘与流程。
+- 真实坚果云账号、两台实际电脑、发布安装还需要实际验收，不能用本机 HTTP 模拟代替。发布安装结果按本轮工作记录追加。
