@@ -619,12 +619,11 @@ impl From<SeriesSegmentRow> for Segment {
 /// 紧随其后的 `#[tauri::command]` 函数只把它接到 IPC 上。
 ///
 /// 同时创建系列、首个实例（作为后续实例的字段模板）。
-pub async fn create_recurring_impl(
-    state: &AppState,
-    input: CreateRecurringInput,
-) -> AppResult<CreateRecurringResult> {
-    let db = &state.db;
-
+/// 在调用者事务内创建系列与首个发生，AI 批量确认复用同一条数据路径。
+pub(crate) async fn create_recurring_seed_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    input: &CreateRecurringInput,
+) -> AppResult<(String, String, RecurrenceRule)> {
     let title = input.title.trim();
     if title.is_empty() {
         return Err(AppError::validation("标题不能为空"));
@@ -654,8 +653,6 @@ pub async fn create_recurring_impl(
     // 结束条件拆成三列存储，便于查询与校验互斥
     let (end_kind, end_until, end_count) = end_columns(&rule);
 
-    let mut tx = db.pool().begin().await?;
-
     sqlx::query(
         "INSERT INTO task_series
             (id, rrule, tzid, dtstart_local, has_start_time,
@@ -672,7 +669,7 @@ pub async fn create_recurring_impl(
     .bind(end_until)
     .bind(end_count)
     .bind(&now)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     sqlx::query(
@@ -688,7 +685,7 @@ pub async fn create_recurring_impl(
     .bind(input.project_id.as_deref().filter(|s| !s.is_empty()))
     .bind(input.category_id.as_deref().filter(|s| !s.is_empty()))
     .bind(input.estimated_minutes)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // 首个实例：其 occurrence_key 就是首次发生时刻
@@ -727,7 +724,7 @@ pub async fn create_recurring_impl(
     .bind(&series_id)
     .bind(first_occ.index)
     .bind(rule.task_period.as_deref().unwrap_or("none"))
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // 标签
@@ -735,17 +732,25 @@ pub async fn create_recurring_impl(
         sqlx::query("INSERT OR IGNORE INTO task_series_tags (series_id, tag_id) VALUES (?1, ?2)")
             .bind(&series_id)
             .bind(tid)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         sqlx::query("INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (?1, ?2)")
             .bind(&task_id)
             .bind(tid)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
     }
 
-    tx.commit().await?;
+    Ok((series_id, first_utc, rule))
+}
 
+pub async fn create_recurring_impl(
+    state: &AppState,
+    input: CreateRecurringInput,
+) -> AppResult<CreateRecurringResult> {
+    let mut tx = state.db.pool().begin().await?;
+    let (series_id, first_utc, rule) = create_recurring_seed_tx(&mut tx, &input).await?;
+    tx.commit().await?;
     // 物化后续实例（默认 90 天）。
     //
     // 起点必须从**首个发生时刻**起算，而不是 utc_now()：
@@ -1005,8 +1010,8 @@ async fn is_occurrence_rebuild_safe(
              AND NOT EXISTS (SELECT 1 FROM subtasks x WHERE x.task_id = t.id AND (
                  x.is_done != 0 OR x.completed_at IS NOT NULL OR x.created_at != x.updated_at
                  OR NOT EXISTS (SELECT 1 FROM task_series_template st, json_each(st.subtasks_json) j
-                    WHERE st.series_id=t.series_id AND json_extract(j.value,'id')=x.series_template_id
-                    AND json_extract(j.value,'title')=x.title AND json_extract(j.value,'sortOrder')=x.sort_order)))
+                    WHERE st.series_id=t.series_id AND json_extract(j.value,'$.id')=x.series_template_id
+                    AND json_extract(j.value,'$.title')=x.title AND json_extract(j.value,'$.sortOrder')=x.sort_order)))
              AND NOT EXISTS (SELECT 1 FROM attachments x WHERE x.task_id = t.id)
              AND NOT EXISTS (SELECT 1 FROM reminders x WHERE x.task_id = t.id)
              AND NOT EXISTS (SELECT 1 FROM focus_sessions x WHERE x.task_id = t.id)

@@ -1202,6 +1202,77 @@ async fn whole_series_title_survives_prior_segment_and_late_materialization() {
 }
 
 /// 按 occurrence_key 找实例
+#[tokio::test]
+async fn editing_rule_with_untouched_template_subtasks_keeps_customized_children() {
+    use crate::recurrence_subtasks::{change_impl, SubtaskAction, SubtaskChange, SubtaskScope};
+    for scope in [EditScope::WholeSeries, EditScope::ThisAndFuture] {
+        let (state, dir) = setup("rule-template-json-path").await;
+        let created = create_recurring_impl(
+            &state,
+            CreateRecurringInput {
+                title: "关键词更新".into(),
+                description: None,
+                priority: None,
+                project_id: None,
+                category_id: None,
+                estimated_minutes: None,
+                tag_ids: vec![],
+                rrule: "FREQ=DAILY".into(),
+                tzid: Some("UTC".into()),
+                dtstart_local: "2027-01-01T09:00:00".into(),
+                has_start_time: Some(true),
+                due_local: None,
+                materialize_days: Some(10),
+            },
+        )
+        .await
+        .unwrap();
+        let mut tasks = list_instances(&state, &created.series_id).await.unwrap();
+        tasks.sort_by(|a, b| a.occurrence_key.cmp(&b.occurrence_key));
+        let first = &tasks[0];
+        change_impl(
+            &state.db,
+            SubtaskChange {
+                task_id: first.id.clone(),
+                scope: Some(SubtaskScope::WholeSeries),
+                action: SubtaskAction::Create {
+                    title: "CA: 更新关键词".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+        let protected = &tasks[1];
+        sqlx::query("UPDATE subtasks SET title='公司单独修改',updated_at='2027-01-02T10:00:00.000Z' WHERE task_id=?")
+            .bind(&protected.id).execute(state.db.pool()).await.unwrap();
+        edit_instance_impl(
+            &state,
+            first.id.clone(),
+            scope,
+            InstancePatch::default(),
+            Some("FREQ=WEEKLY;BYDAY=MO,WE".into()),
+            false,
+        )
+        .await
+        .expect("含未修改模板子任务也能修改规则");
+        let title: String = sqlx::query_scalar("SELECT title FROM subtasks WHERE task_id=?")
+            .bind(&protected.id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(title, "公司单独修改");
+        let untouched: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subtasks WHERE task_id=?")
+            .bind(&tasks[2].id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(untouched, 0, "可安全重建的实例及子任务应被替换");
+        state.db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+/// 按 occurrence_key 找实例
 async fn find_by_occurrence(state: &AppState, series_id: &str, key: &str) -> Option<Task> {
     list_instances(state, series_id)
         .await
