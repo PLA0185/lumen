@@ -292,4 +292,4 @@ export const tasksInRange = (startUtc: string, endUtc: string): Promise<Calendar
 
 /** 拖拽改期：把任务的计划时间移到新日期（保留原时刻，不影响截止时间） */
 export const rescheduleTask = (id: string, newDateUtc: string): Promise<Task> =>
-  call<Task>(CMD.taskReschedule, { id, newDateUtc })
+  call<Task>(CMD.taskReschedule, { id, newDateUtc, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone })

@@ -32,6 +32,24 @@ async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn data_paths_reports_applied_migrations_instead_of_stale_metadata() {
+    let (state, dir) = setup("schema-version").await;
+    sqlx::query("UPDATE app_meta SET value='4' WHERE key='schema_version'")
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let expected: i64 =
+        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations WHERE success=1")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    let paths = crate::commands::data_paths_impl(&state.db).await.unwrap();
+    assert_eq!(paths.schema_version, expected.to_string());
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn recurring_groups_are_counted_before_paging_and_preserve_occurrences() {
     let (state, dir) = setup("group-series").await;
     let db = &state.db;

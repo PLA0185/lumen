@@ -1768,29 +1768,31 @@ pub async fn tasks_in_range(
 ///   不该因此把任务变成有时刻的）。
 ///
 /// 返回 `(新的 UTC 时间字符串, 是否含具体时刻)`。
-fn compute_rescheduled_at(
+fn compute_rescheduled_at<Tz: chrono::TimeZone>(
     old_planned: Option<&str>,
     old_has_time: i64,
     target: chrono::DateTime<chrono::Utc>,
-) -> (String, bool) {
-    use chrono::Timelike;
-
+    timezone: &Tz,
+) -> AppResult<(String, bool)> {
     let old = old_planned
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|d| d.with_timezone(&chrono::Utc));
 
     match old {
         Some(old_dt) if old_has_time == 1 => {
-            // 把原时刻搬到新日期。用 with_hour/with_minute 逐级设置并兜底，
-            // 避免夏令时切换日出现不存在的本地时刻导致 panic。
-            let moved = target
-                .with_hour(old_dt.hour())
-                .and_then(|d| d.with_minute(old_dt.minute()))
-                .and_then(|d| d.with_second(old_dt.second()))
-                .unwrap_or(target);
-            (to_db_time(moved), true)
+            let local = target
+                .with_timezone(timezone)
+                .date_naive()
+                .and_time(old_dt.with_timezone(timezone).time());
+            let moved = timezone
+                .from_local_datetime(&local)
+                .earliest()
+                .ok_or_else(|| {
+                    AppError::validation("目标日期的这个时刻因夏令时不存在，请选择其它时刻")
+                })?;
+            Ok((to_db_time(moved.with_timezone(&chrono::Utc)), true))
         }
-        _ => (to_db_time(target), false),
+        _ => Ok((to_db_time(target), false)),
     }
 }
 
@@ -1807,6 +1809,7 @@ pub async fn task_reschedule(
     state: State<'_, AppState>,
     id: String,
     new_date_utc: String,
+    time_zone: Option<String>,
 ) -> AppResult<Task> {
     let db = &state.db;
     let existing = get_task_row(db, &id).await?;
@@ -1821,11 +1824,18 @@ pub async fn task_reschedule(
         })?
         .with_timezone(&chrono::Utc);
 
-    let (new_at, has_time) = compute_rescheduled_at(
-        existing.planned_at.as_deref(),
-        existing.has_planned_time,
-        target,
-    );
+    let timezone = time_zone
+        .map(|zone| {
+            zone.parse::<chrono_tz::Tz>()
+                .map_err(|_| AppError::validation("改期时区无效，请使用 IANA 时区名称"))
+        })
+        .transpose()?;
+    let old = existing.planned_at.as_deref();
+    let has_time = existing.has_planned_time;
+    let (new_at, has_time) = match timezone {
+        Some(timezone) => compute_rescheduled_at(old, has_time, target, &timezone)?,
+        None => compute_rescheduled_at(old, has_time, target, &chrono::Local)?,
+    };
 
     let now = to_db_time(utc_now());
     // 改期同样要保证"任务时间与提醒时刻一起落库"（整改任务书 §5）：
@@ -2188,16 +2198,19 @@ pub struct DataPaths {
 /// 查询数据目录与 schema 版本，供设置页展示。
 #[tauri::command]
 pub async fn app_data_paths(state: State<'_, AppState>) -> AppResult<DataPaths> {
-    let db = &state.db;
-    let ver: Option<(String,)> =
-        sqlx::query_as("SELECT value FROM app_meta WHERE key = 'schema_version'")
-            .fetch_optional(db.pool())
+    data_paths_impl(&state.db).await
+}
+
+pub(crate) async fn data_paths_impl(db: &Db) -> AppResult<DataPaths> {
+    let ver: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations WHERE success = 1")
+            .fetch_one(db.pool())
             .await?;
     Ok(DataPaths {
         data_dir: db.data_dir().to_string_lossy().to_string(),
         db_path: db.db_path().to_string_lossy().to_string(),
         backup_dir: db.data_dir().join("backups").to_string_lossy().to_string(),
-        schema_version: ver.map(|v| v.0).unwrap_or_else(|| "未知".into()),
+        schema_version: ver.map(|v| v.to_string()).unwrap_or_else(|| "未知".into()),
     })
 }
 
@@ -2435,19 +2448,30 @@ mod tests {
     /// 这是最容易写错的一点：若丢失时刻，用户会莫名发现任务变成 00:00。
     #[test]
     fn reschedule_preserves_time_of_day() {
-        // 注意时区：北京 10-05 00:00 == UTC 10-04 16:00，
-        // 所以"保留 01:00 时刻"后落在 UTC 的 10-04 01:00
+        // 北京 10-05 的 09:00 必须落在 UTC 10-05 01:00，不能提前一天。
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (got, has_time) = compute_rescheduled_at(Some("2026-09-25T01:00:00.000Z"), 1, target);
+        let (got, has_time) = compute_rescheduled_at(
+            Some("2026-09-25T01:00:00.000Z"),
+            1,
+            target,
+            &chrono_tz::Asia::Shanghai,
+        )
+        .unwrap();
         assert!(has_time, "原任务含具体时刻，改期后仍应含时刻");
-        assert_eq!(got, "2026-10-04T01:00:00.000Z");
+        assert_eq!(got, "2026-10-05T01:00:00.000Z");
     }
 
     /// 仅日期的任务改期后仍是"仅日期"，不能被升级成有时刻。
     #[test]
     fn reschedule_keeps_date_only_unchanged() {
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (got, has_time) = compute_rescheduled_at(Some("2026-09-25T00:00:00.000Z"), 0, target);
+        let (got, has_time) = compute_rescheduled_at(
+            Some("2026-09-25T00:00:00.000Z"),
+            0,
+            target,
+            &chrono_tz::Asia::Shanghai,
+        )
+        .unwrap();
         assert!(!has_time, "原任务是仅日期，改期后仍应是仅日期");
         assert_eq!(
             got, "2026-10-04T16:00:00.000Z",
@@ -2459,7 +2483,7 @@ mod tests {
     #[test]
     fn reschedule_without_previous_plan_marks_date_only() {
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (_, has_time) = compute_rescheduled_at(None, 0, target);
+        let (_, has_time) = compute_rescheduled_at(None, 0, target, &chrono::Utc).unwrap();
         assert!(!has_time, "用户只拖了一下，不应因此把任务变成有时刻");
     }
 
@@ -2472,7 +2496,7 @@ mod tests {
             (Some("2026-09-25T00:00:00.000Z"), 0),
             (None, 0),
         ] {
-            let (got, _) = compute_rescheduled_at(old, ht, target);
+            let (got, _) = compute_rescheduled_at(old, ht, target, &chrono::Utc).unwrap();
             assert_eq!(got.len(), 24, "时间字符串必须固定 24 字符：{got}");
             assert!(got.ends_with('Z'), "必须以 Z 结尾：{got}");
         }
@@ -2482,7 +2506,8 @@ mod tests {
     #[test]
     fn reschedule_handles_malformed_previous_value() {
         let target = utc("2026-10-05T00:00:00+08:00");
-        let (got, has_time) = compute_rescheduled_at(Some("不是时间"), 1, target);
+        let (got, has_time) =
+            compute_rescheduled_at(Some("不是时间"), 1, target, &chrono::Utc).unwrap();
         assert!(!has_time, "无法解析时应回退为仅日期");
         assert_eq!(got.len(), 24);
     }
@@ -2491,7 +2516,37 @@ mod tests {
     #[test]
     fn reschedule_preserves_late_evening_time() {
         let target = utc("2026-12-31T00:00:00Z");
-        let (got, _) = compute_rescheduled_at(Some("2026-09-25T23:30:00.000Z"), 1, target);
+        let (got, _) =
+            compute_rescheduled_at(Some("2026-09-25T23:30:00.000Z"), 1, target, &chrono::Utc)
+                .unwrap();
         assert_eq!(got, "2026-12-31T23:30:00.000Z");
+    }
+
+    #[test]
+    fn reschedule_uses_local_clock_across_dst_and_rejects_nonexistent_time() {
+        let zone = chrono_tz::America::New_York;
+        let (got, _) = compute_rescheduled_at(
+            Some("2026-03-01T14:30:00.000Z"),
+            1,
+            utc("2026-03-09T04:00:00Z"),
+            &zone,
+        )
+        .unwrap();
+        assert_eq!(got, "2026-03-09T13:30:00.000Z");
+        assert!(compute_rescheduled_at(
+            Some("2026-03-01T07:30:00.000Z"),
+            1,
+            utc("2026-03-08T05:00:00Z"),
+            &zone
+        )
+        .is_err());
+        let (got, _) = compute_rescheduled_at(
+            Some("2026-10-25T05:30:00.000Z"),
+            1,
+            utc("2026-11-01T04:00:00Z"),
+            &zone,
+        )
+        .unwrap();
+        assert_eq!(got, "2026-11-01T05:30:00.000Z");
     }
 }
