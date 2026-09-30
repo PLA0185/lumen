@@ -2056,3 +2056,35 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [图片文件与 AI 输入设计](design-content-inputs.md)、[数据结构与正式迁移](data-structure.md)
 - [自动更新地址与实际签名核验](updater-key-verification-2026-09-30.md)
 - [云同步设计及尚未实现部分](design-cloud-sync.md)、[同步接口契约](cloud-sync-api.md)
+
+---
+
+## 第 28 轮阶段记录 · 2026-09-30 · 核验已上传 Secrets，开始 WebDAV 同步实现
+
+### 做了
+
+- 查到第 18 轮上传 Secrets 的记录；GitHub 实际返回两个 updater Secret 名称，均在
+  2026-09-26 配置且未修改。此前只验证本机旧私钥而没有核验 CI 密钥，是核验遗漏。
+- 增加手动触发的签名挑战工作流：只在 Runner 内使用现有 Secrets，签名随机内容后用程序
+  公钥验证，不下载、打印、替换 Secrets，也不发布 Release。
+- 增加独立 Minisign 验证脚本，验证实际内容签名、可信注释与公钥身份，篡改内容必须失败。
+- 用户选择坚果云 WebDAV，并要求借鉴同步与历史回滚分开的方案；实际同步、历史与冲突处理
+  正在实现，首版覆盖备忘、流程及其图片文件。
+
+### 没做到
+
+- 本阶段 Runner 挑战尚待触发，不能只凭 Secret 名称存在认定签名链可用。
+- WebDAV 上传下载、编辑自动保存、历史恢复和并发冲突功能尚未在本阶段交付。
+- 未发布新版；保留原公钥和已有 Secrets，未上传业务数据到 Git / Gitee。
+
+### 怎么验证的
+
+- 实际下载已发布 v0.4.0 安装包及签名：现配置公钥验签成功，修改安装包字节后拒绝。
+- 同一脚本验证本机旧私钥生成的包实际失败，退出码 1，证明检查能区分不同签名链。
+- pnpm lint 实际执行，脚本无错误；已有 QuickAdd defaultRepeat 回调依赖警告将在本轮修复。
+- GitHub Secrets 元数据通过仓库授权读取，只展示名称与时间，未读取明文值。
+
+### 相关文档
+
+- [自动更新核验](updater-key-verification-2026-09-30.md)、[云同步设计](design-cloud-sync.md)
+- [签名核验脚本](../tools/verify-updater-signature.mjs)、[Runner 核验工作流](../.github/workflows/verify-updater.yml)
