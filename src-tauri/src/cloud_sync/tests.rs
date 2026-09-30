@@ -11,6 +11,7 @@ struct Mock {
     url: String,
     files: Arc<Mutex<std::collections::HashMap<String, Vec<u8>>>>,
     fail: Arc<AtomicBool>,
+    partial_put: Arc<AtomicBool>,
 }
 impl Mock {
     fn new() -> Self {
@@ -22,6 +23,8 @@ impl Mock {
         let fail = Arc::new(AtomicBool::new(false));
         let data = files.clone();
         let failure = fail.clone();
+        let partial_put = Arc::new(AtomicBool::new(false));
+        let partial = partial_put.clone();
         std::thread::spawn(move || {
             for socket in listener.incoming() {
                 let Ok(mut socket) = socket else { break };
@@ -70,7 +73,10 @@ impl Mock {
                     match method {
                         "MKCOL" => 201,
                         "PUT" => {
-                            if headers.to_lowercase().contains("if-none-match: *")
+                            if partial.swap(false, Ordering::SeqCst) {
+                                files.insert(path, b"broken partial upload".to_vec());
+                                500
+                            } else if headers.to_lowercase().contains("if-none-match: *")
                                 && files.contains_key(&path)
                             {
                                 412
@@ -83,6 +89,36 @@ impl Mock {
                             if let Some(v) = files.get(&path) {
                                 body = v.clone();
                                 200
+                            } else {
+                                404
+                            }
+                        }
+                        "DELETE" => {
+                            if files.remove(&path).is_some() {
+                                204
+                            } else {
+                                404
+                            }
+                        }
+                        "MOVE" => {
+                            let destination = headers
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_lowercase()
+                                        .starts_with("destination:")
+                                        .then(|| l.split_once(':').unwrap().1.trim())
+                                })
+                                .and_then(|s| reqwest::Url::parse(s).ok())
+                                .unwrap()
+                                .path()
+                                .to_owned();
+                            if headers.to_lowercase().contains("overwrite: f")
+                                && files.contains_key(&destination)
+                            {
+                                412
+                            } else if let Some(value) = files.remove(&path) {
+                                files.insert(destination, value);
+                                201
                             } else {
                                 404
                             }
@@ -109,7 +145,12 @@ impl Mock {
                 socket.write_all(&body).unwrap();
             }
         });
-        Self { url, files, fail }
+        Self {
+            url,
+            files,
+            fail,
+            partial_put,
+        }
     }
     fn dav(&self) -> Dav {
         Dav {
@@ -120,6 +161,35 @@ impl Mock {
             folders: std::sync::Mutex::new(HashSet::new()),
         }
     }
+}
+#[tokio::test]
+async fn interrupted_put_keeps_published_head_and_can_retry() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let a = db().await;
+    mock.files
+        .lock()
+        .unwrap()
+        .insert("/Lumen/head.json".into(), b"published old head".to_vec());
+    mock.partial_put.store(true, Ordering::SeqCst);
+    assert!(dav
+        .put(&a, "head.json", b"new complete head".to_vec())
+        .await
+        .is_err());
+    assert_eq!(
+        mock.files.lock().unwrap().get("/Lumen/head.json").unwrap(),
+        b"published old head"
+    );
+    dav.put(&a, "head.json", b"new complete head".to_vec())
+        .await
+        .unwrap();
+    assert_eq!(
+        mock.files.lock().unwrap().get("/Lumen/head.json").unwrap(),
+        b"new complete head"
+    );
+    let dir = a.data_dir().to_path_buf();
+    a.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
 }
 fn input(title: &str) -> SaveMemoInput {
     SaveMemoInput {

@@ -655,8 +655,11 @@ async fn attachment_download(
         .get("stored_path")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::validation("附件保存路径缺失"))?;
-    let target = db.data_dir().join(stored);
-    let directory = db.data_dir().join("attachments");
+    write_cached_file(db.data_dir(), stored, &bytes)
+}
+fn write_cached_file(dir: &std::path::Path, stored: &str, bytes: &[u8]) -> AppResult<()> {
+    let target = dir.join(stored);
+    let directory = dir.join("attachments");
     std::fs::create_dir_all(&directory)?;
     if target.parent() != Some(directory.as_path()) {
         return Err(AppError::validation("附件保存路径越界"));
@@ -670,8 +673,32 @@ async fn attachment_download(
     } else {
         // Create-new prevents overwriting originals; incomplete files use a unique temporary name.
         let temp = directory.join(format!(".cloud-{}.tmp", uuid::Uuid::now_v7()));
-        std::fs::write(&temp, &bytes)?;
+        std::fs::write(&temp, bytes)?;
         std::fs::rename(&temp, &target)?;
+    }
+    Ok(())
+}
+pub(super) async fn restore_cached_files(
+    conn: &mut SqliteConnection,
+    dir: &std::path::Path,
+) -> AppResult<()> {
+    let rows = sqlx::query(
+        "SELECT a.id,a.file_name,f.body_json FROM attachments a JOIN cloud_files f ON f.id=a.id",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    for row in rows {
+        let id: String = row.get("id");
+        let body: AttachmentBody = decoded(&row.get::<String, _>("body_json"))?;
+        let bytes = validate_file(&body, &id)?;
+        let mut portable =
+            serde_json::json!({"id":id,"file_name":row.get::<String,_>("file_name")});
+        portable_attachment(&mut portable)?;
+        let stored = portable["stored_path"]
+            .as_str()
+            .ok_or_else(|| AppError::internal("恢复附件路径无效"))?;
+        write_cached_file(dir, stored, &bytes)?;
+        sqlx::query("UPDATE attachments SET stored_path=?,external_path=NULL,storage_mode='copied' WHERE id=?").bind(stored).bind(&id).execute(&mut *conn).await?;
     }
     Ok(())
 }

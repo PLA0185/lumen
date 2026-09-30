@@ -5,6 +5,12 @@ import { IpcError } from '../lib/ipc'
 import { CloudHistory } from './CloudHistory'
 const labels: Record<string, string> = { tasks: '任务', subtasks: '子任务', projects: '项目', categories: '分类', tags: '标签', reminders: '提醒', attachments: '附件', task_series: '重复任务', task_series_template: '重复子任务', task_series_segments: '重复规则', task_series_skips: '跳过记录', task_series_rebuilds: '重建记录', task_series_tags: '重复标签', task_tags: '任务标签', task_dependencies: '依赖', focus_sessions: '专注记录', goals: '目标', settings: '业务设置' }
 const message = (e: unknown) => e instanceof IpcError ? e.userMessage() : String(e)
+const fieldLabels: Record<string,string> = { title:'标题',name:'名称',description:'说明',note_md:'备注',body_md:'正文',rrule:'重复规则',tzid:'时区',status:'状态',is_done:'完成状态',planned_at:'计划时间',due_at:'截止时间',completed_at:'完成时间',file_name:'文件名',size_bytes:'文件字节数',priority:'优先级',estimated_minutes:'预计分钟',actual_minutes:'实际分钟',created_at:'创建时间',updated_at:'修改时间' }
+function versionText(row: Record<string, unknown> | null): string {
+  if (!row) return '这个版本删除了记录。'
+  const states: Record<string,string> = { todo:'待办',doing:'进行中',waiting:'等待',done:'已完成',archived:'已归档' }
+  return Object.entries(row).filter(([key,value]) => key in fieldLabels && value != null && value !== '').map(([key,value]) => `${fieldLabels[key]}：${key === 'status' ? states[String(value)] ?? String(value) : key === 'is_done' ? Number(value) ? '已完成' : '未完成' : String(value)}`).join('\n') || '这是归属或关联记录的一个版本；原来的关联仍保留在历史中。'
+}
 export function CloudSettings() {
   const [status, setStatus] = useState<cloud.CloudStatus | null>(null)
   const [form, setForm] = useState({ server: 'https://dav.jianguoyun.com/dav/', account: '', folder: 'Lumen', password: '', recoveryCode: '', inheritAll: true })
@@ -54,7 +60,7 @@ export function CloudSettings() {
         <p className="setgroup__hint">两边内容都已保留。采用一个版本后，另一个仍在历史中。</p>
         {c.versions.map(v => <div key={v.id}>
           <p>{c.heads.includes(v.id) ? '当前候选 · ' : '历史版本 · '}{new Date(v.createdAt).toLocaleString()} · {v.row ? String(v.row.title ?? v.row.name ?? v.row.file_name ?? '记录') : '删除版本'}</p>
-          <details><summary>查看这个版本的详细内容</summary><pre className="selectable cloud-settings__version">{JSON.stringify(v.row, null, 2)}</pre></details>
+          <details><summary>查看这个版本的详细内容</summary><pre className="selectable cloud-settings__version">{versionText(v.row)}</pre></details>
           <button className="btn" disabled={busy} onClick={() => void run(async () => { await cloud.cloudBusinessResolve(c.id, v.id, c.heads) })}>采用这个版本</button>
         </div>)}
       </div>)}

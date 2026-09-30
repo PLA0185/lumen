@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cloudHistory, cloudRestore, type CloudHistory as History } from '../lib/cloud-sync-ipc'
 import { ContentMarkdown } from './ContentMarkdown'
 import { memoMarkdown, type MemoDocument } from '../lib/memos-ipc'
@@ -8,6 +8,27 @@ export function CloudHistory({ id, onClose, onRestored }: { id: string; onClose:
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [choice, setChoice] = useState('')
+  const panel = useRef<HTMLDivElement>(null)
+  const close = useRef(onClose)
+  const pending = useRef(busy)
+  close.current = onClose
+  pending.current = busy
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panel.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const keydown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !pending.current) { e.preventDefault(); close.current(); return }
+      if (e.key !== 'Tab') return
+      const controls = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]') ?? [])
+      if (!controls.length) { e.preventDefault(); panel.current?.focus(); return }
+      const first = controls[0], last = controls[controls.length - 1]
+      if (!first || !last) return
+      if (e.shiftKey && (document.activeElement === first || !panel.current?.contains(document.activeElement))) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && (document.activeElement === last || !panel.current?.contains(document.activeElement))) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', keydown)
+    return () => { document.removeEventListener('keydown', keydown); previous?.focus() }
+  }, [])
   useEffect(() => { let active = true; void cloudHistory(id).then(h => { if (active) { setHistory(h); setChoice(h.heads[0] ?? '') } }).catch(e => { if (active) setError(e instanceof IpcError ? e.userMessage() : String(e)) }); return () => { active = false } }, [id])
   const chosen = history?.versions.find(v => v.id === choice)
   const restore = async (keepBoth: boolean) => {
@@ -18,7 +39,7 @@ export function CloudHistory({ id, onClose, onRestored }: { id: string; onClose:
     finally { setBusy(false) }
   }
   return <div className="cloud-history" role="dialog" aria-modal="true" aria-label="备忘历史与冲突">
-    <div className="cloud-history__panel">
+    <div className="cloud-history__panel" ref={panel} tabIndex={-1}>
       <div className="memos__toolbar"><h2>历史版本与冲突</h2><button className="btn" disabled={busy} onClick={onClose}>关闭历史</button></div>
       {error && <p role="alert" className="alert alert--error">{error}</p>}
       {history ? <>

@@ -429,6 +429,7 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         .fetch_one(&mut *conn)
         .await?
         .try_get("n")?;
+    let cached_count = sync_history.get("cloud_files").map_or(0, Vec::len);
 
     Ok(BackupData {
         sync_history,
@@ -453,7 +454,9 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         focus_sessions: dump_table_from(conn, "focus_sessions").await?,
         goals: dump_table_from(conn, "goals").await?,
 
-        attachments_note: if attachment_count > 0 {
+        attachments_note: if cached_count > 0 {
+            format!("本备份包含 {attachment_count} 条附件记录和 {cached_count} 个云同步缓存文件本体。恢复时会重建已有记录的缓存副本；未缓存的传统附件文件不在备份中，需保留原文件。")
+        } else if attachment_count > 0 {
             format!(
                 "本备份包含 {attachment_count} 条附件记录，但**不包含附件文件本身**。\
                  恢复后附件记录会回来，文件需从原路径重新关联。"
@@ -924,6 +927,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         }
     }
     crate::cloud_sync::prepare_restore(&mut tx, file.format_version).await?;
+    crate::cloud_sync::restore_cached_files(&mut tx, db.data_dir()).await?;
 
     tx.commit().await?;
     log::info!(
@@ -1339,6 +1343,102 @@ fn priority_label(p: i64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn sync_history_backup_restores_files_and_refuses_corrupt_history() {
+        use base64::Engine;
+        use sha2::Digest;
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT INTO task_series_template(series_id,title) VALUES('s1','模板')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let memo = crate::memos::save_impl(
+            &db,
+            crate::memos::SaveMemoInput {
+                id: None,
+                expected_revision: None,
+                title: "家里业务流程".into(),
+                category: "业务".into(),
+                kind: "memo".into(),
+                body_md: "流程正文".into(),
+                steps: vec![],
+            },
+        )
+        .await
+        .unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        let stored = format!("attachments/cloud-{id}.txt");
+        let bytes = b"actual cached attachment";
+        let body = serde_json::json!({"id":id,"data":base64::engine::general_purpose::STANDARD.encode(bytes),"sha256":hex::encode(sha2::Sha256::digest(bytes))});
+        sqlx::query("INSERT INTO attachments(id,task_id,file_name,storage_mode,stored_path,created_at) VALUES(?,'t1','流程.txt','copied',?,'2026-09-30T01:00:00.000Z')").bind(&id).bind(&stored).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO cloud_files(id,body_json) VALUES(?,?)")
+            .bind(&id)
+            .bind(body.to_string())
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR REPLACE INTO memo_sync_runtime(singleton,device_id) VALUES(1,'old-device')",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        let config = serde_json::json!({"server":"https://example.test/dav/","account":"test","folder":"Lumen","connectionId":uuid::Uuid::now_v7().to_string(),"workspaceId":uuid::Uuid::now_v7().to_string(),"enabled":true,"inheritAll":true});
+        sqlx::query("INSERT INTO settings(key,value_json,updated_at) VALUES('memo_cloud_sync',?,'2026-09-30T01:00:00.000Z')").bind(config.to_string()).execute(db.pool()).await.unwrap();
+        let data = build_backup_data(&db).await.unwrap();
+        assert_eq!(data.sync_history["memo_sync_events"].len(), 1);
+        let mut file = BackupFile {
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: "test".into(),
+            created_at: now_stamp(),
+            checksum: checksum_of(&data).unwrap(),
+            stats: data.stats(),
+            note: None,
+            data,
+        };
+        let path = dir.join("history.json");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        assert_eq!(std::fs::read(dir.join(&stored)).unwrap(), bytes);
+        assert_eq!(
+            crate::memos::get_impl(&db, &memo.summary.id)
+                .await
+                .unwrap()
+                .body_md,
+            "流程正文"
+        );
+        let runtime: (String, i64) = sqlx::query_as(
+            "SELECT device_id,restore_pending FROM memo_sync_runtime WHERE singleton=1",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_ne!(runtime.0, "old-device");
+        assert_eq!(runtime.1, 1);
+        let config: String =
+            sqlx::query_scalar("SELECT value_json FROM settings WHERE key='memo_cloud_sync'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&config).unwrap()["enabled"],
+            false
+        );
+        let before = checksum_of(&build_backup_data(&db).await.unwrap()).unwrap();
+        let mut bad = body;
+        bad["sha256"] = serde_json::json!("corrupted");
+        file.data.sync_history.get_mut("cloud_files").unwrap()[0]["body_json"] =
+            serde_json::json!(bad.to_string());
+        file.checksum = checksum_of(&file.data).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        assert!(restore_from(&db, path.to_str().unwrap()).await.is_err());
+        assert_eq!(
+            checksum_of(&build_backup_data(&db).await.unwrap()).unwrap(),
+            before
+        );
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[tokio::test]
     async fn content_resource_backup_roundtrip_includes_bytes_and_refuses_corruption() {
         let (db, dir) = make_db_with_data().await;

@@ -44,6 +44,12 @@ pub const HISTORY_TABLES: [&str; 9] = [
     "cloud_files",
     "cloud_aliases",
 ];
+pub(crate) async fn restore_cached_files(
+    conn: &mut SqliteConnection,
+    dir: &std::path::Path,
+) -> AppResult<()> {
+    business::restore_cached_files(conn, dir).await
+}
 pub async fn prepare_restore(conn: &mut SqliteConnection, format: u32) -> AppResult<()> {
     validate_history(conn).await?;
     let dangling:i64=sqlx::query_scalar("SELECT COUNT(*) FROM memo_documents d WHERE sync_event_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM memo_sync_events e WHERE e.id=d.sync_event_id AND e.memo_id=d.id)").fetch_one(&mut *conn).await?;
@@ -697,15 +703,56 @@ impl Dav {
         }
     }
     async fn put(&self, db: &Db, path: &str, value: Vec<u8>) -> AppResult<()> {
-        let response = self.request(db, "PUT", path, Some(value)).await?;
-        if response.status().is_success() {
+        let status = self.stage(db, path, value, true).await?;
+        if matches!(status, 201 | 204) {
             Ok(())
         } else {
             Err(AppError::new(
                 ErrorCode::Network,
-                format!("上传未成功（HTTP {}）", response.status().as_u16()),
+                format!("上传未成功（HTTP {status}）"),
             ))
         }
+    }
+    async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16> {
+        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let temporary = format!("{}/.lumen-upload-{}.tmp", folder, uuid::Uuid::now_v7());
+        let temporary = temporary.trim_start_matches('/');
+        let response = self.request(db, "PUT_ONCE", temporary, Some(value)).await?;
+        if !response.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                "文件尚未完整上传，本机内容已保留，将重试",
+            ));
+        }
+        let destination = self
+            .root
+            .join(path)
+            .map_err(|_| AppError::validation("发布路径无效"))?
+            .to_string();
+        let status = self
+            .request_headers(
+                db,
+                "MOVE",
+                temporary,
+                None,
+                &[
+                    ("Destination", &destination),
+                    ("Overwrite", if overwrite { "T" } else { "F" }),
+                ],
+            )
+            .await?
+            .status()
+            .as_u16();
+        if !matches!(status, 201 | 204) {
+            let cleanup = self.request(db, "DELETE", temporary, None).await?;
+            if !cleanup.status().is_success() && cleanup.status().as_u16() != 404 {
+                return Err(AppError::new(
+                    ErrorCode::Network,
+                    "上传未发布且暂存文件清理失败，将重试",
+                ));
+            }
+        }
+        Ok(status)
     }
     async fn devices(&self, db: &Db) -> AppResult<Vec<String>> {
         let mut response = self
@@ -951,15 +998,15 @@ pub async fn cloud_sync_connect(
                 "这个 WebDAV 服务没有正确支持不可覆盖创建，不能安全启用同步",
             ));
         }
-        let res = dav
-            .request(
+        let code = dav
+            .stage(
                 db,
-                "PUT_ONCE",
                 "workspace.json",
-                Some(encoded(&workspace)?.into_bytes()),
+                encoded(&workspace)?.into_bytes(),
+                false,
             )
             .await?;
-        if !res.status().is_success() {
+        if !matches!(code, 201 | 204) {
             return Err(AppError::conflict(
                 "同步空间创建未成功，可能已由另一台电脑创建；请填写那台电脑的恢复码再连接",
             ));
@@ -1037,18 +1084,13 @@ async fn upload_immutable<T: Serialize + serde::de::DeserializeOwned>(
         .ok_or_else(|| AppError::internal("资源路径无效"))?
         .0;
     dav.mkdir(db, &format!("{folder}/")).await?;
-    let response = dav
-        .request(
-            db,
-            "PUT_ONCE",
-            path,
-            Some(encrypt(key, &aad(c, path), value)?),
-        )
+    let status = dav
+        .stage(db, path, encrypt(key, &aad(c, path), value)?, false)
         .await?;
-    if response.status().is_success() {
+    if matches!(status, 201 | 204) {
         return Ok(());
     }
-    if response.status().as_u16() == 412 {
+    if status == 412 {
         let bytes = dav
             .read(db, path, max)
             .await?
@@ -1063,7 +1105,7 @@ async fn upload_immutable<T: Serialize + serde::de::DeserializeOwned>(
     }
     Err(AppError::new(
         ErrorCode::Network,
-        format!("云端资源上传失败（HTTP {}）", response.status().as_u16()),
+        format!("云端资源上传失败（HTTP {status}）"),
     ))
 }
 async fn upload(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], device: &str) -> AppResult<()> {
