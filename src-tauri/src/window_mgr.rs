@@ -133,7 +133,7 @@ impl Default for WindowConfig {
             shortcut_toggle: "CmdOrCtrl+Alt+A".to_string(),
             shortcut_quick_add: "CmdOrCtrl+Alt+N".to_string(),
             shortcut_today: "CmdOrCtrl+Alt+D".to_string(),
-            shortcut_floating: "CmdOrCtrl+Alt+Q".to_string(),
+            shortcut_floating: "Alt+Q".to_string(),
         }
     }
 }
@@ -506,6 +506,13 @@ pub async fn window_apply_action(
     state: tauri::State<'_, AppState>,
     action: String,
 ) -> crate::error::AppResult<WindowConfig> {
+    // Two rapid key presses must observe the preceding toggle's actual state.
+    static FLOATING_TOGGLE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _toggle_guard = if action == "toggle_floating" {
+        Some(FLOATING_TOGGLE.lock().await)
+    } else {
+        None
+    };
     let mut cfg = load_config(&state).await?;
 
     match action.as_str() {
@@ -524,6 +531,22 @@ pub async fn window_apply_action(
         }
         "toggle_tray" => cfg.tray_enabled = !cfg.tray_enabled,
         "show_floating" => cfg.floating_enabled = true,
+        "toggle_floating" => {
+            let visible = match app.get_webview_window(FLOATING) {
+                Some(w) => {
+                    w.is_visible().map_err(|e| {
+                        crate::error::AppError::internal(format!("读取悬浮窗状态失败：{e}"))
+                    })? && !w.is_minimized().map_err(|e| {
+                        crate::error::AppError::internal(format!("读取悬浮窗状态失败：{e}"))
+                    })?
+                }
+                None => false,
+            };
+            cfg.floating_enabled = !visible;
+            if cfg.floating_enabled {
+                cfg.floating_click_through = false;
+            }
+        }
         "summon_floating" => {
             cfg.floating_enabled = true;
             cfg.floating_click_through = false;
@@ -531,8 +554,18 @@ pub async fn window_apply_action(
         "hide_floating" => cfg.floating_enabled = false,
         "show_main" => {
             if let Some(w) = app.get_webview_window(MAIN) {
-                let _ = w.show();
-                let _ = w.set_focus();
+                w.show().map_err(|e| {
+                    crate::error::AppError::internal(format!("显示主窗口失败：{e}"))
+                })?;
+                w.unminimize().map_err(|e| {
+                    crate::error::AppError::internal(format!("恢复主窗口失败：{e}"))
+                })?;
+                w.set_focus().map_err(|e| {
+                    crate::error::AppError::internal(format!("聚焦主窗口失败：{e}"))
+                })?;
+                w.as_ref().set_focus().map_err(|e| {
+                    crate::error::AppError::internal(format!("聚焦主窗口内容失败：{e}"))
+                })?;
             }
             return Ok(cfg);
         }
@@ -547,7 +580,7 @@ pub async fn window_apply_action(
 
     // 复用完整设置路径的安全校验
     let cfg = window_set_config(app.clone(), state, cfg).await?;
-    if action == "summon_floating" {
+    if (action == "summon_floating" || action == "toggle_floating") && cfg.floating_enabled {
         let window = app
             .get_webview_window(FLOATING)
             .ok_or_else(|| crate::error::AppError::internal("悬浮窗没有创建成功"))?;
@@ -557,6 +590,10 @@ pub async fn window_apply_action(
         window
             .set_focus()
             .map_err(|e| crate::error::AppError::internal(format!("聚焦悬浮窗失败：{e}")))?;
+        window
+            .as_ref()
+            .set_focus()
+            .map_err(|e| crate::error::AppError::internal(format!("聚焦悬浮窗内容失败：{e}")))?;
     }
     Ok(cfg)
 }

@@ -83,7 +83,7 @@ it('页面在异步监听注册完成前离开，也释放迟到的监听', asyn
 it('窗口设置提供独立的呼出悬浮窗快捷键并保存更改', async () => {
   const setConfig = vi.spyOn(win, 'windowSetConfig').mockImplementation(async (value) => value)
   await mount()
-  const select = document.querySelector<HTMLSelectElement>('[aria-label="呼出悬浮窗快捷键"]')
+  const select = document.querySelector<HTMLSelectElement>('[aria-label="显示 / 隐藏悬浮窗快捷键"]')
   expect(select).not.toBeNull()
   await act(async () => {
     select!.value = 'Alt+Shift+A'

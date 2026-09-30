@@ -95,7 +95,7 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
                         if let Err(e) = crate::window_mgr::window_apply_action(
                             app.clone(),
                             state,
-                            "summon_floating".to_string(),
+                            "toggle_floating".to_string(),
                         )
                         .await
                         {
@@ -149,7 +149,7 @@ mod tests {
         let old = r#"{"shortcutToggle":"Ctrl+Shift+L","floatingWidth":520,"floatingOpacity":0.6}"#;
         let cfg: WindowConfig = serde_json::from_str(old).unwrap();
         let json = serde_json::to_value(cfg).unwrap();
-        assert_eq!(json["shortcutFloating"], "CmdOrCtrl+Alt+Q");
+        assert_eq!(json["shortcutFloating"], "Alt+Q");
         assert_eq!(json["shortcutToggle"], "Ctrl+Shift+L");
         assert_eq!(json["floatingWidth"], 520.0);
         assert_eq!(json["floatingOpacity"], 0.6);

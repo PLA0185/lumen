@@ -111,6 +111,7 @@ export type WindowAction =
   | 'toggle_tray'
   | 'show_floating'
   | 'summon_floating'
+  | 'toggle_floating'
   | 'hide_floating'
   | 'show_main'
 
@@ -160,6 +161,9 @@ export function humanizeAccel(accel: string): string {
  * 实机验证时 Ctrl+Alt+T 就因被占用而注册失败。
  */
 export const SHORTCUT_PRESETS: string[] = [
+  'Alt+Q',
+  'Alt+G',
+  'Alt+J',
   'CmdOrCtrl+Alt+A',
   'CmdOrCtrl+Alt+D',
   'CmdOrCtrl+Alt+N',

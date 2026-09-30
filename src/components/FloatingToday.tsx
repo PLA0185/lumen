@@ -358,7 +358,7 @@ export function FloatingToday() {
         <span className="floating__count">
           {open > 0 ? `${open} 项待办` : total > 0 ? '全部完成 ✓' : '暂无安排'}
         </span>
-        {!clickThrough && (
+        {(
           <span className="floating__tools" data-no-drag>
             <button
               type="button"
@@ -394,9 +394,11 @@ export function FloatingToday() {
             </button>
             <button
               type="button"
-              className="floating__btn"
-              title="开启鼠标穿透（开启后本窗口不可点击，需从托盘或设置关闭）"
-              aria-label="开启鼠标穿透"
+              className={`floating__btn${clickThrough ? ' floating__btn--on' : ''}`}
+              aria-pressed={clickThrough}
+              disabled={clickThrough}
+              title={clickThrough ? '鼠标穿透已开启；可从托盘或设置关闭，重新呼出也会关闭穿透' : '开启鼠标穿透（开启后需从托盘或设置关闭）'}
+              aria-label={clickThrough ? '鼠标穿透已开启' : '开启鼠标穿透'}
               onClick={() => void act('toggle_floating_click_through')}
             >
               <Icon name="ban" size={15} />

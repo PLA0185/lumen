@@ -537,7 +537,7 @@ function WindowOptions() {
                 ['shortcutToggle', '打开/隐藏主窗口'],
                 ['shortcutQuickAdd', '快速添加'],
                 ['shortcutToday', '今日概览'],
-                ['shortcutFloating', '呼出悬浮窗'],
+                ['shortcutFloating', '显示 / 隐藏悬浮窗'],
               ] as const
             ).map(([key, label]) => (
               <div className="setrow" key={key}>

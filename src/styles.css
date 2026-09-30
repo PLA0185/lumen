@@ -2976,9 +2976,12 @@ body[data-window='quick-add'] {
 
 /* 置顶开启时给按钮一个明确的高亮态，避免"看不出现在是不是置顶" */
 .floating__btn--on {
-  color: var(--c-accent);
-  background: var(--c-accent-soft);
+  color: #22c55e;
+  background: var(--c-ok-soft);
 }
+
+.floating__btn[aria-pressed="false"] { color: #88919f; }
+.floating__btn[aria-pressed="true"] { color: #22c55e; opacity: 1; }
 
 .content-editor { width: 100%; min-width: 0; }
 .content-editor textarea { width: 100%; }
