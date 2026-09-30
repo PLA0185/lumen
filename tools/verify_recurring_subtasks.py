@@ -128,6 +128,6 @@ check('折叠简览也显示完成时间', main.wait_for(f'document.querySelecto
 backup = invoke('backup_export', {'path': str(args.output_dir / 'subtasks-native.lumen-backup.json')})
 check('正式备份写入真实文件', Path(backup['path']).is_file())
 data = json.loads(Path(backup['path']).read_text(encoding='utf-8'))
-check('备份格式 4 带子任务模板', data['formatVersion'] == 4 and any(json.loads(t['subtasks_json']) for t in data['data']['seriesTemplates']))
+check('备份格式 5 带子任务模板', data['formatVersion'] == 5 and any(json.loads(t['subtasks_json']) for t in data['data']['seriesTemplates']))
 (args.output_dir / 'recurring-subtasks-native.json').write_text(json.dumps({'passed': len(checks), 'checks': checks}, ensure_ascii=False, indent=2), encoding='utf-8')
 main.close()

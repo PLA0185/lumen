@@ -1,7 +1,6 @@
+import { ContentEditor } from './ContentEditor'
+import { ContentMarkdown } from './ContentMarkdown'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeSanitize from 'rehype-sanitize'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import * as memo from '../lib/memos-ipc'
 import { IpcError } from '../lib/ipc'
@@ -392,7 +391,7 @@ export function MemosView({
                   </label>
                   <label>
                     内容 / 流程说明
-                    <textarea
+                    <ContentEditor
                       className="input selectable"
                       aria-label="备忘内容"
                       value={draft.bodyMd}
@@ -435,7 +434,7 @@ export function MemosView({
                               patchStep(i, { owner: e.target.value })
                             }
                           />
-                          <textarea
+                          <ContentEditor
                             className="input selectable"
                             aria-label={`第 ${i + 1} 步说明`}
                             maxLength={5000}
@@ -512,12 +511,9 @@ export function MemosView({
                     </p>
                   )}
                   <div className="mdpreview">
-                    <Markdown
-                      remarkPlugins={[remarkGfm]}
-                      rehypePlugins={[rehypeSanitize]}
-                    >
+                    <ContentMarkdown>
                       {draft.bodyMd || '暂无补充说明。'}
-                    </Markdown>
+                    </ContentMarkdown>
                   </div>
                   {draft.kind === 'flow' && (
                     <ol className="memos__flow" aria-label="业务流程路线">
@@ -532,12 +528,9 @@ export function MemosView({
                               </p>
                             )}
                             <div className="mdpreview">
-                              <Markdown
-                                remarkPlugins={[remarkGfm]}
-                                rehypePlugins={[rehypeSanitize]}
-                              >
+                              <ContentMarkdown>
                                 {step.detail}
-                              </Markdown>
+                              </ContentMarkdown>
                             </div>
                           </div>
                         </li>

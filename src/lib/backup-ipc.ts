@@ -21,6 +21,7 @@ export interface BackupStats {
   segments: number
   settings: number
   memoDocuments: number
+  contentAssets?: number
   seriesTemplates: number
   seriesTags: number
   seriesSkips: number

@@ -2980,6 +2980,12 @@ body[data-window='quick-add'] {
   background: var(--c-accent-soft);
 }
 
+.content-editor { width: 100%; min-width: 0; }
+.content-editor textarea { width: 100%; }
+.content-editor__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
+.content-asset { display: inline-flex; flex-direction: column; max-width: 100%; gap: 4px; }
+.content-asset__image { max-width: 100%; max-height: 500px; object-fit: contain; border-radius: 5px; }
+
 /* 顶栏按钮区：整栏是拖动区，但按钮本身不能起拖 */
 .floating__tools {
   display: flex;

@@ -8,7 +8,8 @@
 //! - **恢复是整体替换而非合并**：语义明确、可预期。合并策略容易产生
 //!   难以解释的重复项，而任务书要求"冲突时不静默覆盖数据"——替换是有提示的，
 //!   合并没有提示才是危险的。
-//! - **附件不入 JSON**：JSON 不适合容纳二进制。备份文件里只存附件清单
+//! - 内容编辑器导入的图片 / 文件本体随格式 5 备份保存；传统任务附件仍只存清单。
+//! - **传统附件不入 JSON**：JSON 不适合容纳二进制。备份文件里只存附件清单
 //!   （文件名、大小、哈希、原路径），并在导出结果中明确告知用户附件未包含，
 //!   而不是假装备份完整。
 //! - **导出 CSV / Markdown**：供人类阅读与其他工具导入。
@@ -31,7 +32,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 4;
+pub const BACKUP_FORMAT_VERSION: u32 = 5;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -100,6 +101,8 @@ pub struct BackupStats {
     pub settings: usize,
     #[serde(default)]
     pub memo_documents: usize,
+    #[serde(default)]
+    pub content_assets: usize,
 }
 
 /// 备份承载的数据。全部使用 `serde_json::Value` 行式存储，
@@ -126,6 +129,8 @@ pub struct BackupData {
     // 空集合不参与序列化，保留格式 1 备份的原校验和。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub memo_documents: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_assets: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub series_templates: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -156,6 +161,7 @@ impl BackupData {
             segments: self.segments.len(),
             settings: self.settings.len(),
             memo_documents: self.memo_documents.len(),
+            content_assets: self.content_assets.len(),
             series_templates: self.series_templates.len(),
             series_tags: self.series_tags.len(),
             series_skips: self.series_skips.len(),
@@ -273,6 +279,7 @@ async fn dump_table_from(
         "task_series_segments" => "SELECT * FROM task_series_segments",
         "settings" => "SELECT * FROM settings",
         "memo_documents" => "SELECT * FROM memo_documents",
+        "content_assets" => "SELECT * FROM content_assets",
         "task_series_template" => "SELECT * FROM task_series_template",
         "task_series_tags" => "SELECT * FROM task_series_tags",
         "task_series_skips" => "SELECT * FROM task_series_skips",
@@ -356,6 +363,7 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
             (SELECT COUNT(*) FROM task_series_segments) AS segments,
             (SELECT COUNT(*) FROM settings) AS settings,
             (SELECT COUNT(*) FROM memo_documents) AS memo_documents,
+            (SELECT COUNT(*) FROM content_assets) AS content_assets,
             (SELECT COUNT(*) FROM task_series_template) AS series_templates,
             (SELECT COUNT(*) FROM task_series_tags) AS series_tags,
             (SELECT COUNT(*) FROM task_series_skips) AS series_skips,
@@ -380,6 +388,7 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
         segments: row.try_get::<i64, _>("segments")? as usize,
         settings: row.try_get::<i64, _>("settings")? as usize,
         memo_documents: row.try_get::<i64, _>("memo_documents")? as usize,
+        content_assets: row.try_get::<i64, _>("content_assets")? as usize,
         series_templates: row.try_get::<i64, _>("series_templates")? as usize,
         series_tags: row.try_get::<i64, _>("series_tags")? as usize,
         series_skips: row.try_get::<i64, _>("series_skips")? as usize,
@@ -417,6 +426,7 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         segments: dump_table_from(conn, "task_series_segments").await?,
         settings: dump_table_from(conn, "settings").await?,
         memo_documents: dump_table_from(conn, "memo_documents").await?,
+        content_assets: dump_table_from(conn, "content_assets").await?,
         series_templates: dump_table_from(conn, "task_series_template").await?,
         series_tags: dump_table_from(conn, "task_series_tags").await?,
         series_skips: dump_table_from(conn, "task_series_skips").await?,
@@ -549,6 +559,32 @@ fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
             if let Err(error) = crate::recurrence_subtasks::parse_templates(raw) {
                 issues.push(error.to_string());
             }
+        }
+    }
+    for row in &file.data.content_assets {
+        let mut value = row.clone();
+        // Backup rows use SQL column names; IPC uses camelCase.
+        if let Some(obj) = value.as_object_mut() {
+            for (from, to) in [
+                ("data_base64", "dataBase64"),
+                ("byte_size", "byteSize"),
+                ("created_at", "createdAt"),
+            ] {
+                if let Some(v) = obj.remove(from) {
+                    obj.insert(to.into(), v);
+                }
+            }
+        }
+        match serde_json::from_value::<crate::content_assets::ContentAsset>(value) {
+            Ok(asset) => {
+                if uuid::Uuid::parse_str(&asset.id).is_err() {
+                    issues.push("内容资源编号无效".into());
+                }
+                if let Err(e) = crate::content_assets::decode_asset(&asset) {
+                    issues.push(e.to_string());
+                }
+            }
+            Err(_) => issues.push("备份内容资源缺少有效字段".into()),
         }
     }
     Ok(issues)
@@ -773,6 +809,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         "projects",
         "settings",
         "memo_documents",
+        "content_assets",
     ] {
         // 表名来自上面这个内部字面量数组，非用户输入
         let sql = format!("DELETE FROM {t}");
@@ -782,7 +819,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
     }
 
     // 插入顺序与外键方向一致：父表先插
-    let plan: [(&str, &[serde_json::Value]); 19] = [
+    let plan: [(&str, &[serde_json::Value]); 20] = [
         ("projects", &file.data.projects),
         ("categories", &file.data.categories),
         ("tags", &file.data.tags),
@@ -800,6 +837,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         ("attachments", &file.data.attachments),
         ("settings", &file.data.settings),
         ("memo_documents", &file.data.memo_documents),
+        ("content_assets", &file.data.content_assets),
         ("focus_sessions", &file.data.focus_sessions),
         ("goals", &file.data.goals),
     ];
@@ -830,6 +868,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
             "attachments" => imported.attachments = n,
             "settings" => imported.settings = n,
             "memo_documents" => imported.memo_documents = n,
+            "content_assets" => imported.content_assets = n,
             "task_series_template" => imported.series_templates = n,
             "task_series_tags" => imported.series_tags = n,
             "task_series_skips" => imported.series_skips = n,
@@ -1255,6 +1294,68 @@ fn priority_label(p: i64) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn content_resource_backup_roundtrip_includes_bytes_and_refuses_corruption() {
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT INTO task_series_template (series_id,title) VALUES ('s1','template')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let asset = crate::content_assets::store_bytes(
+            &db,
+            "manual.txt",
+            "流程正文与附件".as_bytes().to_vec(),
+        )
+        .await
+        .unwrap();
+        let link = format!("[操作说明](lumen-asset:{})", asset.id);
+        sqlx::query("UPDATE tasks SET description=? WHERE id='t1'")
+            .bind(&link)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let data = build_backup_data(&db).await.unwrap();
+        assert_eq!(data.content_assets.len(), 1);
+        let mut file = BackupFile {
+            format_version: 5,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            created_at: now_stamp(),
+            checksum: checksum_of(&data).unwrap(),
+            stats: data.stats(),
+            note: None,
+            data,
+        };
+        let path = dir.join("media.lumen-backup.json");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        sqlx::query("DELETE FROM content_assets")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let restored = restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        assert_eq!(restored.imported.content_assets, 1);
+        let loaded = crate::content_assets::get_asset(&db, &asset.id)
+            .await
+            .unwrap();
+        assert_eq!(loaded.data_base64, asset.data_base64);
+        let description: String = sqlx::query_scalar("SELECT description FROM tasks WHERE id='t1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(description, link);
+        file.data.content_assets[0]["data_base64"] = serde_json::json!("YQ==");
+        file.checksum = checksum_of(&file.data).unwrap(); // even a recomputed outer checksum cannot conceal bad bytes
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        assert!(restore_from(&db, path.to_str().unwrap()).await.is_err());
+        assert_eq!(
+            crate::content_assets::get_asset(&db, &asset.id)
+                .await
+                .unwrap()
+                .sha256,
+            asset.sha256
+        );
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn status_labels_cover_all_five_states() {
@@ -1679,6 +1780,7 @@ mod tests {
             "projects",
             "settings",
             "memo_documents",
+            "content_assets",
         ] {
             let sql = format!("DELETE FROM {t}");
             sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -1694,7 +1796,7 @@ mod tests {
 
         // 恢复：走与命令相同的插入路径
         let mut tx = db.pool().begin().await.unwrap();
-        let plan: [(&str, &[serde_json::Value]); 13] = [
+        let plan: [(&str, &[serde_json::Value]); 14] = [
             ("projects", &data.projects),
             ("categories", &data.categories),
             ("tags", &data.tags),
@@ -1708,6 +1810,7 @@ mod tests {
             ("attachments", &data.attachments),
             ("settings", &data.settings),
             ("memo_documents", &data.memo_documents),
+            ("content_assets", &data.content_assets),
         ];
         for (table, rows) in plan.iter() {
             let cols = table_columns(&db, table).await.unwrap();
@@ -2004,6 +2107,7 @@ mod tests {
             segments: vec![],
             settings: vec![],
             memo_documents: vec![],
+            content_assets: vec![],
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2034,6 +2138,7 @@ mod tests {
             segments: vec![],
             settings: vec![],
             memo_documents: vec![],
+            content_assets: vec![],
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2067,6 +2172,7 @@ mod tests {
             segments: vec![],
             settings: vec![],
             memo_documents: vec![],
+            content_assets: vec![],
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2100,6 +2206,7 @@ mod tests {
             segments: vec![],
             settings: vec![],
             memo_documents: vec![],
+            content_assets: vec![],
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2145,6 +2252,7 @@ mod tests {
                 segments: vec![],
                 settings: vec![],
                 memo_documents: vec![],
+                content_assets: vec![],
                 series_templates: vec![],
                 series_tags: vec![],
                 series_skips: vec![],

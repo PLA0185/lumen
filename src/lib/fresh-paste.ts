@@ -83,14 +83,14 @@ export function installFreshPaste(
     )
       return
     const field = textField(event.target)
-    if (!field) return
+    if (!field || field.dataset.contentEditor === 'true') return
     event.preventDefault()
     if (!event.repeat) void paste(field)
   }
   const onPaste = (event: ClipboardEvent) => {
     if (event.defaultPrevented) return
     const field = textField(event.target)
-    if (!field) return
+    if (!field || field.dataset.contentEditor === 'true') return
     event.preventDefault()
     void paste(field)
   }

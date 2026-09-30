@@ -517,6 +517,8 @@ pub struct ChatRequest {
     /// 本次调用的输出上限（覆盖配置值）
     #[serde(default)]
     pub max_output_tokens: Option<i64>,
+    #[serde(default)]
+    pub media: Vec<crate::content_assets::ContentAsset>,
 }
 
 /// 调用结果
@@ -790,7 +792,7 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
         messages.push(serde_json::json!({ "role": "system", "content": sys }));
     }
     for m in &req.messages {
-        messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
+        messages.push(serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }));
     }
 
     let max_tokens = req
@@ -831,7 +833,7 @@ fn build_openai_responses_body(req: &ChatRequest) -> serde_json::Value {
         .messages
         .iter()
         .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .map(|m| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }))
         .collect();
 
     let max_tokens = req
@@ -871,7 +873,7 @@ fn build_anthropic_body(req: &ChatRequest) -> serde_json::Value {
         // Anthropic 的 messages 只有 user/assistant 两种 role；
         // 历史里若混入 system 会被拒绝，这里统一跳过。
         .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+        .map(|m| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }))
         .collect();
 
     let max_tokens = req
@@ -1115,6 +1117,7 @@ fn parse_anthropic_response(v: &serde_json::Value) -> AppResult<ChatResponse> {
 pub async fn chat(cfg: &ProviderConfig, req: &ChatRequest) -> AppResult<ChatResponse> {
     // 真正发请求：这里必须严格校验，包括模型已选定（§3.5 场景 C）
     cfg.validate_for_run()?;
+    crate::ai_media::validate_media(cfg.provider, &req.media)?;
 
     let api_key = load_api_key(cfg.provider)?.ok_or_else(|| {
         AppError::new(
@@ -1189,6 +1192,7 @@ pub async fn test_connection(cfg: &ProviderConfig) -> AppResult<String> {
         }],
         json_output: false,
         max_output_tokens: Some(32),
+        media: vec![],
     };
 
     let r = chat(cfg, &req).await?;
@@ -1490,6 +1494,7 @@ mod provider_matrix_tests {
                 }],
                 json_output: false,
                 max_output_tokens: None,
+                media: vec![],
             };
             let body = if c.anthropic_style {
                 build_anthropic_body(&req)
@@ -1575,6 +1580,48 @@ mod tests {
             }],
             json_output: false,
             max_output_tokens: None,
+            media: vec![],
+        }
+    }
+
+    #[test]
+    fn selected_image_reaches_each_real_wire_serializer() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use sha2::{Digest, Sha256};
+        let bytes = b"\x89PNG\r\n\x1a\nselected-image";
+        let image = crate::content_assets::ContentAsset {
+            id: uuid::Uuid::now_v7().to_string(),
+            name: "selected.png".into(),
+            mime: "image/png".into(),
+            data_base64: STANDARD.encode(bytes),
+            byte_size: bytes.len() as i64,
+            sha256: hex::encode(Sha256::digest(bytes)),
+            created_at: crate::db::now_stamp(),
+        };
+        for provider in [
+            Provider::OpenAI,
+            Provider::Claude,
+            Provider::DeepSeek,
+            Provider::Custom,
+        ] {
+            let mut req = sample_req(provider);
+            req.media.push(image.clone());
+            crate::ai_media::validate_media(provider, &req.media).unwrap();
+            let body = match provider {
+                Provider::OpenAI => build_openai_responses_body(&req),
+                Provider::Claude => build_anthropic_body(&req),
+                _ => build_openai_body(&req),
+            };
+            let content = if provider == Provider::OpenAI {
+                &body["input"][0]["content"]
+            } else if provider == Provider::Claude {
+                &body["messages"][0]["content"]
+            } else {
+                &body["messages"][1]["content"]
+            };
+            assert_eq!(content.as_array().unwrap().len(), 2);
+            assert!(content[1].to_string().contains(&image.data_base64));
+            assert!(body["model"].is_string());
         }
     }
 
@@ -1967,6 +2014,7 @@ mod tests {
             }],
             json_output: true,
             max_output_tokens: Some(128),
+            media: vec![],
         };
 
         // --- OpenAI Responses ---
@@ -2256,6 +2304,7 @@ mod tests {
             }],
             json_output: false,
             max_output_tokens: None,
+            media: vec![],
         };
         let err = chat(&c, &req).await.unwrap_err();
         assert!(

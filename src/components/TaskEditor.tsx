@@ -1,3 +1,5 @@
+import { ContentEditor } from './ContentEditor'
+import { ContentMarkdown } from './ContentMarkdown'
 /**
  * 任务编辑对话框（任务书 §4.1 完整字段集）。
  *
@@ -21,9 +23,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import Markdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import rehypeSanitize from 'rehype-sanitize'
 import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
@@ -351,9 +350,9 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
     () =>
       noteMd.trim() ? (
         <div className="mdpreview selectable">
-          <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+          <ContentMarkdown>
             {noteMd}
-          </Markdown>
+          </ContentMarkdown>
         </div>
       ) : (
         <p className="setgroup__hint">还没有填写备注。</p>
@@ -414,7 +413,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           <label className="formlabel" htmlFor="ed-desc">
             任务描述
           </label>
-          <textarea
+          <ContentEditor
             id="ed-desc"
             className="input input--area selectable"
             rows={5}
@@ -783,7 +782,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
           {showPreview ? (
             preview
           ) : (
-            <textarea
+            <ContentEditor
               className="input input--area input--code selectable"
               rows={6}
               value={noteMd}

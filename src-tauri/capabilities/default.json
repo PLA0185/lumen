@@ -42,6 +42,7 @@
     "log:default",
     "updater:default",
     "process:default",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-read-image"
   ]
 }

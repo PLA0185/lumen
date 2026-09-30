@@ -24,11 +24,13 @@
 
 pub mod ai;
 pub mod ai_features;
+pub mod ai_media;
 pub mod attachments;
 pub mod backup;
 pub mod commands;
 #[cfg(test)]
 mod commands_e2e;
+pub mod content_assets;
 pub mod db;
 pub mod error;
 pub mod focus;
@@ -291,6 +293,10 @@ pub fn run() {
             commands::ping,
             commands::app_info,
             commands::app_data_paths,
+            content_assets::content_asset_import,
+            content_assets::content_asset_import_path,
+            content_assets::content_asset_get,
+            content_assets::content_asset_export,
             commands::task_create,
             commands::task_update,
             commands::task_save,

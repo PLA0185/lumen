@@ -236,11 +236,15 @@ export const aiStatus = (): Promise<AiStatus> => call(AI_CMD.status)
 
 // ------------------------- 四项能力（都只返回预览） -------------------------
 
+export function inputAssetIds(text: string): string[] {
+  return [...new Set([...text.matchAll(/lumen-asset:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\))/gi)].map((m) => m[1]!))]
+}
+
 export const aiOrganize = (
   config: ProviderConfig,
   text: string,
   sendNotes = false,
-): Promise<DiffPreview> => call(AI_CMD.organize, { config, input: { text, sendNotes } })
+): Promise<DiffPreview> => call(AI_CMD.organize, { config, input: { text, sendNotes, assetIds: inputAssetIds(text) } })
 
 export const aiBreakdown = (
   config: ProviderConfig,
@@ -255,10 +259,11 @@ export const aiPlan = (
   minutesPerDay: number,
   taskIds?: string[],
   sendNotes = false,
+  text = '',
 ): Promise<DiffPreview> =>
   call(AI_CMD.plan, {
     config,
-    input: { horizon, minutesPerDay, taskIds: taskIds ?? null, sendNotes },
+    input: { horizon, minutesPerDay, taskIds: taskIds ?? null, sendNotes, text, assetIds: inputAssetIds(text) },
   })
 
 export type ReviewHorizon = 'daily' | 'weekly' | 'monthly' | 'yearly'
@@ -267,7 +272,7 @@ export const aiReview = (
   horizon: ReviewHorizon,
   anchorDate?: string,
   text?: string,
-): Promise<ReviewResult> => call(AI_CMD.review, { config, input: { horizon, anchorDate, text } })
+): Promise<ReviewResult> => call(AI_CMD.review, { config, input: { horizon, anchorDate, text, assetIds: inputAssetIds(text ?? '') } })
 
 /**
  * 确认写入。

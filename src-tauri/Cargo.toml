@@ -103,6 +103,7 @@ regex = "1"
 # 文件哈希与校验：备份完整性（§9 "附带版本号和校验"）
 sha2 = "0.10"
 hex = "0.4"
+base64 = "0.22"
 tauri-plugin-updater = { version = "2", features = ["rustls-tls"] }
 tauri-plugin-process = "2"
 tauri-plugin-clipboard-manager = "2"

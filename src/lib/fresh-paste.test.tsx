@@ -54,6 +54,15 @@ async function key(field: HTMLInputElement, shiftKey = false) {
 }
 
 describe('手动粘贴读取当前系统剪贴板', () => {
+  it('交给内容编辑器处理图片，文本拦截器不能吞掉粘贴事件', async () => {
+    const read = vi.fn().mockResolvedValue('旧文本')
+    const { field } = await setup(read)
+    field.dataset.contentEditor = 'true'
+    const event = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true })
+    field.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(read).not.toHaveBeenCalled()
+  })
   it('Ctrl+V 与 Ctrl+Shift+V 都替换选择范围，每次重新读取并更新 React 状态', async () => {
     const read = vi
       .fn()

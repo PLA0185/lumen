@@ -13,6 +13,13 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { inputAssetIds } from './ai-ipc'
+
+it('AI 只选择当前输入引用的有效资源，不发送其他备忘或重复引用', () => {
+  const id = '00000000-0000-7000-8000-000000000001'
+  expect(inputAssetIds(`![图片](lumen-asset:${id}) [重复](lumen-asset:${id}) [坏链接](lumen-asset:no-id)`)).toEqual([id])
+  expect(inputAssetIds('这段文本没有选任何文件')).toEqual([])
+})
 import {
   configForProvider,
   configFromDefaults,

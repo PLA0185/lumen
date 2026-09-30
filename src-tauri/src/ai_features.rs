@@ -829,6 +829,8 @@ fn scope_note(send_notes: bool, count: usize) -> String {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrganizeInput {
+    #[serde(default)]
+    pub asset_ids: Vec<String>,
     /// 用户自由输入的文本（如一段会议记录）
     pub text: String,
     /// 是否发送已有任务的备注（默认否）
@@ -853,8 +855,10 @@ pub async fn ai_organize(
     input: OrganizeInput,
 ) -> AppResult<DiffPreview> {
     let text = input.text.trim();
-    if text.is_empty() {
-        return Err(AppError::validation("请先输入需要整理的文本"));
+    if text.is_empty() && input.asset_ids.is_empty() {
+        return Err(AppError::validation(
+            "请先输入文本或添加需要分析的图片、文件",
+        ));
     }
     if text.chars().count() > 20_000 {
         return Err(AppError::validation(
@@ -872,6 +876,7 @@ pub async fn ai_organize(
         text
     );
 
+    let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
     let resp = ai::chat(
         &config,
         &ChatRequest {
@@ -883,6 +888,7 @@ pub async fn ai_organize(
             }],
             json_output: true,
             max_output_tokens: None,
+            media,
         },
     )
     .await?;
@@ -929,7 +935,11 @@ pub async fn ai_organize(
         issues,
         resp.text,
         resp.usage,
-        scope_note(input.send_notes, brief.len()),
+        format!(
+            "{}；另发送当前输入选择的 {} 个图片 / 文件内容。",
+            scope_note(input.send_notes, brief.len()),
+            input.asset_ids.len()
+        ),
     )
 }
 
@@ -999,6 +1009,7 @@ pub async fn ai_breakdown(
             }],
             json_output: true,
             max_output_tokens: None,
+            media: vec![],
         },
     )
     .await?;
@@ -1109,6 +1120,10 @@ pub async fn ai_breakdown(
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanInput {
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub asset_ids: Vec<String>,
     /// daily = 一天；weekly = 一周
     pub horizon: String,
     /// 每天可用的分钟数（用于约束总量）
@@ -1193,6 +1208,12 @@ pub async fn ai_plan(
         "currentDateTime": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
     });
 
+    let extra = input.text.as_deref().unwrap_or("");
+    if extra.chars().count() > 20_000 {
+        return Err(AppError::validation("补充说明超过 20000 字"));
+    }
+    let user = format!("{user}\n用户补充说明：{extra}");
+    let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
     let resp = ai::chat(
         &config,
         &ChatRequest {
@@ -1204,6 +1225,7 @@ pub async fn ai_plan(
             }],
             json_output: true,
             max_output_tokens: None,
+            media,
         },
     )
     .await?;
@@ -1291,7 +1313,11 @@ pub async fn ai_plan(
         issues,
         resp.text,
         resp.usage,
-        scope_note(input.send_notes, brief.len()),
+        format!(
+            "{}；另发送当前输入选择的 {} 个图片 / 文件内容。",
+            scope_note(input.send_notes, brief.len()),
+            input.asset_ids.len()
+        ),
     )
 }
 
@@ -1303,6 +1329,8 @@ pub async fn ai_plan(
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewInput {
+    #[serde(default)]
+    pub asset_ids: Vec<String>,
     /// daily / weekly / monthly / yearly
     pub horizon: String,
     #[serde(default)]
@@ -1396,6 +1424,7 @@ pub async fn ai_review(
         "data": stats,
     });
 
+    let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
     let resp = ai::chat(
         &config,
         &ChatRequest {
@@ -1407,6 +1436,7 @@ pub async fn ai_review(
             }],
             json_output: false,
             max_output_tokens: None,
+            media,
         },
     )
     .await?;
@@ -1417,12 +1447,13 @@ pub async fn ai_review(
         stats,
         usage: resp.usage,
         data_scope_note: format!(
-            "发送 {range} 的聚合统计（数量、完成率、耗时等）{}；不自动发送任务标题、正文或附件。",
+            "发送 {range} 的聚合统计（数量、完成率、耗时等）{}，以及当前输入选择的 {} 个图片 / 文件；不自动发送其他任务正文或附件。",
             if text.is_empty() {
                 ""
             } else {
                 "及用户提供的文本"
-            }
+            },
+            input.asset_ids.len()
         ),
     })
 }

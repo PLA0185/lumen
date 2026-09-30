@@ -19,6 +19,7 @@
     "core:window:allow-outer-size",
     "core:window:allow-scale-factor",
     "log:default",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-read-image"
   ]
 }

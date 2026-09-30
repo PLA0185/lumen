@@ -1,3 +1,4 @@
+import { ContentEditor } from './ContentEditor'
 /**
  * 快速添加表单（§4.4）。
  *
@@ -413,7 +414,7 @@ export function QuickAdd({
       {optionsOpen && (
         <label className="formrow">
           <span className="formlabel">任务描述</span>
-          <textarea
+          <ContentEditor
             className="input input--area selectable"
             rows={3}
             value={description}

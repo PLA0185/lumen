@@ -1,3 +1,4 @@
+import { ContentEditor } from './ContentEditor'
 import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import * as ai from '../lib/ai-ipc'
@@ -22,7 +23,6 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
   const running = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [filename, setFilename] = useState('')
   const pushToast = useApp((s) => s.pushToast)
   const reload = async () => {
     try {
@@ -56,6 +56,9 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
                 config,
                 horizon === 'weekly' ? 'weekly' : 'daily',
                 minutes,
+                undefined,
+                false,
+                text,
               )
             : await ai.aiOrganize(config, text)
         setPreview(result)
@@ -65,23 +68,6 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
     } finally {
       running.current = false
       setBusy(false)
-    }
-  }
-  const importText = async (file: File | undefined) => {
-    if (!file) return
-    if (file.size > 120_000) {
-      setError('文本文件过大，请截取需要处理的段落（最多 20000 字）')
-      return
-    }
-    try {
-      const content = await file.text()
-      if ([...content].length > 20_000)
-        throw new Error('文本超过 20000 字，请分段处理')
-      setText(content)
-      setFilename(file.name)
-      setError(null)
-    } catch (e) {
-      setError(String(e))
     }
   }
   const canSend =
@@ -167,9 +153,10 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
               当前模型：{config.model || '未选择'}
             </p>
           )}
-          {mode !== 'plan' && (
+          {(
+
             <>
-              <textarea
+              <ContentEditor
                 className="input selectable ai-assistant__input"
                 value={text}
                 maxLength={20000}
@@ -188,22 +175,8 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
                   }
                 }}
               />
-              <div className="ai-assistant__file">
-                <label className="btn btn--quiet btn--sm">
-                  导入文本
-                  <input
-                    type="file"
-                    accept=".txt,.md,text/plain,text/markdown"
-                    className="sr-only"
-                    disabled={busy}
-                    onChange={(e) => {
-                      void importText(e.target.files?.[0])
-                      e.target.value = ''
-                    }}
-                  />
-                </label>
-                <span>{filename || '支持 TXT、Markdown，也可以直接粘贴'}</span>
-              </div>
+
+              <p className="setgroup__hint">点击生成才发送当前输入中的图片、文件。OpenAI 支持图片、PDF、Word、Excel 等；Claude 支持图片与 PDF；DeepSeek 支持图片。各接口均可读取 UTF-8 文本文件，所选模型需支持相应格式。</p>
             </>
           )}
           {mode !== 'tasks' && (

@@ -1,3 +1,4 @@
+import { ContentMarkdown } from './ContentMarkdown'
 /**
  * 任务卡片（§4.1 / §3）。
  *
@@ -431,7 +432,7 @@ export function TaskCard({
               </button>}
             </div>
             {task.description
-              ? <div className="task-description__content selectable">{task.description}</div>
+              ? <div className="task-description__content selectable mdpreview"><ContentMarkdown>{task.description}</ContentMarkdown></div>
               : <p className="reminders__empty">填写要完成什么、交付要求和注意事项。</p>}
           </section>
           <SubtaskList taskId={task.id} isRecurring={isRecurring} taskTitle={task.title} />
