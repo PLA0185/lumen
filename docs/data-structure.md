@@ -7,6 +7,12 @@
 
 ## 一、整体约定
 
+2026-09-30：正式迁移 0010 新增不可变 `content_assets` 表，正文中的
+`lumen-asset:<UUID>` 对应名称、MIME、实际 Base64 字节、长度与 SHA-256。
+完整备份现为格式 5，兼容格式 1–4；读取和恢复均验证资源内容。
+迁移 0011 仅将旧默认浮窗快捷键改为 `Alt+Q`，保留用户自定义组合及其他设置。
+图片 / 文件存储与 AI 实际传输范围见 [内容输入设计](design-content-inputs.md)。
+
 2026-09-29：正式迁移 0009 在 `task_series_template` 增加 `subtasks_json`，每个子任务模板
 保存稳定 UUID、标题及排序；`subtasks.series_template_id` 对应模板身份，同一实例内唯一。
 旧子任务不会自动被推断为整个系列的模板，必须明确选择范围；完成状态和 `completed_at`

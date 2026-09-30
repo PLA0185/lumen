@@ -237,7 +237,7 @@ Rust（Tauri 2）+ React 19 + TypeScript + SQLite。
 | `Ctrl+Alt+A` | 打开 / 隐藏主窗口 |
 | `Ctrl+Alt+N` | 快速添加 |
 | `Ctrl+Alt+D` | 今日概览 |
-| `Ctrl+Alt+Q` | 呼出并聚焦悬浮窗，同时恢复鼠标操作 |
+| `Alt+Q` | 显示 / 隐藏悬浮窗；显示时聚焦并恢复鼠标操作，可在设置中改键 |
 
 快捷键可在「设置 → 窗口与启动 → 托盘与快捷键」修改，保存后立即生效。关闭全局快捷键时
 不会响应这些组合；被其它程序占用时设置页会显示注册失败原因。
@@ -457,5 +457,7 @@ pnpm typecheck                # 类型检查
 | [云同步官方接口调研](docs/api-research-cloud-sync.md) | OneDrive、坚果云及其它路线的官方依据、限额、推荐与未核实项 |
 | [云同步设计](docs/design-cloud-sync.md) | 备忘 / 流程优先、及时保存上传、跨电脑读取、因果冲突及任务范围扩展要求 |
 | [云同步接口契约](docs/cloud-sync-api.md) | 尚未实现的 Tauri 命令、存储驱动、错误与完成语义；不作为已可用功能宣传 |
+| [图片、文件与 AI 内容输入](docs/design-content-inputs.md) | 任务、备忘、流程与 AI 共用编辑器，资源本体备份及服务商格式边界 |
+| [自动更新签名核验](docs/updater-key-verification-2026-09-30.md) | 更新地址可读、同版本不会更新、本机私钥不匹配的实际证据与未发布原因 |
 | `docs/tech-selection.md` | 技术选型记录 |
 | `docs/api-research*.md` | 三家 AI 服务商与 Tauri 能力的官方文档核实记录 |
