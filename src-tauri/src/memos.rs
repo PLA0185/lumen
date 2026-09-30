@@ -74,13 +74,10 @@ pub(crate) fn validate(input: &SaveMemoInput) -> AppResult<()> {
             "流程最多 100 步，普通备忘不能携带流程步骤",
         ));
     }
-    if input.kind == "flow" && input.steps.is_empty() {
-        return Err(AppError::validation("流程至少需要一个步骤"));
-    }
     let mut ids = std::collections::HashSet::new();
     for step in &input.steps {
-        if step.id.is_empty() || !ids.insert(&step.id) || step.title.trim().is_empty() {
-            return Err(AppError::validation("步骤标题不能为空，步骤编号必须唯一"));
+        if step.id.is_empty() || !ids.insert(&step.id) {
+            return Err(AppError::validation("步骤编号不能为空且必须唯一"));
         }
         validate_text(&step.id, "步骤编号", 100)?;
         validate_text(&step.title, "步骤标题", 300)?;
@@ -278,6 +275,29 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[tokio::test]
+    async fn incomplete_flow_steps_are_saved_without_losing_content() {
+        let dir = std::env::temp_dir().join(format!("lumen-flow-draft-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let mut draft = input();
+        draft.steps[0].title.clear();
+        draft.steps[0].detail = "未写完的说明和图片".into();
+        let doc = save_impl(&db, draft).await.unwrap();
+        assert!(doc.steps[0].title.is_empty());
+        assert_eq!(
+            get_impl(&db, &doc.summary.id).await.unwrap().steps[0].detail,
+            "未写完的说明和图片"
+        );
+        let mut edit = SaveMemoInput {
+            id: Some(doc.summary.id),
+            expected_revision: Some(doc.summary.revision),
+            ..input()
+        };
+        edit.steps.clear();
+        assert!(save_impl(&db, edit).await.unwrap().steps.is_empty());
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[tokio::test]
     async fn invalid_flow_does_not_write_anything() {
         let dir =

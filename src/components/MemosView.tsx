@@ -159,7 +159,7 @@ export function MemosView({
     }
   }, [draft, busy, reload])
   useEffect(() => {
-    if (!editing || !dirty || busy || autoSaving || error || !draft?.title.trim() || (draft.kind === 'flow' && (!draft.steps.length || draft.steps.some(s => !s.title.trim())))) return
+    if (!editing || !dirty || busy || autoSaving || error || !draft?.title.trim()) return
     const timer = setTimeout(() => void save(true), 1000)
     return () => clearTimeout(timer)
   }, [editing, dirty, busy, autoSaving, error, draft, save])
@@ -333,9 +333,7 @@ export function MemosView({
                         className="btn btn--primary"
                         disabled={
                           busy || autoSaving ||
-                          !draft.title.trim() ||
-                          (draft.kind === 'flow' && draft.steps.length === 0) ||
-                          draft.steps.some((s) => !s.title.trim())
+                          !draft.title.trim()
                         }
                         onClick={() => void save(false)}
                       >
@@ -546,7 +544,7 @@ export function MemosView({
                         <li className="memos__node" key={step.id}>
                           <span className="memos__step-number">{i + 1}</span>
                           <div>
-                            <h3>{step.title}</h3>
+                            <h3>{step.title || '未命名步骤（待补充）'}</h3>
                             {step.owner && (
                               <p className="memos__owner">
                                 负责人：{step.owner}

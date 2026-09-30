@@ -50,6 +50,17 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('未填写步骤标题的流程也能自动保存，图片链接与说明保留', async () => {
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'draft-flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount()
+    await click('新建流程')
+    await fill('备忘标题', '还在整理的流程')
+    await fill('第 1 步说明', '稍后补充步骤名称，先记录操作')
+    expect((Array.from(document.querySelectorAll('button')).find(b => b.textContent === '保存并查看') as HTMLButtonElement).disabled).toBe(false)
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(save).toHaveBeenCalledOnce()
+    expect(save.mock.calls[0]![0].steps[0]).toMatchObject({ title: '', detail: '稍后补充步骤名称，先记录操作' })
+  })
   it('输入停顿自动保存，写入期间的新文字保留并进入下一次保存', async () => {
     let finish!: (doc: memo.MemoDocument) => void
     const save = vi.spyOn(memo, 'memoSave').mockImplementationOnce(() => new Promise(r => { finish = r })).mockImplementation(async input => ({ ...input, id: 'saved-id', revision: 2, createdAt: '', updatedAt: '', deletedAt: null }))

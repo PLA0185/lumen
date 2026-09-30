@@ -14,6 +14,7 @@ export function ContentEditor(props: Props) {
   const [preview, setPreview] = useState(false)
   const latest = useRef(props)
   latest.current = props
+  const images = String(props.value ?? '').match(/!\[[^\]]*\]\(lumen-asset:[^)]+\)/g) ?? []
 
   const insert = async (load: () => Promise<string>) => {
     const field = ref.current
@@ -110,6 +111,7 @@ export function ContentEditor(props: Props) {
       <span className="setgroup__hint">可粘贴图片、拖入文件，单文件最多 20 MiB</span>
     </div>
     {error && <p className="formerr" role="alert">{error}</p>}
+    {!preview && images.length > 0 && <div className="mdpreview" aria-label="已插入图片预览"><ContentMarkdown>{images.join('\n')}</ContentMarkdown></div>}
     {preview && <div className="mdpreview"><ContentMarkdown>{String(props.value ?? '')}</ContentMarkdown></div>}
   </div>
 }
