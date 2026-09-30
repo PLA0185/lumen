@@ -15,6 +15,112 @@
 
 ---
 
+## 第 26 轮 · 2026-09-29 · 云同步官方调研、浮窗呼出快捷键与重复子任务范围
+
+### 做了
+
+- **云同步官方接口核实**：逐条核对 OneDrive / Microsoft Graph（委托授权、`Files.ReadWrite.AppFolder` +
+  `offline_access`、`/me/drive/special/approot` 区分大小写、`children` 默认一页 200 项、小文件单次上传
+  250 MB 上限、`createUploadSession` 可恢复上传、下载 302 短时预授权、429 按 `Retry-After` 等待）与
+  坚果云 WebDAV（`https://dav.jianguoyun.com/dav/`、账户邮箱 + 第三方应用密码、官方限额：单文件 500 M、
+  免费账户 600 次 / 30 分钟、付费 1500 次、单次列目录 750 项）的官方接入方式与限制；同时评估 Nextcloud、
+  Dropbox、Syncthing / 云客户端交换目录、Supabase 自建并写明不选理由。分层思路参考 Joplin 已公开的
+  「离线优先 + 同步引擎 + 可替换文件驱动」。
+- **首版范围与时序**：按用户明确的优先级（备忘与流程：家里编辑、公司打开可读）把首版收敛为
+  `scope: 'memos'`；确定「输入停顿约 1 秒自动保存合法草稿并立即进入持久上传队列、手动保存立即触发、
+  只合并 1–2 秒的连续修改」，以及启动 / 打开记录 / 窗口回焦即检查远端、在线每 30 秒轻量检查、
+  所有设备共享请求预算的节流策略。
+- **因果版本与冲突模型**：明确不使用「最后修改时间较新覆盖」（两台电脑的时钟有误差），改用每设备独立
+  随机 ID + 在 SQLite 中持久递增的批次序号，批次携带已观察的设备版本向量；并发版本全部保留并标为冲突、
+  并发内容相同也保存两条因果来源、删除是带版本的墓碑（不自动复活也不静默删除）、解决冲突产生观察全部
+  候选的新版本，比较令牌过期返回 `STALE_CONFLICT` 并保留草稿。首版以「实体完整版本」为冲突边界，
+  这是保守的明确限制。
+- **网盘布局与存储契约**：定义 `spaces/<workspaceId>/` 下不可变的批次文件、设备描述与单设备
+  `head.json`（只加速发现，读取后必须校验摘要链）、桶号 `(seq-1)/256` 直接计算、批次最大 4 MiB 与
+  最多 32 个活跃设备的拟定上限；明确「未验证 CAS / LOCK 前不得把它们写成协议可靠性前提」，
+  以及「不能因为用户删了云端文件就删除业务任务」。
+- **IPC 与完成语义**：定义 `cloud_sync_*` 命令（状态、配置、OneDrive 登录、连接测试、加入预览与提交、
+  启动 / 暂停、冲突列表 / 详情 / 解决、断开，共 12 条）的请求与返回、17 种 `SyncError.code`、
+  存储驱动 `probe / listChildren / read / createImmutable / writeDeviceHint` 的行为条件、同步批次 JSON，
+  以及「本机本次已同步」的准确含义（不等于离线设备没有未上传内容）。**本轮没有注册这些命令。**
+- **协议验证模型**：新增 `tools/verify_sync_protocol.py`（纯内存、不读数据库、不访问网络），覆盖单实体的
+  因果保留、删除与解决冲突共 16 项断言。它是研究模型，不是生产同步模块。
+- **悬浮窗呼出全局快捷键**（`44e24ef`）：新增独立可配置的呼出快捷键，默认 `CmdOrCtrl+Alt+Q`
+  （原定 `Ctrl+Alt+F`，实机发现已被其它程序占用后改为确认可注册的组合）；触发时显示并聚焦悬浮窗，
+  同时恢复鼠标操作；设置页「窗口与启动 → 托盘与快捷键」可查看与修改，保存后立即生效；旧配置缺少新
+  字段时按容器级 `serde(default)` 补默认值，不会连带重置用户原有的窗口偏好。
+- **任务描述**（`a98d074`）：快速添加与任务编辑器都能直接填写多行描述，展开详情可读全文。
+- **重复子任务的显式范围与完成时间**（`dfed598`）：
+  - 正式迁移 `0009_recurrence_subtasks.sql`：`task_series_template.subtasks_json`（模板只保存稳定 UUID、
+    标题与排序，不含完成状态）、`subtasks.series_template_id` 与实例内唯一部分索引。
+  - 新增范围化子任务操作（添加 / 改名 / 删除 / 从上一次复制），重复任务必须先选择「仅这一次」或
+    「每次重复（整个系列）」且**默认不预选**；旧的结构化子任务 IPC 遇到重复任务直接拒绝，
+    不再静默按某个范围处理。
+  - 「整个系列」修改模板与未完成实例；每次重新生成使用新的子任务 UUID，完成状态为未完成、完成时间为空；
+    已完成与已归档的历史逐字段保留。
+  - 完成时间记录实际点击时刻；重复的完成请求保留第一次的时间，取消完成后再完成才写入新时间；
+    最后一个子任务完成时父任务在同一事务内完成。
+  - 完整备份格式升级为 4（保存并校验模板列），继续读取格式 1–3。
+- **文档**：新增 `docs/api-research-cloud-sync.md`、`docs/design-cloud-sync.md`、`docs/cloud-sync-api.md`；
+  更新 `docs/design-recurrence.md`、`docs/data-structure.md`、`README.md`、`docs/tech-selection.md`。
+
+### 没做到
+
+- **云同步没有任何生产实现**：没有新增迁移、没有存储驱动、没有 HTTP 请求、没有凭据读写、没有界面入口，
+  `cloud_sync_*` 命令未注册。未接通任何真实网盘账号，未上传任何用户数据。OneDrive 路线还缺维护者注册的
+  公开 `client_id`；端到端加密、密钥轮换与双设备解密只定义了要求，属于发布阻断项。
+- **本轮停在「正式安装包正在构建」**：没有留下第 26 轮的构建与安装验收记录；接手收尾时本机
+  `src-tauri/target` 不存在，本机安装的仍是 2026-09-26 的 0.4.0 正式版。
+- **实机验收未能在本轮复核**：浮窗快捷键、任务描述、子任务范围与完成时间的真实鼠标操作来自本轮原会话
+  记录，接手时本机没有第 26 轮的构建产物与安装版，无法复跑，因此**不作为已复核结论**
+  （脚本已入库：`tools/verify_floating_shortcut.py`、`tools/verify_recurring_subtasks.py`）。
+- 未发布新的签名自动更新包：匹配现有公钥的私钥不在本机。
+- 接手收尾时复核发现、本轮未修的问题（原会话未记录，列在这里避免下一轮重新踩）：
+  - **日历拖拽改期在东八区会错一天**：前端传的是目标日「本地零点」对应的 UTC，后端
+    `compute_rescheduled_at` 却用 UTC 小时回填，于是把 09:00 的任务拖到 10-05 会落到 **10-04 09:00**；
+    单测 `reschedule_preserves_time_of_day` 目前把这个结果固化成了期望值，所以测试通过也发现不了。
+  - `app_meta.schema_version` 仍停在 `4`（迁移 0005–0009 都没有更新它），而设置页把它当作
+    「当前 schema 版本」展示。
+  - `db.rs` 的 `Db::with_tx` 没有任何调用方（死代码），与文档「跨表写入必须走这里」不符。
+  - 文档数字过时：`README.md` 写「243 项 Rust + 85 项前端」、`AGENTS.md` 门禁注释写
+    「前端 101 项 / 323 项」，实际为 **388 / 210**；`data-structure.md` 的迁移表只列到 0004。
+  - 仓库根 `latest.json` 仍是 0.3.0 的旧清单（旧信任链签名）；`.gitignore` 偏移 1538 处有一个
+    非法 UTF-8 字节。
+- 构建仍有 5 条 `INEFFECTIVE_DYNAMIC_IMPORT` 提示（模块同时被静态与动态导入，不会单独分包），
+  未做包体积拆分。
+
+### 怎么验证的
+
+- **AGENTS.md 的全部门禁在本机实际执行并全部通过**（接手收尾时从零编译 Rust）：
+  - `pnpm install --frozen-lockfile`：复核开始时 `node_modules` 已损坏（`vitest` 启动即
+    `ERR_MODULE_NOT_FOUND: std-env`），重装后恢复
+  - `pnpm typecheck` 通过；`pnpm check:version` 输出「版本一致：0.4.0」
+  - `pnpm test`：**26 个测试文件、210 项全部通过**
+  - `pnpm build` 通过；`pnpm lint` 通过
+  - `cargo fmt --check` 通过
+  - `cargo test --lib`：**388 passed; 0 failed; 0 ignored**
+  - `cargo clippy --all-targets --all-features -- -D warnings`：**零警告**
+    （必须先 `pnpm build` 生成 `dist/`，否则 `generate_context!()` 会因 `frontendDist` 目录不存在而
+    panic —— 这正是之前「本地绿、CI 红」的根因）
+  - 附注：`cargo test` 期间 MSVC 链接器会输出一条「正在创建库 …」提示，属链接器 stdout，
+    不是代码警告。
+- `python tools/verify_sync_protocol.py`：16 项断言全部通过（退出码 0）。
+- 代码产出可核验：`44e24ef`、`a98d074`、`dfed598`、`45b4c34` 四个提交。
+- **未复核**：第 26 轮的安装包构建与桌面实机验收（原因见「没做到」）。
+
+### 相关文档
+
+- [云同步官方接口调研](api-research-cloud-sync.md)
+- [云同步设计](design-cloud-sync.md)
+- [云同步接口契约](cloud-sync-api.md)
+- [重复规则设计（含重复子任务模板）](design-recurrence.md)
+- [数据结构（迁移 0009 与备份格式 4）](data-structure.md)
+- [协议验证模型](../tools/verify_sync_protocol.py)
+- [浮窗快捷键实机验收](../tools/verify_floating_shortcut.py)
+- [重复子任务实机验收](../tools/verify_recurring_subtasks.py)
+
+---
+
 ## 第 25 轮 · 2026-09-29 · 自行审查完整备份、备忘交互和窗口同步
 
 ### 做了
