@@ -147,6 +147,7 @@ pub struct ApplyResult {
     pub updated: usize,
     /// 被跳过的条数（用户在预览里取消勾选）
     pub skipped: usize,
+    pub warnings: Vec<String>,
 }
 
 // =============================================================================
@@ -246,6 +247,11 @@ fn edit_items(items: &mut [DiffItem], edits: Vec<PreviewEdit>) -> AppResult<()> 
                 (serde_json::json!(raw), "标题", Some(raw.to_string()))
             }
             "plannedAt" | "dueAt" => {
+                if item.payload.get("rrule").is_some_and(|v| !v.is_null()) {
+                    return Err(AppError::validation(
+                        "重复任务请在创建后用“修改重复规则”调整首次日期和规则",
+                    ));
+                }
                 let label = if edit.field == "plannedAt" {
                     "计划时间"
                 } else {
@@ -570,7 +576,7 @@ fn build_create_item(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "title": title,
         "description": obj.get("description").and_then(|v| v.as_str()).unwrap_or(""),
         "priority": priority,
@@ -582,6 +588,49 @@ fn build_create_item(
         "projectId": project_id,
         "categoryId": category_id,
     });
+
+    if let Some(raw) = obj.get("rrule").filter(|v| !v.is_null()) {
+        let result = (|| -> AppResult<crate::recurrence::RecurrenceRule> {
+            let rrule = raw
+                .as_str()
+                .ok_or_else(|| AppError::validation("重复规则必须是字符串"))?;
+            crate::recurrence::RecurrenceRule::from_rrule_string(
+                rrule,
+                obj.get("tzid").and_then(|v| v.as_str()).unwrap_or("UTC"),
+                obj.get("dtstartLocal")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(""),
+                obj.get("hasStartTime")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            )
+        })();
+        match result {
+            Ok(rule) => {
+                changes.push(FieldChange {
+                    field: "rrule".into(),
+                    label: "重复规则".into(),
+                    before: None,
+                    after: Some(rule.describe()),
+                });
+                for key in ["rrule", "dtstartLocal", "tzid"] {
+                    payload[key] = obj.get(key).cloned().unwrap_or(serde_json::Value::Null);
+                }
+                payload["hasStartTime"] = serde_json::json!(obj
+                    .get("hasStartTime")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false));
+            }
+            Err(e) => {
+                issues.push(ValidationIssue {
+                    level: "error".into(),
+                    index: idx + 1,
+                    message: e.message,
+                });
+                return None;
+            }
+        }
+    }
 
     Some(DiffItem {
         action: DiffAction::Create,
@@ -836,16 +885,22 @@ pub struct OrganizeInput {
     /// 是否发送已有任务的备注（默认否）
     #[serde(default)]
     pub send_notes: bool,
+    #[serde(default)]
+    pub defaults: Option<serde_json::Value>,
+    #[serde(default)]
+    pub tzid: Option<String>,
 }
 
 const ORGANIZE_SYSTEM: &str = r#"你是一个任务整理助手。用户会给你一段自由文本，请把它整理成结构化的任务候选。
 只输出 JSON，不要任何解释文字。JSON 格式：
-{"tasks":[{"title":"任务标题","dueAt":"YYYY-MM-DD 或带时区的 ISO-8601 或 null","plannedAt":"同上或 null","priority":0,"estimatedMinutes":30,"reason":"为什么这样安排"}]}
+{"tasks":[{"title":"任务标题","description":"要求和注意事项","dueAt":"YYYY-MM-DD 或带时区的 ISO-8601 或 null","plannedAt":"同上或 null","priority":0,"estimatedMinutes":30,"rrule":null,"dtstartLocal":null,"hasStartTime":false,"reason":"为什么这样安排"}]}
 要求：
 - title 必填，简洁明确，不超过 100 字。
 - priority 取 0（无）、1（低）、2（中）、3（高）。
 - 日期无法从原文推断时填 null，不要编造日期。
 - 不要创建与已有任务重复的条目。
+- 用户说每周一、每周几天、每天、每月时，必须生成重复规则，不能转换成一个单次任务。每周一用 FREQ=WEEKLY;BYDAY=MO，周三和周五用 FREQ=WEEKLY;BYDAY=WE,FR。每天默认双休，用 FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR；用户明确每天含周末时用 FREQ=DAILY。法定节假日不执行加 ;X-LUMEN-HOLIDAYS=CN。不要擅自设置调休补班。
+- 重复任务必须填写 dtstartLocal（YYYY-MM-DDTHH:MM:SS，本地首次日期；未指定开始日期从今天开始），有具体时间时 hasStartTime=true。普通任务 rrule=null。
 - 最多 20 条。"#;
 
 #[tauri::command]
@@ -921,7 +976,35 @@ pub async fn ai_organize(
             });
             continue;
         };
-        if let Some(it) = build_create_item(i, obj, &mut issues) {
+        let mut obj = obj.clone();
+        obj.insert(
+            "tzid".into(),
+            serde_json::json!(input.tzid.as_deref().unwrap_or("UTC")),
+        );
+        if let Some(defaults) = &input.defaults {
+            for key in ["projectId", "categoryId", "tagIds", "periodType"] {
+                if let Some(value) = defaults.get(key) {
+                    obj.insert(key.into(), value.clone());
+                }
+            }
+            if obj.get("rrule").is_none_or(|v| v.is_null())
+                && obj.get("plannedAt").is_none_or(|v| v.is_null())
+            {
+                if let Some(date) = defaults
+                    .get("plannedDate")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.is_empty())
+                {
+                    obj.insert("plannedAt".into(), serde_json::json!(date));
+                }
+            }
+        }
+        if let Some(mut it) = build_create_item(i, &obj, &mut issues) {
+            for key in ["tagIds", "periodType"] {
+                if let Some(value) = obj.get(key) {
+                    it.payload[key] = value.clone();
+                }
+            }
             items.push(it);
         }
     }
@@ -1529,11 +1612,13 @@ pub(crate) async fn ai_apply_impl(
             created: 0,
             updated: 0,
             skipped: 0,
+            warnings: vec![],
         });
     }
 
     let mut created = 0usize;
     let mut updated = 0usize;
+    let mut recurring = vec![];
     let now = crate::db::to_db_time(crate::db::utc_now());
 
     let mut tx = state.db.pool().begin().await?;
@@ -1541,6 +1626,17 @@ pub(crate) async fn ai_apply_impl(
     for it in &chosen {
         match it.action {
             DiffAction::Create => {
+                if it.payload.get("rrule").is_some_and(|v| !v.is_null()) {
+                    let input: crate::recurrence_service::CreateRecurringInput =
+                        serde_json::from_value(it.payload.clone())
+                            .map_err(|e| AppError::validation(format!("重复任务参数无效：{e}")))?;
+                    let (series, first, _) =
+                        crate::recurrence_service::create_recurring_seed_tx(&mut tx, &input)
+                            .await?;
+                    recurring.push((series, first));
+                    created += 1;
+                    continue;
+                }
                 // 子任务形式
                 if let Some(parent) = it.payload.get("parentTaskId").and_then(|v| v.as_str()) {
                     let as_sub = it
@@ -1628,6 +1724,25 @@ pub(crate) async fn ai_apply_impl(
                 .bind(&now)
                 .execute(&mut *tx)
                 .await?;
+                sqlx::query("UPDATE tasks SET period_type = ?1 WHERE id = ?2")
+                    .bind(
+                        it.payload
+                            .get("periodType")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("none"),
+                    )
+                    .bind(&id)
+                    .execute(&mut *tx)
+                    .await?;
+                if let Some(tags) = it.payload.get("tagIds").and_then(|v| v.as_array()) {
+                    for tag in tags.iter().filter_map(|v| v.as_str()) {
+                        sqlx::query("INSERT INTO task_tags(task_id,tag_id) VALUES(?1,?2)")
+                            .bind(&id)
+                            .bind(tag)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                }
                 created += 1;
             }
 
@@ -1668,6 +1783,25 @@ pub(crate) async fn ai_apply_impl(
 
     tx.commit().await?;
 
+    let mut warnings = vec![];
+    for (series, first) in recurring {
+        let end = chrono::DateTime::parse_from_rfc3339(&first)
+            .map_err(|e| AppError::internal(format!("首次发生日期无效：{e}")))?
+            + chrono::Duration::days(90);
+        if let Err(e) = crate::recurrence_service::recurring_materialize_inner(
+            state,
+            series,
+            first,
+            crate::db::to_db_time(end.with_timezone(&chrono::Utc)),
+        )
+        .await
+        {
+            warnings.push(format!(
+                "系列已保存，后续发生生成失败：{e}；后台维护会重试。"
+            ));
+        }
+    }
+
     log::info!(
         "应用 AI「{capability}」预览：新增 {created}、修改 {updated}（共 {total} 条被接受）"
     );
@@ -1676,6 +1810,7 @@ pub(crate) async fn ai_apply_impl(
         created,
         updated,
         skipped: 0,
+        warnings,
     })
 }
 
@@ -1742,6 +1877,53 @@ pub async fn schedule_conflicts(state: State<'_, AppState>) -> AppResult<Vec<ser
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn ai_weekly_candidates_create_real_series_only_after_confirmation() {
+        let dir = std::env::temp_dir().join(format!("lumen-ai-weekly-{}", uuid::Uuid::now_v7()));
+        let state = AppState::new(crate::db::Db::init(&dir).await.unwrap());
+        let obj = serde_json::json!({"title":"每周运营表", "rrule":"FREQ=WEEKLY;BYDAY=MO,WE", "dtstartLocal":"2026-09-30T00:00:00", "tzid":"Asia/Shanghai", "hasStartTime":false});
+        let mut issues = vec![];
+        let item = build_create_item(0, obj.as_object().unwrap(), &mut issues).unwrap();
+        assert!(issues.is_empty());
+        assert!(item.changes.iter().any(|c| c.field == "rrule"));
+        let id = register("整理任务", vec![item]);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM task_series")
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(ai_apply_impl(&state, id, None).await.unwrap().created, 1);
+        let rule: String = sqlx::query_scalar("SELECT rrule FROM task_series")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(rule, "FREQ=WEEKLY;BYDAY=MO,WE");
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT planned_at, series_id FROM tasks ORDER BY planned_at")
+                .fetch_all(state.db.pool())
+                .await
+                .unwrap();
+        assert!(rows.len() > 4);
+        assert!(rows.iter().all(|(_, s)| s == &rows[0].1));
+        for (at, _) in rows {
+            use chrono::Datelike;
+            let date = chrono::DateTime::parse_from_rfc3339(&at)
+                .unwrap()
+                .with_timezone(&chrono_tz::Asia::Shanghai);
+            assert!(matches!(
+                date.weekday(),
+                chrono::Weekday::Mon | chrono::Weekday::Wed
+            ));
+        }
+        let invalid = serde_json::json!({"title":"坏规则", "rrule":"FREQ=INVALID", "dtstartLocal":"2026-09-30T00:00:00"});
+        let mut issues = vec![];
+        build_create_item(0, invalid.as_object().unwrap(), &mut issues);
+        assert!(issues.iter().any(|i| i.level == "error"));
+        state.db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[tokio::test]
     async fn edited_preview_is_validated_before_writing_and_applies_selected_items() {
         let dir = std::env::temp_dir().join(format!("lumen-ai-edit-{}", uuid::Uuid::now_v7()));

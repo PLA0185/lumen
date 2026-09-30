@@ -53,6 +53,7 @@ export default defineConfig({
   },
 
   test: {
+    maxWorkers: 2,
     // 领域逻辑（日期、重复规则、校验）用 node 环境即可，无需 DOM
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],

@@ -591,9 +591,12 @@ select {
   box-shadow: var(--shadow);
 }
 
-.task--done {
+.task--done:not(.task--expanded) {
   opacity: 0.62;
 }
+.ai-quick-dialog { width: min(900px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: 20px; background: var(--c-surface); color: var(--c-text); border: 1px solid var(--c-border); border-radius: var(--radius); overflow: auto; }
+.ai-quick-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.ai-quick-dialog__close { float: right; margin-bottom: 12px; }
 
 .task--done .task__title {
   text-decoration: line-through;
@@ -4533,3 +4536,4 @@ body {
 .cloud-settings__version { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
 .cloud-history { position: fixed; inset: 0; background: #0009; display: grid; place-items: center; z-index: 1000; padding: 20px; }
 .cloud-history__panel { background: var(--bg-panel, #171a21); border: 1px solid var(--border, #343b49); border-radius: 12px; padding: 20px; width: min(800px, 95vw); max-height: 90vh; overflow: auto; }
+.quickadd__ai { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }

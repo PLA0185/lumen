@@ -225,11 +225,11 @@ export function MemosView({
           新建备忘
         </button>
         <button
-          className="btn btn--ghost"
+          className="btn btn--primary"
           disabled={busy || trash}
           onClick={() => create('flow')}
         >
-          <Icon name="list" size={15} />
+          <Icon name="plus" size={15} />
           新建流程
         </button>
         <select

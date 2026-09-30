@@ -27,6 +27,7 @@ import * as ai from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
 import type { DiffPreview } from '../lib/ai-ipc'
 import { fromUtcIso, toDateInput } from '../lib/datetime'
+import { useApp } from '../lib/store'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -54,6 +55,7 @@ export function DiffPreviewDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
+  const pushToast = useApp((s) => s.pushToast)
   const [edits, setEdits] = useState<Record<string, ai.PreviewEdit>>({})
   const edit = (index: number, field: ai.PreviewEdit['field'], value: string) =>
     setEdits((old) => ({
@@ -100,6 +102,7 @@ export function DiffPreviewDialog({
           ? null
           : Array.from(selected).sort((a, b) => a - b)
       const r = await ai.aiApply(preview.previewId, indices)
+      r.warnings?.forEach((warning) => pushToast('info', warning))
       onApplied(r.created, r.updated)
       onClose()
     } catch (e) {
@@ -255,7 +258,7 @@ export function DiffPreviewDialog({
                           </label>
                           {preview.capability !== '拆解任务' && (
                             <>
-                              {(['plannedAt', 'dueAt'] as const).map(
+                              {!it.changes.some((c) => c.field === 'rrule') && (['plannedAt', 'dueAt'] as const).map(
                                 (field) => (
                                   <label className="field" key={field}>
                                     {field === 'plannedAt'

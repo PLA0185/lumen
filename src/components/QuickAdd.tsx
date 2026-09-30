@@ -19,6 +19,7 @@ import { RuleEditor } from './RuleEditor'
 import type { RuleEditorValue } from './RuleEditor'
 import type { TaskCreationContext } from '../lib/task-creation-context'
 import { Icon } from './Icons'
+import { AiAssistant } from './AiAssistant'
 
 interface QuickAddProps {
   /** 浮窗新建行：选项就地展开，不跳到另一个窗口。 */
@@ -472,6 +473,11 @@ export function QuickAdd({
       {error && (
         <div className="quickadd__error" id="quickadd-error" role="alert">
           {error}
+        </div>
+      )}
+      {!compact && (
+        <div className="quickadd__ai">
+          <AiAssistant compact creationDefaults={{ plannedDate: defaultPlannedDate, periodType: defaultPeriodType, ...context }} />
         </div>
       )}
     </div>

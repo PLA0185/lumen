@@ -134,6 +134,7 @@ export interface ApplyResult {
   created: number
   updated: number
   skipped: number
+  warnings?: string[]
 }
 
 /** 复盘结果（纯只读） */
@@ -244,7 +245,16 @@ export const aiOrganize = (
   config: ProviderConfig,
   text: string,
   sendNotes = false,
-): Promise<DiffPreview> => call(AI_CMD.organize, { config, input: { text, sendNotes, assetIds: inputAssetIds(text) } })
+  defaults?: CreationDefaults,
+): Promise<DiffPreview> => call(AI_CMD.organize, { config, input: { text, sendNotes, assetIds: inputAssetIds(text), defaults, tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } })
+
+export interface CreationDefaults {
+  plannedDate?: string
+  periodType?: import('./types').PeriodType
+  projectId?: string
+  categoryId?: string
+  tagIds?: string[]
+}
 
 export const aiBreakdown = (
   config: ProviderConfig,

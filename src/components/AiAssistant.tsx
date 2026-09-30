@@ -8,7 +8,7 @@ import { DiffPreviewDialog } from './DiffPreviewDialog'
 import { AiPanel } from './AiPanel'
 import { Icon } from './Icons'
 
-export function AiAssistant({ compact = false }: { compact?: boolean }) {
+export function AiAssistant({ compact = false, creationDefaults }: { compact?: boolean; creationDefaults?: ai.CreationDefaults }) {
   const [config, setConfig] = useState<ai.ProviderConfig | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [settings, setSettings] = useState(false)
@@ -60,7 +60,7 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
                 false,
                 text,
               )
-            : await ai.aiOrganize(config, text)
+            : await ai.aiOrganize(config, text, false, creationDefaults)
         setPreview(result)
       }
     } catch (e) {
@@ -163,7 +163,7 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
                 aria-label="发送给 AI 的文本"
                 placeholder={
                   mode === 'tasks'
-                    ? '例如：明天下午整理运营表，这周五前完成关键词更新，先检查 CA 和 UK 两部分。'
+                    ? '例如：每周一更新运营表，周三和周五检查关键词；整理成待办并识别重复规则。'
                     : '可粘贴工作记录、会议内容或补充说明；留空时只总结真实任务统计。'
                 }
                 disabled={busy}
@@ -292,7 +292,7 @@ export function AiAssistant({ compact = false }: { compact?: boolean }) {
           preview={preview}
           onClose={() => setPreview(null)}
           onApplied={(created, updated) => {
-            const message = `已创建 ${created} 条任务、更新 ${updated} 条；未设日期的任务可在收件箱查看`
+            const message = `已创建 ${created} 条任务、更新 ${updated} 条`
             setNotice(message)
             pushToast('success', message)
           }}

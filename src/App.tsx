@@ -105,6 +105,12 @@ export default function App() {
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [memoSearch, setMemoSearch] = useState('')
   const [memoDirty, setMemoDirty] = useState(false)
+  const [showAi, setShowAi] = useState(false)
+  const aiDialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    if (showAi) { aiDialog.current?.showModal(); aiDialog.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus() }
+    else aiDialog.current?.close()
+  }, [showAi])
   const navigate = useCallback((next: ViewId) => {
     if (view === 'memos' && next !== view && memoDirty && !window.confirm('备忘修改尚未保存。放弃修改并离开吗？')) return
     setShowQuickAdd(false)
@@ -505,6 +511,7 @@ export default function App() {
             </div>
 
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>
             <button
               type="button"
               className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}
@@ -728,6 +735,10 @@ export default function App() {
       </div>
 
       {/* 完整编辑表单（§4.1 字段集） */}
+      <dialog ref={aiDialog} className="ai-quick-dialog" aria-label="AI 助手输入对话框" onCancel={() => setShowAi(false)} onClose={() => setShowAi(false)}>
+        <button type="button" className="btn btn--ghost ai-quick-dialog__close" onClick={() => setShowAi(false)}>关闭助手</button>
+        <AiAssistant />
+      </dialog>
       {editing && (
         <TaskEditor
           task={editing}
