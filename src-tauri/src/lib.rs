@@ -50,6 +50,7 @@ pub mod reminders;
 pub mod shortcuts;
 pub mod stats;
 pub mod subtasks;
+pub mod weekly_recurring;
 pub mod window_mgr;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -384,6 +385,7 @@ pub fn run() {
             attachments::attachment_check,
             attachments::attachment_cleanup_orphans,
             // ---- 重复系列（§5）----
+            weekly_recurring::recurring_weekly_list,
             recurrence_service::recurring_create,
             recurrence_service::recurring_preview,
             recurrence_service::recurring_materialize,

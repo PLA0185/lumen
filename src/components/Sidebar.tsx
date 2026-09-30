@@ -43,6 +43,7 @@ export const NAV_GROUPS: NavGroup[] = [
     // （任务没有具体日期，只声明"这周/这个月做完就行"）。命名必须区分开。
     label: '周期任务',
     items: [
+      { id: 'weekly-recurring', icon: 'repeat', label: '每周重复' },
       { id: 'period-week', icon: 'period-week', label: '周任务' },
       { id: 'period-month', icon: 'period-month', label: '月任务' },
       { id: 'period-quarter', icon: 'period-quarter', label: '季度任务' },
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** 视图标题与说明。说明文字用于向用户解释该视图的口径（§4.2 要求规则明确）。 */
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
+  'weekly-recurring': { title: '每周重复', subtitle: '查看每周特定一天或几天执行的重复任务，编辑星期和节假日规则' },
   memos: { title: '备忘与流程', subtitle: '随手记录业务要点，把操作步骤整理成随时可查的流程' },
   assistant: { title: 'AI 助手', subtitle: '一段话生成计划待办，日、周、月、年总结' },
   today: { title: '今天', subtitle: '计划时间落在今天的所有任务' },

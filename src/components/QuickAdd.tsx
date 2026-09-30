@@ -22,6 +22,7 @@ import { Icon } from './Icons'
 
 interface QuickAddProps {
   /** 浮窗新建行：选项就地展开，不跳到另一个窗口。 */
+  defaultRepeat?: 'none' | 'weekly'
   compact?: boolean
   onConfigureReminder?: (task: Task) => void
   /** 从今天/明天新建时沿用该视图日期；其它入口仍可不设日期。 */
@@ -41,6 +42,7 @@ interface QuickAddProps {
 
 export function QuickAdd({
   compact = false,
+  defaultRepeat = 'none',
   onConfigureReminder,
   onCreated,
   onRecurringCreated,
@@ -57,7 +59,7 @@ export function QuickAdd({
   const [dateStr, setDateStr] = useState(defaultPlannedDate)
   const [timeStr, setTimeStr] = useState('')
   const [priority, setPriority] = useState(0)
-  const [repeat, setRepeat] = useState('none')
+  const [repeat, setRepeat] = useState<string>(defaultRepeat)
   const [rule, setRule] = useState<RuleEditorValue>({
     rrule: 'FREQ=WEEKLY',
     dtstartLocal: '',
@@ -110,7 +112,7 @@ export function QuickAdd({
     setPeriodTouched(false)
     setError(null)
     setDateTouched(false)
-    setRepeat('none')
+    setRepeat(defaultRepeat)
     setDescription('')
     setMaterializeDays(90)
     setConfigureReminder(false)

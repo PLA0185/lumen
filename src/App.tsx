@@ -1,3 +1,4 @@
+import { WeeklyRecurringView } from './components/WeeklyRecurringView'
 /**
  * 应用外壳：侧边栏 + 顶栏 + 内容区。
  *
@@ -38,6 +39,7 @@ import { Icon } from './components/Icons'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
+  'weekly-recurring',
   'memos',
   'assistant',
   'today',
@@ -605,6 +607,7 @@ export default function App() {
               <QuickAdd
                 defaultPlannedDate={defaults.plannedDate}
                 defaultPeriodType={defaults.periodType}
+                defaultRepeat={view === 'weekly-recurring' ? 'weekly' : 'none'}
                 context={creationContext}
                 onCreated={onCreated}
                 onRecurringCreated={async (warning) => {
@@ -885,6 +888,7 @@ function TaskArea({
   if (view === 'settings') {
     return <SettingsView />
   }
+  if (view === 'weekly-recurring') return <WeeklyRecurringView query={search} />
   if (view === 'assistant') return <AiAssistant />
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）

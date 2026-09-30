@@ -1,3 +1,4 @@
+import { SeriesRuleDialog } from './SeriesRuleDialog'
 import { ContentMarkdown } from './ContentMarkdown'
 /**
  * 任务卡片（§4.1 / §3）。
@@ -34,6 +35,7 @@ import { onDataChanged } from '../lib/data-change'
  * 跳过 = 这一次不发生但系列继续；删除整个系列才会终止后续。
  */
 function SeriesInfo({ taskId }: { taskId: string }) {
+  const [editingRule, setEditingRule] = useState(false)
   const [info, setInfo] = useState<ScopeInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -118,6 +120,8 @@ function SeriesInfo({ taskId }: { taskId: string }) {
           {busy ? '处理中…' : '跳过这一次'}
         </button>
       </div>
+      {info?.seriesId && info.occurrenceKey && <button type="button" className="btn btn--quiet btn--sm" onClick={() => setEditingRule(true)}>修改重复规则</button>}
+      {editingRule && info?.seriesId && info.occurrenceKey && <SeriesRuleDialog taskId={taskId} seriesId={info.seriesId} occurrenceKey={info.occurrenceKey} onClose={() => setEditingRule(false)} onSaved={setNotice} />}
       {notice && (
         <div className="seriesinfo__segments" role="status">
           {notice}
