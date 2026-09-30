@@ -59,7 +59,7 @@ fn validate_text(value: &str, label: &str, max: usize) -> AppResult<()> {
     Ok(())
 }
 
-fn validate(input: &SaveMemoInput) -> AppResult<()> {
+pub(crate) fn validate(input: &SaveMemoInput) -> AppResult<()> {
     if input.title.trim().is_empty() {
         return Err(AppError::validation("标题不能为空"));
     }
@@ -93,7 +93,7 @@ fn validate(input: &SaveMemoInput) -> AppResult<()> {
     Ok(())
 }
 
-fn document(row: sqlx::sqlite::SqliteRow) -> AppResult<MemoDocument> {
+pub(crate) fn document(row: sqlx::sqlite::SqliteRow) -> AppResult<MemoDocument> {
     use sqlx::FromRow;
     let json: String = row.try_get("steps_json")?;
     let steps = serde_json::from_str(&json)
@@ -138,21 +138,25 @@ pub async fn save_impl(db: &Db, input: SaveMemoInput) -> AppResult<MemoDocument>
     let json =
         serde_json::to_string(&input.steps).map_err(|_| AppError::internal("流程序列化失败"))?;
     let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
     let row = if let Some(id) = &input.id {
         sqlx::query("UPDATE memo_documents SET title=?,category=?,kind=?,body_md=?,steps_json=?,
             revision=revision+1,updated_at=? WHERE id=? AND revision=? AND deleted_at IS NULL RETURNING *")
             .bind(input.title.trim()).bind(input.category.trim()).bind(&input.kind)
             .bind(&input.body_md).bind(json).bind(&now).bind(id).bind(input.expected_revision)
-            .fetch_optional(db.pool()).await?
+            .fetch_optional(&mut *tx).await?
             .ok_or_else(|| AppError::conflict("记录已在其它地方修改或删除。请保留当前草稿，重新打开记录后再保存"))?
     } else {
         sqlx::query("INSERT INTO memo_documents (id,title,category,kind,body_md,steps_json,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?) RETURNING *")
             .bind(uuid::Uuid::now_v7().to_string()).bind(input.title.trim()).bind(input.category.trim())
             .bind(&input.kind).bind(&input.body_md).bind(json).bind(&now).bind(&now)
-            .fetch_one(db.pool()).await?
+            .fetch_one(&mut *tx).await?
     };
-    document(row)
+    let doc = document(row)?;
+    crate::cloud_sync::record_event(&mut tx, &doc, None).await?;
+    tx.commit().await?;
+    Ok(doc)
 }
 
 pub async fn set_deleted_impl(
@@ -162,12 +166,16 @@ pub async fn set_deleted_impl(
     deleted: bool,
 ) -> AppResult<MemoDocument> {
     let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
     let row = sqlx::query("UPDATE memo_documents SET deleted_at=?,updated_at=?,revision=revision+1
         WHERE id=? AND revision=? AND ((?=1 AND deleted_at IS NULL) OR (?=0 AND deleted_at IS NOT NULL)) RETURNING *")
         .bind(if deleted { Some(&now) } else { None }).bind(&now).bind(id).bind(revision)
-        .bind(deleted).bind(deleted).fetch_optional(db.pool()).await?
+        .bind(deleted).bind(deleted).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::conflict("记录状态已经变化，请重新读取后再操作"))?;
-    document(row)
+    let doc = document(row)?;
+    crate::cloud_sync::record_event(&mut tx, &doc, None).await?;
+    tx.commit().await?;
+    Ok(doc)
 }
 
 #[tauri::command]

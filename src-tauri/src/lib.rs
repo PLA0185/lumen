@@ -27,6 +27,7 @@ pub mod ai_features;
 pub mod ai_media;
 pub mod attachments;
 pub mod backup;
+pub mod cloud_sync;
 pub mod commands;
 #[cfg(test)]
 mod commands_e2e;
@@ -233,6 +234,7 @@ pub fn run() {
 
                 // 6) 提醒调度（§4.3）
                 reminders::spawn(handle.clone());
+                cloud_sync::spawn(handle.clone());
 
                 // 7) 统计今日未完成数并刷新菜单文字
                 refresh_today_count(&handle);
@@ -368,6 +370,16 @@ pub fn run() {
             backup::backup_list,
             backup::backup_delete,
             backup::backup_auto,
+            cloud_sync::cloud_sync_status,
+            cloud_sync::cloud_sync_connect,
+            cloud_sync::cloud_sync_set_enabled,
+            cloud_sync::cloud_sync_recovery_code,
+            cloud_sync::cloud_sync_now,
+            cloud_sync::cloud_sync_history,
+            cloud_sync::cloud_sync_restore,
+            cloud_sync::cloud_sync_set_inheritance,
+            cloud_sync::cloud_sync_business_conflicts,
+            cloud_sync::cloud_sync_business_resolve,
             backup::export_csv,
             backup::export_markdown,
             memos::memo_list,

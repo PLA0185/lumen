@@ -32,7 +32,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 5;
+pub const BACKUP_FORMAT_VERSION: u32 = 6;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -111,6 +111,8 @@ pub struct BackupStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupData {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub sync_history: std::collections::BTreeMap<String, Vec<serde_json::Value>>,
     pub projects: Vec<serde_json::Value>,
     pub categories: Vec<serde_json::Value>,
     pub tags: Vec<serde_json::Value>,
@@ -259,7 +261,7 @@ fn checksum_of(data: &BackupData) -> AppResult<String> {
 /// 把单表整表读成 JSON 行数组。
 ///
 /// 表名只可能来自本文件内的字面量，不存在拼接注入风险。
-async fn dump_table_from(
+pub(crate) async fn dump_table_from(
     conn: &mut sqlx::SqliteConnection,
     table: &str,
 ) -> AppResult<Vec<serde_json::Value>> {
@@ -280,6 +282,15 @@ async fn dump_table_from(
         "settings" => "SELECT * FROM settings",
         "memo_documents" => "SELECT * FROM memo_documents",
         "content_assets" => "SELECT * FROM content_assets",
+        "memo_sync_events" => "SELECT * FROM memo_sync_events",
+        "memo_sync_parents" => "SELECT * FROM memo_sync_parents",
+        "cloud_records" => "SELECT * FROM cloud_records",
+        "cloud_events" => "SELECT * FROM cloud_events",
+        "cloud_parents" => "SELECT * FROM cloud_parents",
+        "cloud_packets" => "SELECT * FROM cloud_packets",
+        "cloud_packet_parents" => "SELECT * FROM cloud_packet_parents",
+        "cloud_files" => "SELECT * FROM cloud_files",
+        "cloud_aliases" => "SELECT * FROM cloud_aliases",
         "task_series_template" => "SELECT * FROM task_series_template",
         "task_series_tags" => "SELECT * FROM task_series_tags",
         "task_series_skips" => "SELECT * FROM task_series_skips",
@@ -407,12 +418,20 @@ async fn build_backup_data(db: &Db) -> AppResult<BackupData> {
 }
 
 async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<BackupData> {
+    let mut sync_history = std::collections::BTreeMap::new();
+    for table in crate::cloud_sync::HISTORY_TABLES {
+        let rows = dump_table_from(conn, table).await?;
+        if !rows.is_empty() {
+            sync_history.insert(table.to_owned(), rows);
+        }
+    }
     let attachment_count: i64 = sqlx::query("SELECT COUNT(*) AS n FROM attachments")
         .fetch_one(&mut *conn)
         .await?
         .try_get("n")?;
 
     Ok(BackupData {
+        sync_history,
         projects: dump_table_from(conn, "projects").await?,
         categories: dump_table_from(conn, "categories").await?,
         tags: dump_table_from(conn, "tags").await?,
@@ -525,6 +544,14 @@ fn read_backup(path: &Path) -> AppResult<BackupFile> {
 
 fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
     let mut issues = Vec::new();
+    if file
+        .data
+        .sync_history
+        .keys()
+        .any(|key| !crate::cloud_sync::HISTORY_TABLES.contains(&key.as_str()))
+    {
+        issues.push("备份包含不支持的同步历史表".into());
+    }
     if file.format_version == 0 || file.format_version > BACKUP_FORMAT_VERSION {
         issues.push(format!(
             "备份格式版本 {} 不在当前支持的 1–{} 范围内",
@@ -758,6 +785,7 @@ pub async fn backup_restore(state: State<'_, AppState>, path: String) -> AppResu
 }
 
 async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
+    let _sync_guard = crate::cloud_sync::ENGINE.lock().await;
     let p = PathBuf::from(&path);
 
     // 1) 先做与预览相同的校验（防止前端跳过预览直接调用）
@@ -790,6 +818,15 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
 
     // 顺序必须满足外键依赖：先删子表，再删父表
     for t in [
+        "memo_sync_parents",
+        "cloud_packet_parents",
+        "cloud_packets",
+        "cloud_files",
+        "cloud_aliases",
+        "memo_sync_events",
+        "cloud_parents",
+        "cloud_events",
+        "cloud_records",
         "task_series_template",
         "task_series_tags",
         "task_series_skips",
@@ -879,6 +916,14 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
             _ => {}
         }
     }
+
+    for table in crate::cloud_sync::HISTORY_TABLES {
+        if let Some(rows) = file.data.sync_history.get(table) {
+            let cols = table_columns(db, table).await?;
+            insert_rows(&mut tx, table, rows, &cols).await?;
+        }
+    }
+    crate::cloud_sync::prepare_restore(&mut tx, file.format_version).await?;
 
     tx.commit().await?;
     log::info!(
@@ -2108,6 +2153,7 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2139,6 +2185,7 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2173,6 +2220,7 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2207,6 +2255,7 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
             series_skips: vec![],
@@ -2253,6 +2302,7 @@ mod tests {
                 settings: vec![],
                 memo_documents: vec![],
                 content_assets: vec![],
+                sync_history: Default::default(),
                 series_templates: vec![],
                 series_tags: vec![],
                 series_skips: vec![],
