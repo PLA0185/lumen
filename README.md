@@ -456,7 +456,8 @@ pnpm typecheck                # 类型检查
 | [自行审查与修复](docs/self-review-2026-09-29.md) | 完整备份漏项、搜索状态、窗口监听的修复与实际验证范围 |
 | [云同步官方接口调研](docs/api-research-cloud-sync.md) | OneDrive、坚果云及其它路线的官方依据、限额、推荐与未核实项 |
 | [云同步设计](docs/design-cloud-sync.md) | 备忘 / 流程优先、及时保存上传、跨电脑读取、因果冲突及任务范围扩展要求 |
-| [云同步接口契约](docs/cloud-sync-api.md) | 尚未实现的 Tauri 命令、存储驱动、错误与完成语义；不作为已可用功能宣传 |
+| [云同步接口契约](docs/cloud-sync-api.md) | 前期拟定契约；当前实际实现与交付状态以本轮实现记录为准 |
+| [WebDAV 同步实现与交付状态](docs/cloud-sync-implementation-2026-09-30.md) | 全量上传、本机继承范围、备忘自动保存、历史冲突；真实服务及发布安装尚未验收 |
 | [图片、文件与 AI 内容输入](docs/design-content-inputs.md) | 任务、备忘、流程与 AI 共用编辑器，资源本体备份及服务商格式边界 |
 | [自动更新签名核验](docs/updater-key-verification-2026-09-30.md) | 更新地址可读、同版本不会更新、本机私钥不匹配的实际证据与未发布原因 |
 | `docs/tech-selection.md` | 技术选型记录 |
