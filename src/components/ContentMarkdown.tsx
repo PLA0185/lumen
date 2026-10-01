@@ -9,12 +9,13 @@ const schema = {
   ...defaultSchema,
   protocols: { ...defaultSchema.protocols, src: ['lumen-asset'], href: ['http', 'https', 'mailto', 'lumen-asset'] },
 }
-const RemoveAssetContext = createContext<((id: string) => void) | undefined>(undefined)
+type AssetActions = { onRemoveAsset?: (id: string) => void; onExtractAsset?: (asset: ContentAsset) => void }
+const AssetActionsContext = createContext<AssetActions>({})
 type LoadedAsset = { asset: ContentAsset; url: string }
 type CachedAsset = { loaded?: LoadedAsset; pending: Promise<LoadedAsset> }
 const AssetCacheContext = createContext(new Map<string, CachedAsset>())
 function Asset({ id, image }: { id: string; image: boolean }) {
-  const onRemove = useContext(RemoveAssetContext)
+  const { onRemoveAsset: onRemove, onExtractAsset: onExtract } = useContext(AssetActionsContext)
   const cache = useContext(AssetCacheContext)
   const [asset, setAsset] = useState<ContentAsset | null>(cache.get(id)?.loaded?.asset ?? null)
   const [error, setError] = useState('')
@@ -51,6 +52,7 @@ function Asset({ id, image }: { id: string; image: boolean }) {
         catch (e) { setError(contentError(e)) }
       })()
     }}>{asset.name} · {(asset.byteSize / 1024).toFixed(1)} KB · 另存为</button>}
+    {asset && onExtract && <button type="button" className="btn btn--quiet btn--sm" aria-label={`识别内容：${asset.name}`} onClick={() => onExtract(asset)}>识别内容</button>}
     {onRemove && <button type="button" className="btn btn--ghost btn--sm" aria-label={`移除${image ? '图片' : '文件'}：${asset?.name ?? id}`} title="仅从当前内容移除，保留本地资源及其它记录" onClick={() => onRemove(id)}>移除{image ? '图片' : '文件'}</button>}
     </span>
   </span>
@@ -60,7 +62,7 @@ const components: Components = {
   img: ({ src, alt }) => assetId(src) ? <Asset key={assetId(src)} id={assetId(src)!} image /> : <span>{alt || '外部图片'}（请粘贴图片本身或拖入文件）</span>,
   a: ({ href, children: label }) => assetId(href) ? <Asset key={assetId(href)} id={assetId(href)!} image={false} /> : <a href={href} target="_blank" rel="noreferrer">{label}</a>,
 }
-export function ContentMarkdown({ children, onRemoveAsset }: { children: string; onRemoveAsset?: (id: string) => void }) {
+export function ContentMarkdown({ children, onRemoveAsset, onExtractAsset }: { children: string } & AssetActions) {
   const cache = useRef(new Map<string, CachedAsset>()).current
   useEffect(() => {
     const referenced = new Set([...children.matchAll(/lumen-asset:([0-9a-f-]{36})/gi)].map(match => match[1]))
@@ -73,7 +75,7 @@ export function ContentMarkdown({ children, onRemoveAsset }: { children: string;
     for (const entry of cache.values()) if (entry.loaded?.url) URL.revokeObjectURL(entry.loaded.url)
     cache.clear()
   }, [cache])
-  return <AssetCacheContext.Provider value={cache}><RemoveAssetContext.Provider value={onRemoveAsset}><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeSanitize, schema]]}
+  return <AssetCacheContext.Provider value={cache}><AssetActionsContext.Provider value={{ onRemoveAsset, onExtractAsset }}><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeSanitize, schema]]}
     urlTransform={(url) => assetId(url) ? url : defaultUrlTransform(url)}
-    components={components}>{children}</Markdown></RemoveAssetContext.Provider></AssetCacheContext.Provider>
+    components={components}>{children}</Markdown></AssetActionsContext.Provider></AssetCacheContext.Provider>
 }
