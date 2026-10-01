@@ -405,6 +405,7 @@ select {
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   padding: 14px 20px;
@@ -413,7 +414,9 @@ select {
 }
 
 .topbar__heading {
-  min-width: 0;
+  flex: 1 0 200px;
+  min-width: min(200px, 100%);
+  max-width: 100%;
 }
 
 .topbar__title {
@@ -430,10 +433,15 @@ select {
 
 .topbar__actions {
   display: flex;
+  flex: 2 1 520px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px;
   align-items: center;
   margin-left: auto;
 }
+.topbar__actions > * { max-width: 100%; }
 
 /* 搜索框 */
 .search {
