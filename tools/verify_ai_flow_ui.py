@@ -98,6 +98,8 @@ try:
     assert main.wait_for('!document.querySelector("dialog[open]") && document.querySelector("[aria-label=备忘标题]")?.value.includes("隔离验收")')
     time.sleep(2)
     check('生成成功也不会自动保存', len(invoke('memo_list', {'query': '', 'deletedOnly': False})) == 1)
+    check('生成后默认显示顺序画布', main.eval('!!document.querySelector(`[aria-label="流程画布"]`)'))
+    button('返回列表')
     check('负责人未提供时保持空白', main.eval('document.querySelector(`[aria-label="第 2 步负责人"]`).value') == '')
     check('模型指定原图实际出现在对应步骤', main.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0') and asset['id'] in main.eval('document.querySelector(`[aria-label="第 1 步说明"]`).value'))
     picker = '[aria-label="第 2 步关联原图"]'
