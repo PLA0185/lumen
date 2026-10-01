@@ -38,9 +38,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(request)
+        user_parts = request['messages'][-1]['content']
+        resource_text = next(part['text'] for part in user_parts if part.get('type') == 'text')
+        manifest = json.loads(resource_text.split('随后提供的图片、文件按以下资源顺序表排列：\n', 1)[1])
         content = '不是 JSON' if len(requests) == 1 else json.dumps({
-            'title': '隔离验收：订单处理', 'category': '验收', 'bodyMd': '负责人不明确时待确认。',
-            'steps': [{'title': '核对订单', 'owner': '销售', 'detail': '核对型号与数量。'},
+            'title': '隔离验收：订单处理', 'category': '验收', 'bodyMd': '负责人未提供时留空。',
+            'steps': [{'title': '核对订单', 'owner': '销售', 'detail': '核对型号与数量。', 'assetIds': [manifest[0]['id']]},
                       {'title': '通知仓库', 'owner': '', 'detail': '发送确认后的订单。'}],
         }, ensure_ascii=False)
         body = json.dumps({'choices': [{'message': {'content': content}, 'finish_reason': 'stop'}]}).encode()
@@ -62,7 +65,7 @@ def check(label, condition):
     print('PASS: ' + label, flush=True)
 
 def button(label):
-    probe = 'Array.from(document.querySelectorAll("button")).find(b=>b.textContent.trim()===' + json.dumps(label) + ')'
+    probe = 'Array.from(document.querySelectorAll("button")).find(b=>!b.disabled && b.textContent.trim()===' + json.dumps(label) + ')'
     assert main.wait_for('(' + probe + ')?.disabled === false'), label
     main.eval(probe + '.dataset.flowVerify="1"')
     assert main.wait_for('Array.from(document.querySelectorAll("dialog[open] img")).every(i=>i.complete && i.naturalWidth>0)')
@@ -95,7 +98,13 @@ try:
     assert main.wait_for('!document.querySelector("dialog[open]") && document.querySelector("[aria-label=备忘标题]")?.value.includes("隔离验收")')
     time.sleep(2)
     check('生成成功也不会自动保存', len(invoke('memo_list', {'query': '', 'deletedOnly': False})) == 1)
-    check('负责人缺失明确标为待确认', main.eval('document.querySelector(`[aria-label="第 2 步负责人"]`).value') == '待确认')
+    check('负责人未提供时保持空白', main.eval('document.querySelector(`[aria-label="第 2 步负责人"]`).value') == '')
+    check('模型指定原图实际出现在对应步骤', main.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0') and asset['id'] in main.eval('document.querySelector(`[aria-label="第 1 步说明"]`).value'))
+    picker = '[aria-label="第 2 步关联原图"]'
+    main.eval('(()=>{const e=document.querySelector('+json.dumps(picker)+');Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,"value").set.call(e,'+json.dumps(asset['id'])+');e.dispatchEvent(new Event("change",{bubbles:true}))})()')
+    check('已有原图补选可预览', main.wait_for('document.querySelectorAll(".flow-image-picker img").length===1 && document.querySelector(".flow-image-picker img")?.naturalWidth>0'))
+    button('放到此步骤')
+    check('补选仅改变对应步骤且不重新请求 AI', asset['id'] in main.eval('document.querySelector(`[aria-label="第 2 步说明"]`).value') and len(requests)==2)
     ui.set_react_input(main, '[aria-label="第 2 步负责人"]', '仓库')
     time.sleep(2)
     check('修改预览仍不自动保存', len(invoke('memo_list', {'query': '', 'deletedOnly': False})) == 1)
@@ -104,6 +113,7 @@ try:
     rows = invoke('memo_list', {'query': '', 'deletedOnly': False})
     flow = invoke('memo_get', {'id': next(r['id'] for r in rows if r['kind'] == 'flow')})
     check('确认后新建流程，原材料及手动修改保留', len(rows) == 2 and flow['bodyMd'].endswith(source) and flow['steps'][1]['owner'] == '仓库')
+    check('确认保存后两步原图引用均保留', all('![' in step['detail'] and 'lumen-asset:'+asset['id'] in step['detail'] for step in flow['steps']))
     check('已有私人记录没有覆盖', invoke('memo_get', {'id': private['id']}) == private)
     check('真实 HTTP 仅发送选中的文字和图片字节', len(requests) == 2 and all('不应发送给生成请求的私人正文' not in json.dumps(r, ensure_ascii=False) for r in requests))
     parts = requests[-1]['messages'][-1]['content']
