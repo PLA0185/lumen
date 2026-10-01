@@ -99,9 +99,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Lumen ${{ github.ref_name }}'
           releaseBody: |
-            修复坚果云首次连接缺目录的 HTTP 409 和禁止覆盖发布能力探测。
-            修复日历拖拽本地日期偏移，设置页显示实际数据库迁移版本。
-            沿用 v0.4.0 的签名链和本地数据目录，无需重建任务。
+            沿用既有更新签名链和本地数据目录，无需重建任务。
             完整更新内容见仓库中的 RELEASE_NOTES.md。安装包、签名与 latest.json 见下方 Assets。
           releaseDraft: true
           prerelease: false
