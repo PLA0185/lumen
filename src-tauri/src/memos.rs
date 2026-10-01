@@ -281,9 +281,13 @@ mod tests {
         let db = Db::init(&dir).await.unwrap();
         let mut draft = input();
         draft.steps[0].title.clear();
+        draft.steps[0].owner.clear();
         draft.steps[0].detail = "未写完的说明和图片".into();
         let doc = save_impl(&db, draft).await.unwrap();
         assert!(doc.steps[0].title.is_empty());
+        assert!(get_impl(&db, &doc.summary.id).await.unwrap().steps[0]
+            .owner
+            .is_empty());
         assert_eq!(
             get_impl(&db, &doc.summary.id).await.unwrap().steps[0].detail,
             "未写完的说明和图片"
