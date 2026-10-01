@@ -9,6 +9,7 @@
 import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode } from './types'
+import type { SaveMemoInput } from './memos-ipc'
 
 /** 提供商 */
 export type AiProvider = 'deep_seek' | 'open_ai' | 'claude' | 'custom'
@@ -173,6 +174,7 @@ export const AI_CMD = {
   clearKey: 'ai_clear_key',
   status: 'ai_status',
   organize: 'ai_organize',
+  generateFlow: 'ai_generate_flow',
   breakdown: 'ai_breakdown',
   plan: 'ai_plan',
   review: 'ai_review',
@@ -240,6 +242,8 @@ export const aiStatus = (): Promise<AiStatus> => call(AI_CMD.status)
 export function inputAssetIds(text: string): string[] {
   return [...new Set([...text.matchAll(/lumen-asset:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\))/gi)].map((m) => m[1]!))]
 }
+export const aiGenerateFlow = (config: ProviderConfig, text: string): Promise<SaveMemoInput> =>
+  call(AI_CMD.generateFlow, { config, input: { text, assetIds: inputAssetIds(text) } })
 
 export const aiOrganize = (
   config: ProviderConfig,

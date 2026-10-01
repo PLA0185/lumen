@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import * as memo from '../lib/memos-ipc'
+import * as ai from '../lib/ai-ipc'
 import { MemosView } from './MemosView'
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
@@ -50,6 +51,52 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  const config: ai.ProviderConfig = { provider: 'custom', baseUrl: 'http://localhost:11434/v1', model: 'vision-test', timeoutSeconds: 30, maxOutputTokens: 2048, hasApiKey: true }
+  const generated: memo.SaveMemoInput = { id: null, expectedRevision: null, title: '订单核对流程', category: '销售', kind: 'flow', bodyMd: '## 原始材料\n\n张三：先核对订单，再通知仓库。', steps: [{ id: 'step-1', title: '核对订单', owner: '待确认', detail: '核对订单数量。' }] }
+  it('AI 草稿和修改都不自动写库，确认后只保存新的流程', async () => {
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
+    const generate = vi.spyOn(ai, 'aiGenerateFlow').mockResolvedValue({ ...generated, id: 'existing-record', expectedRevision: 8 })
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'new-flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount()
+    await click('AI 生成流程')
+    await fill('流程原始材料', '张三：先核对订单，再通知仓库。')
+    await click('生成流程草稿')
+    expect(generate).toHaveBeenCalledWith(config, '张三：先核对订单，再通知仓库。')
+    await act(async () => vi.advanceTimersByTimeAsync(10000))
+    await fill('第 1 步负责人', '销售')
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(save).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('AI 草稿待确认')
+    await click('确认保存流程')
+    expect(save).toHaveBeenCalledOnce()
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: null, expectedRevision: null, bodyMd: generated.bodyMd, steps: [expect.objectContaining({ owner: '销售' })] }))
+    expect(document.body.textContent).toContain('已保存到本机')
+  })
+  it('生成失败保留材料，重试生成后取消草稿仍不保存', async () => {
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
+    vi.spyOn(ai, 'aiGenerateFlow').mockRejectedValueOnce(new Error('当前模型不支持图片')).mockResolvedValue(generated)
+    const save = vi.spyOn(memo, 'memoSave')
+    await mount()
+    await click('AI 生成流程')
+    await fill('流程原始材料', '截图对应的聊天材料')
+    await click('生成流程草稿')
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('当前模型不支持图片')
+    expect((document.querySelector('[aria-label="流程原始材料"]') as HTMLTextAreaElement).value).toBe('截图对应的聊天材料')
+    await click('生成流程草稿')
+    await click('取消编辑')
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(save).not.toHaveBeenCalled()
+  })
+  it('AI 流程入口接受文字与截图材料，打开不会保存记录', async () => {
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(null)
+    const save = vi.spyOn(memo, 'memoSave')
+    await mount()
+    await click('AI 生成流程')
+    expect(document.querySelector('[aria-label="流程原始材料"]')).toBeTruthy()
+    expect(document.body.textContent).toContain('点击生成才会发送')
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(save).not.toHaveBeenCalled()
+  })
   it('未填写步骤标题的流程也能自动保存，图片链接与说明保留', async () => {
     const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'draft-flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
     await mount()

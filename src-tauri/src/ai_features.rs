@@ -329,7 +329,7 @@ pub fn ai_preview_edit(preview_id: String, edits: Vec<PreviewEdit>) -> AppResult
 /// 即使要求了 JSON 输出，模型仍可能包上 ```json 代码块或前后加解释文字
 /// （DeepSeek 的 json_object 模式尤其如此，官方也提示需要自行在 prompt 中
 /// 强调 json）。因此这里做一次宽松提取，而不是直接 `from_str` 失败。
-fn extract_json(text: &str) -> AppResult<serde_json::Value> {
+pub(crate) fn extract_json(text: &str) -> AppResult<serde_json::Value> {
     let t = text.trim();
 
     // 1) 直接就是 JSON

@@ -36,6 +36,7 @@ pub mod db;
 pub mod error;
 pub mod focus;
 pub mod holiday_calendar;
+pub mod memo_ai;
 pub mod memos;
 pub mod models;
 pub mod organize;
@@ -430,6 +431,7 @@ pub fn run() {
             ai::ai_status,
             // ---- AI 功能（§6：预览确认后才写库）----
             ai_features::ai_organize,
+            memo_ai::ai_generate_flow,
             ai_features::ai_breakdown,
             ai_features::ai_plan,
             ai_features::ai_review,

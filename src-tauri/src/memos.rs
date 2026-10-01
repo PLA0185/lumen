@@ -38,7 +38,7 @@ pub struct MemoDocument {
     pub steps: Vec<FlowStep>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SaveMemoInput {
     pub id: Option<String>,

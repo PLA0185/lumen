@@ -8,6 +8,7 @@ import { onDataChanged } from '../lib/data-change'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { Icon } from './Icons'
 import { CloudHistory } from './CloudHistory'
+import { AiFlowDialog } from './AiFlowDialog'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -41,6 +42,8 @@ export function MemosView({
   const [busy, setBusy] = useState(false)
   const [autoSaving, setAutoSaving] = useState(false)
   const [historyId, setHistoryId] = useState('')
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiDraft, setAiDraft] = useState(false)
   const saving = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -107,6 +110,7 @@ export function MemosView({
     setNotice(null)
     await runLatestRequest(detailGate, () => memo.memoGet(id), {
       apply: (doc) => {
+        setAiDraft(false)
         setSelected(doc)
         setDraft(draftOf(doc))
         setEditing(false)
@@ -119,6 +123,7 @@ export function MemosView({
     if (!canLeave()) return
     detailGate.invalidate()
     setSelected(null)
+    setAiDraft(false)
     setEditing(true)
     setError(null)
     setNotice(null)
@@ -136,7 +141,7 @@ export function MemosView({
     })
   }
   const save = useCallback(async (automatic = false) => {
-    if (!draft || busy || saving.current) return
+    if (!draft || busy || saving.current || (automatic && aiDraft)) return
     saving.current = true
     if (automatic) setAutoSaving(true)
     else setBusy(true)
@@ -147,7 +152,7 @@ export function MemosView({
       setSelected(doc)
       // Keep text typed while the automatic write was pending; only rebase its version.
       if (automatic) setDraft(current => current ? { ...current, id: doc.id, expectedRevision: doc.revision } : current)
-      else { setDraft(draftOf(doc)); setEditing(false) }
+      else { setDraft(draftOf(doc)); setEditing(false); setAiDraft(false) }
       setNotice('已保存到本机')
       await reload()
     } catch (e) {
@@ -157,12 +162,12 @@ export function MemosView({
       setAutoSaving(false)
       saving.current = false
     }
-  }, [draft, busy, reload])
+  }, [draft, busy, reload, aiDraft])
   useEffect(() => {
-    if (!editing || !dirty || busy || autoSaving || error || !draft?.title.trim()) return
+    if (!editing || !dirty || busy || autoSaving || error || aiOpen || aiDraft || !draft?.title.trim()) return
     const timer = setTimeout(() => void save(true), 1000)
     return () => clearTimeout(timer)
-  }, [editing, dirty, busy, autoSaving, error, draft, save])
+  }, [editing, dirty, busy, autoSaving, error, draft, save, aiOpen, aiDraft])
   const removeOrRestore = async () => {
     if (!selected || !canLeave()) return
     const deleted = !selected.deletedAt
@@ -232,6 +237,7 @@ export function MemosView({
           <Icon name="plus" size={15} />
           新建流程
         </button>
+        <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => { if (canLeave()) setAiOpen(true) }}>AI 生成流程</button>
         <select
           className="input input--compact"
           aria-label="备忘分类筛选"
@@ -324,7 +330,7 @@ export function MemosView({
                 <span className="chip">
                   {draft.kind === 'flow' ? '业务流程' : '备忘录'}
                 </span>
-                {dirty && <span className="setgroup__hint">{autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
+                {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
                   (editing ? (
@@ -337,7 +343,7 @@ export function MemosView({
                         }
                         onClick={() => void save(false)}
                       >
-                        {busy || autoSaving ? '保存中…' : '保存并查看'}
+                        {busy || autoSaving ? '保存中…' : aiDraft ? '确认保存流程' : '保存并查看'}
                       </button>
                       <button
                         className="btn btn--ghost"
@@ -346,6 +352,7 @@ export function MemosView({
                           if (!canLeave()) return
                           setDraft(selected ? draftOf(selected) : null)
                           setEditing(false)
+                          setAiDraft(false)
                         }}
                       >
                         取消编辑
@@ -567,6 +574,7 @@ export function MemosView({
         </article>
       </div>
       {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
+      {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}
     </section>
   )
 }
