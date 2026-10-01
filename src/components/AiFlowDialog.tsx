@@ -39,6 +39,7 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
     <section className="ai-flow-dialog__material" aria-label="原始材料输入区">
       <h3>原始材料</h3>
       <p className="setgroup__hint">可以直接粘贴文字，也可以粘贴或拖入截图。不明确的内容会标为“待确认”。</p>
+      <p className="setgroup__hint">文字和图片可以混用：按聊天顺序粘贴，把相关原图放在对应文字旁；折叠的图片先展开，模糊缩略图请换原图。</p>
       <ContentEditor className="input selectable" aria-label="流程原始材料" value={text} onChange={e => setText(e.target.value)} onBusyChange={setImporting} disabled={busy} maxLength={20000} rows={10} placeholder={'例如：\n张三：收到订单，先核对型号和数量。\n李四：确认后发给仓库，缺货时先联系客户。\n\n也可以粘贴微信聊天记录或截图。'} />
     </section>
     <footer className="ai-flow-dialog__footer">
