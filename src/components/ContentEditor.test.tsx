@@ -10,14 +10,40 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({ readImage: vi.fn(), rea
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
 afterEach(() => { act(() => root?.unmount()); root = undefined; vi.restoreAllMocks(); document.body.innerHTML = '' })
-async function mount() {
+async function mount(initial = '操作说明', readOnly = false) {
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
-  function Editor() { const [value, setValue] = useState('操作说明'); return <ContentEditor aria-label="内容" value={value} onChange={(e) => setValue(e.target.value)} /> }
+  function Editor() { const [value, setValue] = useState(initial); return <ContentEditor aria-label="内容" value={value} readOnly={readOnly} onChange={(e) => setValue(e.target.value)} /> }
   await act(async () => root!.render(<Editor />))
   const field = host.querySelector('textarea')!; field.focus(); field.setSelectionRange(4,4)
   return field
 }
 const asset: assets.ContentAsset = { id:'00000000-0000-7000-8000-000000000001', name:'业务截图.png', mime:'image/png',dataBase64:'',byteSize:24,sha256:'hash',createdAt:'2026-09-30' }
+it('移除插图仅去掉当前材料中该图引用，保留文字和其它图片', async () => {
+  const second = { ...asset, id: '00000000-0000-7000-8000-000000000002', name: '另一张图.png' }
+  vi.spyOn(assets, 'assetGet').mockImplementation(async id => id === asset.id ? asset : second)
+  const initial = `订单说明\n${assets.assetMarkdown(asset)}\n改到12月8号\n${assets.assetMarkdown(second)}\n保留这段文字`
+  const field = await mount(initial)
+  const remove = [...document.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === '移除图片：业务截图.png')
+  expect(remove).toBeTruthy()
+  await act(async () => remove!.click())
+  expect(field.value).toBe(initial.replace(assets.assetMarkdown(asset), ''))
+  expect(document.querySelectorAll('.content-asset')).toHaveLength(1)
+})
+it('原图读取失败时仍可移除失效引用', async () => {
+  vi.spyOn(assets, 'assetGet').mockRejectedValue(new Error('图片不存在'))
+  const field = await mount(`原说明\n${assets.assetMarkdown(asset)}`)
+  const remove = [...document.querySelectorAll('button')].find(b => b.textContent === '移除图片')
+  expect(remove).toBeTruthy()
+  await act(async () => remove!.click())
+  expect(field.value).toBe('原说明\n')
+})
+it('只读预览不出现移除按钮', async () => {
+  vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
+  const source = assets.assetMarkdown(asset)
+  const field = await mount(source, true)
+  expect([...document.querySelectorAll('button')].some(b => b.textContent === '移除图片')).toBe(false)
+  expect(field.value).toBe(source)
+})
 it('连续插入图片或文件时不能从中间拆坏现有资源引用', () => {
   const token = assets.assetMarkdown(asset)
   expect(assets.contentInsertionRange(token, 10, 10)).toEqual({start:token.length,end:token.length})

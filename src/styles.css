@@ -3003,6 +3003,8 @@ body[data-window='quick-add'] {
 .content-editor__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 5px; }
 .content-asset { display: inline-flex; flex-direction: column; max-width: 100%; gap: 4px; }
 .content-asset__image { max-width: 100%; max-height: 500px; object-fit: contain; border-radius: 5px; }
+.content-asset__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.content-asset__actions .btn { white-space: normal; text-align: left; }
 .weekly-recurring__item { padding: 16px; margin: 10px 0; border: 1px solid var(--c-border); border-radius: 6px; background: var(--c-surface); }
 .weekly-recurring__item h3 { margin: 0 0 8px; }
 

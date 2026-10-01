@@ -19,6 +19,17 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
   const latest = useRef(props)
   latest.current = props
   const images = String(props.value ?? '').match(/!\[[^\]]*\]\(lumen-asset:[^)]+\)/g) ?? []
+  const removeAsset = (id: string) => {
+    const field = ref.current
+    if (!field || field.disabled || field.readOnly || pending.current) return
+    const value = field.value.replace(/!?\[[^\]\n]*\]\(lumen-asset:([0-9a-f-]{36})\)/gi, (token, reference: string) => reference.toLowerCase() === id.toLowerCase() ? '' : token)
+    field.focus()
+    field.setSelectionRange(0, field.value.length)
+    if (document.execCommand?.('insertText', false, value)) return
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(field, value)
+    field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }))
+  }
+  const onRemoveAsset = props.disabled || props.readOnly || busy ? undefined : removeAsset
 
   const insert = async (load: () => Promise<string>) => {
     const field = ref.current
@@ -115,7 +126,7 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
       <span className="setgroup__hint">可粘贴图片、拖入文件，单文件最多 20 MiB</span>
     </div>
     {error && <p className="formerr" role="alert">{error}</p>}
-    {!preview && images.length > 0 && <div className="mdpreview" aria-label="已插入图片预览"><ContentMarkdown>{images.join('\n')}</ContentMarkdown></div>}
-    {preview && <div className="mdpreview"><ContentMarkdown>{String(props.value ?? '')}</ContentMarkdown></div>}
+    {!preview && images.length > 0 && <div className="mdpreview" aria-label="已插入图片预览"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{images.join('\n')}</ContentMarkdown></div>}
+    {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{String(props.value ?? '')}</ContentMarkdown></div>}
   </div>
 }
