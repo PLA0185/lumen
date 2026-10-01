@@ -1,3 +1,4 @@
+import { AppearanceSlider } from './AppearanceSlider'
 /**
  * 设置页（任务书 §3 / §9）。
  *
@@ -28,6 +29,7 @@ import { AiPanel } from './AiPanel'
 import type { BackupEntry, ImportPreview } from '../lib/backup-ipc'
 import type { DataPaths } from '../lib/types'
 import { Icon } from './Icons'
+import { applyAppearance } from '../lib/appearance'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -104,13 +106,13 @@ export function SettingsView() {
   const applyScale = (v: string) => {
     setScale(v)
     localStorage.setItem('lumen.uiScale', v)
-    document.documentElement.style.setProperty('--ui-scale', v)
+    void applyAppearance().catch(e => setError(`界面缩放失败：${errText(e)}`))
   }
 
   const applyFontSize = (v: string) => {
     setFontSize(v)
     localStorage.setItem('lumen.fontSize', v)
-    document.documentElement.style.setProperty('--font-size-base', v)
+    void applyAppearance().catch(e => setError(`字体调整失败：${errText(e)}`))
   }
 
   const applyMotion = (v: string) => {
@@ -378,17 +380,17 @@ export function SettingsView() {
           <div className="setrow">
             <div className="setrow__label">
               <div className="setrow__title">字体大小</div>
-              <div className="setrow__desc">调整后立即生效，便于在高分屏或视力不佳时阅读。</div>
+              <div className="setrow__desc">拖动时预览数值，松手后应用，便于调整阅读大小。</div>
             </div>
             <div className="setrow__control">
-              <input
-                type="range"
+              <AppearanceSlider
                 min="12"
                 max="20"
                 step="1"
                 value={parseInt(fontSize, 10) || 14}
                 aria-label="字体大小（像素）"
-                onChange={(e) => applyFontSize(`${e.target.value}px`)}
+                onPreview={v => setFontSize(`${v}px`)}
+                onCommit={v => applyFontSize(`${v}px`)}
               />
               <span className="setrow__value">{parseInt(fontSize, 10) || 14} px</span>
             </div>
@@ -397,17 +399,17 @@ export function SettingsView() {
           <div className="setrow">
             <div className="setrow__label">
               <div className="setrow__title">界面缩放</div>
-              <div className="setrow__desc">整体放大或缩小界面，适合不同尺寸的显示器。</div>
+              <div className="setrow__desc">拖动时预览比例，松手后整体缩放按钮、侧栏和间距。</div>
             </div>
             <div className="setrow__control">
-              <input
-                type="range"
+              <AppearanceSlider
                 min="0.8"
                 max="1.5"
                 step="0.05"
                 value={Number(scale) || 1}
                 aria-label="界面缩放比例"
-                onChange={(e) => applyScale(e.target.value)}
+                onPreview={setScale}
+                onCommit={applyScale}
               />
               <span className="setrow__value">{Math.round((Number(scale) || 1) * 100)}%</span>
             </div>

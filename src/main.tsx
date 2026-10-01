@@ -5,6 +5,8 @@ import { FloatingToday, QuickAddWindow } from './components/FloatingToday'
 import './styles.css'
 import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { installFreshPaste } from './lib/fresh-paste'
+import { installAppearance } from './lib/appearance'
+import { contentError } from './lib/content-assets'
 
 if ('__TAURI_INTERNALS__' in window) {
   const removePasteHandler = installFreshPaste(readText, () => {
@@ -24,15 +26,6 @@ if (savedTheme === 'light' || savedTheme === 'dark') {
   document.documentElement.dataset.theme = savedTheme
 }
 
-// 字体与缩放（§3）：在设置页可调，这里应用已保存的值
-const savedScale = localStorage.getItem('lumen.uiScale')
-if (savedScale) {
-  document.documentElement.style.setProperty('--ui-scale', savedScale)
-}
-const savedFontSize = localStorage.getItem('lumen.fontSize')
-if (savedFontSize) {
-  document.documentElement.style.setProperty('--font-size-base', savedFontSize)
-}
 // 动画开关（§3「动画应轻且可关闭」）
 if (localStorage.getItem('lumen.motion') === 'off') {
   document.documentElement.dataset.motion = 'off'
@@ -90,6 +83,20 @@ if (!rootEl) {
 
 // 给 body 打上窗口类型，便于 CSS 针对不同窗口调整（例如去掉外边距）
 document.body.dataset.window = Root === FloatingToday ? 'floating' : Root === QuickAddWindow ? 'quick-add' : 'main'
+
+void installAppearance(error => {
+  const alert = document.createElement('div')
+  alert.className = 'paste-error'
+  alert.setAttribute('role', 'alert')
+  alert.textContent = `界面缩放未能应用：${contentError(error)}`
+  document.body.append(alert)
+}).then(dispose => { if (import.meta.hot) import.meta.hot.dispose(dispose) }).catch(error => {
+  const alert = document.createElement('div')
+  alert.className = 'paste-error'
+  alert.setAttribute('role', 'alert')
+  alert.textContent = `界面缩放初始化失败：${contentError(error)}`
+  document.body.append(alert)
+})
 
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
