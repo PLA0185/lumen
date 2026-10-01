@@ -136,32 +136,13 @@ impl KnowledgeContext {
             ));
         }
         let query = query.trim().to_lowercase();
-        let matches = |text: &str| {
-            let text = text.to_lowercase();
-            if exact {
-                text.contains(&query)
-            } else {
-                query.split_whitespace().all(|word| {
-                    if text.contains(word) {
-                        true
-                    } else {
-                        let mut chars = text.chars();
-                        word.chars()
-                            .all(|needle| chars.by_ref().any(|ch| ch == needle))
-                    }
-                })
-            }
-        };
         let mut result = Vec::new();
         for doc in &self.documents {
             let text = format!(
                 "{}\n{}\n{}",
                 doc.summary.title, doc.summary.category, doc.body_md
             );
-            let mut hits: Vec<(Option<&str>, String)> = Vec::new();
-            if matches(&text) {
-                hits.push((None, text));
-            }
+            let mut texts = vec![(None, "流程正文".to_owned(), text)];
             for (index, step) in doc.steps.iter().enumerate() {
                 let text = format!(
                     "步骤 {}：{}\n{}\n{}",
@@ -170,54 +151,35 @@ impl KnowledgeContext {
                     step.owner,
                     step.detail
                 );
-                if matches(&text) {
-                    hits.push((Some(&step.id), text));
-                }
+                texts.push((Some(step.id.as_str()), format!("步骤 {}", index + 1), text));
             }
-            for (step, text) in hits {
+            for (step, locator, text) in texts {
+                let Some(positions) = match_positions(&text, &query, exact) else {
+                    continue;
+                };
                 if result.len() == limit {
                     return Ok(result);
                 }
-                let normalized = text.to_lowercase();
-                let match_at = if exact {
-                    normalized.find(&query)
-                } else {
-                    query
-                        .split_whitespace()
-                        .filter_map(|word| normalized.find(word))
-                        .min()
-                };
-                let normalized_offset = match_at
-                    .map(|byte| normalized[..byte].chars().count())
-                    .unwrap_or(0);
-                let mut lowered_chars = 0;
-                let original_offset = text
-                    .chars()
-                    .take_while(|ch| {
-                        let before = lowered_chars;
-                        lowered_chars += ch.to_lowercase().count();
-                        before < normalized_offset
-                    })
-                    .count();
-                let evidence: String = text
-                    .chars()
-                    .skip(original_offset.saturating_sub(200))
-                    .take(8000)
-                    .collect();
-                self.issue(
-                    doc,
-                    step,
-                    None,
-                    step.map(|id| format!("步骤 {id}"))
-                        .unwrap_or_else(|| "流程正文".into()),
-                    evidence.clone(),
-                )?;
+                let chars: Vec<char> = text.chars().collect();
+                let ranges = evidence_ranges(positions, chars.len());
+                let mut excerpts = Vec::new();
+                for range in ranges {
+                    let excerpt: String = chars[range.clone()].iter().collect();
+                    self.issue(
+                        doc,
+                        step,
+                        None,
+                        format!("{locator}；文字 {}–{}", range.start + 1, range.end),
+                        excerpt.clone(),
+                    )?;
+                    excerpts.push(excerpt);
+                }
                 result.push(QaCandidate {
                     flow_id: (!doc.summary.id.is_empty()).then(|| doc.summary.id.clone()),
                     title: doc.summary.title.clone(),
                     category: doc.summary.category.clone(),
                     step_id: step.map(str::to_owned),
-                    evidence,
+                    evidence: excerpts.join("\n…\n"),
                 });
             }
         }
@@ -353,12 +315,82 @@ impl KnowledgeContext {
         Ok(())
     }
 }
+/// Match normalized characters while retaining every original Unicode character position.
+fn match_positions(text: &str, query: &str, exact: bool) -> Option<Vec<std::ops::Range<usize>>> {
+    if query.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut normalized = String::new();
+    let mut original_indices = Vec::new();
+    for (index, ch) in text.chars().enumerate() {
+        for lowered in ch.to_lowercase() {
+            normalized.push(lowered);
+            original_indices.push(index);
+        }
+    }
+    let words: Vec<&str> = if exact {
+        vec![query]
+    } else {
+        query.split_whitespace().collect()
+    };
+    let normalized_chars: Vec<char> = normalized.chars().collect();
+    let mut positions = Vec::new();
+    for word in words {
+        if let Some(byte) = normalized.find(word) {
+            let start = normalized[..byte].chars().count();
+            let end = start + word.chars().count();
+            positions.push(original_indices[start]..original_indices[end - 1] + 1);
+        } else if exact {
+            return None;
+        } else {
+            let mut cursor = 0;
+            for wanted in word.chars() {
+                let found = normalized_chars[cursor..]
+                    .iter()
+                    .position(|ch| *ch == wanted)?
+                    + cursor;
+                positions.push(original_indices[found]..original_indices[found] + 1);
+                cursor = found + 1;
+            }
+        }
+    }
+    Some(positions)
+}
+
+/// Budget context and separators against the 8,000 character cap, including lowercase expansion.
+fn evidence_ranges(
+    mut positions: Vec<std::ops::Range<usize>>,
+    length: usize,
+) -> Vec<std::ops::Range<usize>> {
+    if positions.is_empty() {
+        return std::iter::once(0..length.min(8000)).collect();
+    }
+    let matched: usize = positions.iter().map(|range| range.len()).sum();
+    let separators = positions.len().saturating_sub(1) * 3;
+    let radius = (8000_usize.saturating_sub(matched + separators) / (2 * positions.len())).min(4);
+    positions.sort_unstable_by_key(|range| range.start);
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for position in positions {
+        let context = position.start.saturating_sub(radius)..(position.end + radius).min(length);
+        if let Some(last) = ranges.last_mut() {
+            if context.start <= last.end {
+                last.end = last.end.max(context.end);
+                continue;
+            }
+        }
+        ranges.push(context);
+    }
+    ranges
+}
+
 fn references(text: &str, id: &str) -> bool {
-    // Match actual markdown URLs, never a bare ID or arbitrary filesystem path.
-    regex::Regex::new(r"!?\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})\)")
-        .expect("constant regex")
-        .captures_iter(text)
-        .any(|m| m[1] == *id && uuid::Uuid::parse_str(&m[1]).is_ok())
+    use pulldown_cmark::{Event, Parser, Tag};
+    Parser::new(text).any(|event| match event {
+        Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => dest_url
+            .strip_prefix("lumen-asset:")
+            .is_some_and(|reference| reference == id && uuid::Uuid::parse_str(reference).is_ok()),
+        _ => false,
+    })
 }
 #[cfg(test)]
 mod tests {
@@ -692,6 +724,197 @@ mod boundary_tests {
             .iter()
             .all(|c| c.excerpt.chars().count() <= 8000));
         assert!(ctx.read_attachment(&db, &asset.id, 0).await.is_err());
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod review_regressions {
+    use super::*;
+    fn draft(body: String) -> crate::memos::SaveMemoInput {
+        crate::memos::SaveMemoInput {
+            id: None,
+            expected_revision: None,
+            title: "交付".into(),
+            category: "".into(),
+            kind: "flow".into(),
+            body_md: body,
+            steps: vec![],
+        }
+    }
+    async fn setup() -> (Db, std::path::PathBuf, crate::content_assets::ContentAsset) {
+        let dir = std::env::temp_dir().join(format!("lumen-qa-review-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let asset = content_assets::store_bytes(&db, "order.txt", b"ORDER 42".to_vec())
+            .await
+            .unwrap();
+        (db, dir, asset)
+    }
+    #[tokio::test]
+    async fn literal_markdown_examples_do_not_grant_attachment_access() {
+        let (db, dir, asset) = setup().await;
+        let link = format!("[file](lumen-asset:{})", asset.id);
+        for text in [
+            format!("`{link}`"),
+            format!("```md\n{link}\n```"),
+            format!("    {link}"),
+            format!("\\{link}"),
+            format!("<!-- {link} -->"),
+            format!("[unused]: lumen-asset:{}", asset.id),
+            format!("[file](lumen-asset:{}-extra)", asset.id),
+        ] {
+            let mut ctx = KnowledgeContext::load(
+                &db,
+                QaScope::Current {
+                    current: draft(text.clone()),
+                },
+            )
+            .await
+            .unwrap();
+            assert!(
+                ctx.read_attachment(&db, &asset.id, 0).await.is_err(),
+                "must reject literal {text}"
+            );
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn real_markdown_destination_variants_grant_attachment_access() {
+        let (db, dir, asset) = setup().await;
+        for text in [
+            format!("[file](<lumen-asset:{}>)", asset.id),
+            format!("[file](lumen-asset:{} \"Order title\")", asset.id),
+            format!("![scan](<lumen-asset:{}> 'title')", asset.id),
+            format!(
+                "[file][asset]\n\n[asset]: lumen-asset:{} \"title\"",
+                asset.id
+            ),
+            format!("[file](lumen-asset:{})", asset.id),
+        ] {
+            let mut ctx = KnowledgeContext::load(
+                &db,
+                QaScope::Current {
+                    current: draft(text.clone()),
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                ctx.read_attachment(&db, &asset.id, 0)
+                    .await
+                    .unwrap_or_else(|e| panic!("{text}: {e}"))
+                    .excerpt,
+                "ORDER 42"
+            );
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn fuzzy_subsequence_after_long_prefix_keeps_all_matching_evidence() {
+        let (db, dir, _) = setup().await;
+        let ctx = KnowledgeContext::load(
+            &db,
+            QaScope::Current {
+                current: draft(format!("{}核……对……发……货", "中".repeat(9000))),
+            },
+        )
+        .await
+        .unwrap();
+        let candidates = ctx.search("核对发货", false, 10).unwrap();
+        assert_eq!(candidates.len(), 1);
+        for ch in ['核', '对', '发', '货'] {
+            assert!(candidates[0].evidence.contains(ch), "missing {ch}");
+            assert!(ctx
+                .citations()
+                .unwrap()
+                .iter()
+                .any(|c| c.excerpt.contains(ch)));
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn distant_multiword_fuzzy_hits_have_bounded_separate_sources() {
+        let (db, dir, _) = setup().await;
+        let ctx = KnowledgeContext::load(
+            &db,
+            QaScope::Current {
+                current: draft(format!("核对{}发货", "中".repeat(9000))),
+            },
+        )
+        .await
+        .unwrap();
+        let candidate = ctx.search("核对 发货", false, 1).unwrap().remove(0);
+        assert!(candidate.evidence.contains("核对"));
+        assert!(candidate.evidence.contains("发货"));
+        assert!(candidate.evidence.chars().count() <= 8000);
+        let sources = ctx.citations().unwrap();
+        assert!(sources.iter().any(|c| c.excerpt.contains("核对")));
+        assert!(sources.iter().any(|c| c.excerpt.contains("发货")));
+        for source in sources {
+            ctx.validate_citation(&db, &source).await.unwrap();
+            assert!(source.excerpt.chars().count() <= 8000);
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn step_search_source_uses_real_one_based_index() {
+        let (db, dir, _) = setup().await;
+        let mut current = draft("".into());
+        current.steps = vec![
+            crate::memos::FlowStep {
+                id: "z".into(),
+                title: "核对".into(),
+                owner: "".into(),
+                detail: "".into(),
+            },
+            crate::memos::FlowStep {
+                id: "a".into(),
+                title: "发货".into(),
+                owner: "".into(),
+                detail: "".into(),
+            },
+        ];
+        let ctx = KnowledgeContext::load(&db, QaScope::Current { current })
+            .await
+            .unwrap();
+        ctx.search("发货", true, 1).unwrap();
+        assert!(ctx.citations().unwrap()[0].locator.starts_with("步骤 2"));
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+#[cfg(test)]
+mod unicode_evidence_regression {
+    use super::*;
+    #[tokio::test]
+    async fn lowercase_expansion_of_maximum_query_still_bounds_evidence() {
+        let dir = std::env::temp_dir().join(format!("lumen-qa-unicode-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let body = format!("i{}\u{0307}{}", "中".repeat(12), "中".repeat(12)).repeat(500);
+        let draft = crate::memos::SaveMemoInput {
+            id: None,
+            expected_revision: None,
+            title: "交付".into(),
+            category: "".into(),
+            kind: "flow".into(),
+            body_md: body,
+            steps: vec![],
+        };
+        let ctx = KnowledgeContext::load(&db, QaScope::Current { current: draft })
+            .await
+            .unwrap();
+        let candidate = ctx.search(&"İ".repeat(500), false, 1).unwrap().remove(0);
+        assert!(
+            candidate.evidence.chars().count() <= 8000,
+            "{}",
+            candidate.evidence.chars().count()
+        );
+        assert!(candidate.evidence.contains('i') && candidate.evidence.contains('\u{0307}'));
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
