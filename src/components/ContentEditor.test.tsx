@@ -18,6 +18,48 @@ async function mount(initial = '操作说明', readOnly = false) {
   return field
 }
 const asset: assets.ContentAsset = { id:'00000000-0000-7000-8000-000000000001', name:'业务截图.png', mime:'image/png',dataBase64:'',byteSize:24,sha256:'hash',createdAt:'2026-09-30' }
+it('完整预览中在图片前新增段落，复用已读取资源和图片 URL', async () => {
+  const read = vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
+  const field = await mount(assets.assetMarkdown(asset))
+  await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '预览内容')!.click())
+  const url = document.querySelector<HTMLImageElement>('.content-asset img')!.src
+  read.mockClear()
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, `新增段落\n\n${assets.assetMarkdown(asset)}`)
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(document.querySelector<HTMLImageElement>('.content-asset img')!.src).toBe(url)
+  expect(read).not.toHaveBeenCalled()
+})
+it('图片引用换为未加载资源时，不展示或导出上一张图片；移除后释放 URL', async () => {
+  const revoke = vi.spyOn(URL, 'revokeObjectURL')
+  vi.spyOn(assets, 'assetGet').mockImplementation(id => id === asset.id ? Promise.resolve(asset) : new Promise(() => {}))
+  const field = await mount(assets.assetMarkdown(asset))
+  const url = document.querySelector<HTMLImageElement>('.content-asset img')!.src
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, assets.assetMarkdown({ ...asset, id: '00000000-0000-7000-8000-000000000002' }))
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(document.querySelector('.content-asset img')).toBeNull()
+  expect([...document.querySelectorAll('button')].some(b => b.textContent?.includes('业务截图.png ·'))).toBe(false)
+  expect(revoke).toHaveBeenCalledWith(url)
+})
+it.each([false, true])('输入文字时保留已加载图片，不重新读取或替换图片节点（完整预览：%s）', async (preview) => {
+  const read = vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
+  const field = await mount(`原始说明\n${assets.assetMarkdown(asset)}`)
+  if (preview) await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '预览内容')!.click())
+  read.mockClear()
+  const image = document.querySelector('.content-asset img')
+  expect(image).toBeTruthy()
+  for (const text of ['新增文字', '新增文字，继续输入']) {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(field, `原始说明\n${assets.assetMarkdown(asset)}\n${text}`)
+      field.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(document.querySelector('.content-asset img')).toBe(image)
+  }
+  expect(read).not.toHaveBeenCalled()
+})
 it('移除插图仅去掉当前材料中该图引用，保留文字和其它图片', async () => {
   const second = { ...asset, id: '00000000-0000-7000-8000-000000000002', name: '另一张图.png' }
   vi.spyOn(assets, 'assetGet').mockImplementation(async id => id === asset.id ? asset : second)
