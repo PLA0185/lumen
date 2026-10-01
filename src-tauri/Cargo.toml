@@ -100,6 +100,8 @@ reqwest = { version = "0.13", default-features = false, features = [
 futures-util = "0.3"
 # 正则：自然语言日期解析辅助（§4.4）
 regex = "1"
+# CommonMark destination parsing is the attachment authorization boundary.
+pulldown-cmark = { version = "0.13", default-features = false }
 # 文件哈希与校验：备份完整性（§9 "附带版本号和校验"）
 sha2 = "0.10"
 hex = "0.4"
