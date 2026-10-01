@@ -33,6 +33,7 @@ pub mod commands;
 mod commands_e2e;
 pub mod content_assets;
 pub mod db;
+pub mod document_import;
 pub mod error;
 pub mod focus;
 pub mod holiday_calendar;
@@ -301,6 +302,7 @@ pub fn run() {
             content_assets::content_asset_import_path,
             content_assets::content_asset_get,
             content_assets::content_asset_export,
+            document_import::content_asset_extract,
             commands::task_create,
             commands::task_update,
             commands::task_save,

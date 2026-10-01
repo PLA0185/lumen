@@ -38,12 +38,33 @@ pub async fn load_media(
         if assets.iter().any(|a: &ContentAsset| &a.id == id) {
             continue;
         }
-        let asset = get_asset(db, id).await?;
+        let mut asset = get_asset(db, id).await?;
         total_bytes += asset.byte_size.max(0) as u64;
         if total_bytes > MAX_ASSET_BYTES as u64 {
             return Err(AppError::validation(
                 "AI 材料总大小最多 20 MiB，请减少文件或缩小图片",
             ));
+        }
+        let needs_local = (asset.mime == "application/pdf" && provider == Provider::DeepSeek)
+            || (matches!(
+                asset.mime.as_str(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    | "application/vnd.ms-excel"
+            ) && provider != Provider::OpenAI);
+        if needs_local {
+            let source = asset.clone();
+            let text =
+                tokio::task::spawn_blocking(move || crate::document_import::extract_local(&source))
+                    .await
+                    .map_err(|e| AppError::internal(format!("AI 文件本机识别失败：{e}")))??;
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            use sha2::{Digest, Sha256};
+            asset.name = format!("{}.extracted.txt", asset.name);
+            asset.mime = "text/plain".into();
+            asset.byte_size = text.len() as i64;
+            asset.sha256 = hex::encode(Sha256::digest(text.as_bytes()));
+            asset.data_base64 = STANDARD.encode(text.as_bytes());
         }
         assets.push(asset);
     }
@@ -141,6 +162,29 @@ pub fn message_content(message: &ChatMessage, req: &ChatRequest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unsupported_native_word_uses_local_text_without_mutating_original() {
+        let dir = std::env::temp_dir().join(format!("lumen-local-ai-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let bytes = crate::document_import::tests::docx();
+        let original = crate::content_assets::store_bytes(&db, "orders.docx", bytes.clone())
+            .await
+            .unwrap();
+        let loaded = load_media(&db, Provider::DeepSeek, std::slice::from_ref(&original.id)).await;
+        let persisted = get_asset(&db, &original.id).await.unwrap();
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(decode_asset(&persisted).unwrap(), bytes);
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, original.id);
+        assert_eq!(loaded[0].name, "orders.docx.extracted.txt");
+        assert_eq!(loaded[0].mime, "text/plain");
+        assert!(String::from_utf8(decode_asset(&loaded[0]).unwrap())
+            .unwrap()
+            .contains("订单核对"));
+    }
 
     #[test]
     fn material_text_budget_excludes_local_resource_tokens_but_bounds_raw_input() {
