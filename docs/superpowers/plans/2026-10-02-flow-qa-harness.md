@@ -10,6 +10,8 @@
 
 **Spec:** [用户已确认的设计](../../design-flow-qa-harness-2026-10-02.md)。依据：[实际 SDK 隔离验证](../../deepseek-harness-research-2026-10-02.md)。
 
+用户补充（2026-10-02）：保留左侧菜单和全部顶部工具栏，画布只铺满剩余区域；添加步骤居中；流程图导出支持格式、尺寸、清晰度及常规设置；全部应用快捷键在设置中自定义，直接滚轮缩放可选并默认开启。任务 4 集成画布行为；独立任务 7 完成导出、任务 8 完成快捷键。执行顺序调整为 **1 → 8 → 7 → 2 → 3 → 4 → 5 → 6**，所有步骤仍逐项独立复核；期间真实验收发现的缺陷先修复。
+
 ## Global Constraints
 
 - 当前范围包含未保存草稿；全部范围只读已保存、未删除的流程，排除普通备忘、任务、回收站。
@@ -49,7 +51,7 @@ type QaSession = { id: string; engine: QaEngine; scope: QaScope; messages: QaMes
 
 **Files:** Create `src-tauri/src/flow_qa/{mod,knowledge}.rs`; Modify `src-tauri/src/lib.rs`; Tests 放 `knowledge.rs` 模块内。
 
-**Interfaces:** `KnowledgeContext::load(db: &Db, scope: QaScope) -> AppResult<Self>`；`search(&self, query: &str, exact: bool, limit: usize) -> AppResult<Vec<QaCandidate>>`；`get_flow(&self, flow_id: Option<&str>, step_id: Option<&str>) -> AppResult<MemoDocument>`；`read_attachment(&mut self, db: &Db, asset_id: &str, offset: usize) -> AppResult<AttachmentEvidence>`；`validate_citation(&self, citation: &QaCitation) -> AppResult<()>`。证据分段最多 8,000 字；偏移须在已授权内容范围内，返回是否还有下一段。复用 `memos::list_impl/get_impl`、`content_assets::get_asset`、`document_import::extract_asset`。
+**Interfaces:** async `KnowledgeContext::load(db: &Db, scope: QaScope) -> AppResult<Self>`；`search(&self, query: &str, exact: bool, limit: usize) -> AppResult<Vec<QaCandidate>>`；`get_flow(&self, flow_id: Option<&str>, step_id: Option<&str>) -> AppResult<MemoDocument>`；async `read_attachment(&mut self, db: &Db, asset_id: &str, offset: usize) -> AppResult<AttachmentEvidence>`；async `validate_citation(&self, db: &Db, citation: &QaCitation) -> AppResult<()>`。证据分段最多 8,000 字；偏移须在已授权内容范围内，返回是否还有下一段。复用 `memos::list_impl/get_impl`、`content_assets::get_asset`，知识读取使用 `document_import::extract_asset_read_only`，不写内嵌资源到业务库。
 
 - [ ] 写行为测试：current 不能取其它 ID；all 不包含 memo/trash；伪造 assetId/路径拒绝；版本/草稿摘要不一致拒绝；模糊与精准不同；按索引返回下一步；limit > 10 拒绝；扫描件提取警告保留。
 - [ ] 运行 `cargo test --lib flow_qa::knowledge`，确认新增用例实际为红（先有可编译的最小接口，不把编译失败当行为测试）。
@@ -115,3 +117,31 @@ type QaSession = { id: string; engine: QaEngine; scope: QaScope; messages: QaMes
 - [ ] 文档收尾提交并推送，核对最终 CI，向用户报告可直接使用的结果与真实限制。
 
 自审：检索/引用归任务 1；多轮、消歧与缓存归任务 2；可选实际引擎归任务 3；悬浮入口及导航归任务 4；独立部署与真实服务归任务 5；门禁、发布及记录归任务 6。Review Focus 的五项均分配了行为测试；各层共用 DTO，不以模型输出作为授权依据。
+
+### Task 7: 流程图导出与真实设置
+
+**Files:** Create `src/lib/flow-map-export.ts`、`flow-map-export.test.ts`、`src/components/FlowExportDialog.tsx`、`FlowExportDialog.test.tsx`、`src-tauri/src/flow_export.rs`、`tools/verify_flow_export_ui.py`; Modify `FlowCanvas.tsx`、`MemosView.tsx`、`src/styles.css`、`src/lib/ipc.ts`、`src-tauri/src/pdf.rs`、`src-tauri/src/lib.rs`。共享卡片位置/摘要逻辑可提取到 `src/lib/flow-canvas-layout.ts`，画布与导出调用同一实现；不能复制两套布局。
+
+**Interfaces:** `FlowExportFormat = 'png'|'jpeg'|'webp'|'svg'|'pdf'`；`FlowExportOptions = { format; scope: 'all'|'viewport'; width: number; height: number; lockAspect: boolean; quality: number; background: 'current'|'light'|'dark'|'transparent'|'custom'; backgroundColor: string; paperWidthMm: number; paperHeightMm: number; landscape: boolean; marginMm: number; pdfLayout: 'single'|'pages' }`。`renderFlowMap({title,steps,view,viewport,options}) -> Promise<{blob:Blob,width:number,height:number}>`；`saveFlowMap(...) -> Promise<string|null>`。FlowCanvas 新增 `title?:string`，导出可编辑草稿但不确认保存。Rust `flow_export_write(path:String, format:FlowExportFormat, data_base64:String) -> AppResult<()>` 仅写用户选定路径；校验扩展名、真实文件头和有界字节数。`export_pdf` 新增可选 `options: Option<PdfOptions>`，既有任务导出不传参数仍使用原默认设置；PdfOptions 字段为纸张宽高、landscape、marginMm。
+
+- [ ] 写可编译接口与行为红测试：整图包含首尾 100 步/连线；当前视野正确裁切；透明 PNG/不透明 JPG；比例锁定尺寸；1×/2×/4× 真实像素；质量改变 JPG/WebP 编码；超 16,384px 或 64,000,000 像素拒绝；标题/内容中的 XML/脚本仅作为文字；保存取消不返回成功；后端拒绝格式/文件头不一致；PDF 设置无效或 Set* 失败向上报错；打印后主界面恢复；纸张尺寸、方向、边距与分页真实生效。
+- [ ] 运行 `pnpm exec vitest run src/lib/flow-map-export.test.ts src/components/FlowExportDialog.test.tsx` 与 `cargo test --lib flow_export`、`cargo test --lib pdf`，记录行为红，不将编译失败当完成 TDD。
+- [ ] 实现原生 SVG 文字和连线，共享画布位置/摘要；同一 SVG 用浏览器 Canvas 编码真实 PNG/JPG/WebP。栅格默认 2×、质量 90；不用没有实际写入元数据的 DPI 数字。PDF DOM 挂在 `.app` 外，分页按整行卡片切片并加继续标识，实际设置传到 WebView2，每个设置错误都返回。
+- [ ] 实现预览与设置：所有设计中的格式/尺寸/质量/背景/纸张/方向/边距/分页可真实操作，格式无效的设置隐藏或禁用并解释；文件大小来自已生成 Blob。使用系统保存对话框选择路径，选择前不写文件；导出不修改业务状态，取消和错误保留草稿。
+- [ ] 重跑针对测试全绿；真实隔离窗口实际鼠标逐类保存文件，检查魔数、宽高、透明通道、JPEG/WebP 不同质量体积、SVG 可重新打开、PDF 页数/MediaBox 与中文可提取、100 步完整图；观察设置和图一致，记录耗时与文件体积。测试原件和业务行数不变。
+- [ ] 更新四部分工作记录，独立提交 `feat(flow-export): 支持流程图多格式导出与可调设置`；提交前跑全部仓库门禁，交给独立任务复核再进行任务 2。
+
+### Task 8: 统一可自定义快捷键与画布手势
+
+**Files:** Create `src/lib/shortcuts.ts`、`shortcuts.test.ts`、`src/components/ShortcutSettings.tsx` 与测试；Modify `src/lib/window-ipc.ts`、`src-tauri/src/window_mgr.rs`、`src-tauri/src/shortcuts.rs`、`SettingsView.tsx`、`WindowSettings.tsx`、`App.tsx`、`FlowCanvas.tsx` 及现有上下文快捷键组件与测试。清单依据 `docs/shortcut-inventory-2026-10-02.md`，实际操作完整纳入，不只修改三个主窗口组合键。
+
+**Interfaces:** 现有 WindowConfig 四个全局字段保留，新增默认化 `localShortcuts: Record<string,string[]>`、`canvasInput: {panHold:string;wheelZoom:'direct'|'alt'|'ctrl'|'shift'|'off'}`；老 JSON 缺字段时使用默认值，无需业务库迁移。前端统一 `matchesShortcut(event, bindings)` 严格匹配修饰键并排除 composition/defaultPrevented，局部 Enter/Escape/F2 沿用组件作用域。画布默认直接滚轮缩放，可选择修饰键或关闭；编辑框滚轮正常滚动。所有配置经现有 windowGetConfig/windowSetConfig 和 window-config-changed 更新、持久化，不建另一套保存接口。
+
+- [ ] 写行为红测试：旧配置完整保留；所有清单命令可修改并立即生效；默认/恢复默认；等价全局组合键冲突；OS 注册失败不保存成功并恢复旧注册；编辑输入/IME/严格修饰键不误触；嵌套对话框仅处理自身取消；按住可配置平移键和鼠标拖动；直接滚轮默认、Alt 模式、关闭模式、重开后记忆；画布输入内不缩放。
+- [ ] 设置中分组显示全局、应用、上下文、画布，使用按键录入和可移除的多绑定，说明作用范围；允许取消绑定。相同作用域冲突阻止保存，互斥局部上下文可复用 Enter/Escape。系统保留键和编辑器复制/粘贴/撤销、Tab/IME 保留其系统行为，不把它们冒充应用可配置命令。
+- [ ] 后端完整预校验全局组合，使用解析后的规范键身份比较，注册失败回滚旧组合、返回错误；UI 不伪报已保存。恢复路径以真实可注册快捷键/托盘为依据。
+- [ ] 替换清单中全部硬编码应用操作匹配，保留文本输入保护与无障碍焦点操作；配置变化读取最新值，不能空依赖闭包锁住旧手势。不同窗口均收到设置更新。
+- [ ] 覆盖测试与真实隔离窗口鼠标/键盘验收：修改新建/搜索/发送/取消/画布平移，验证旧键失效新键生效、关闭重开仍生效；全局占用故障可见且配置未保存；原菜单栏保留、输入不触发 Windows 菜单。
+- [ ] 全门禁、四部分工作记录、独立中文提交，独立任务复核；已有服务商、凭据和业务记录保持。
+
+新增任务执行顺序：任务 1 完成复核后，先修复真实验收发现的 Word 内嵌图生成遗漏，再执行任务 8、7，随后恢复任务 2、3、4、5、6。任务范围来自用户继续补充的明确要求，无需重复设计确认。

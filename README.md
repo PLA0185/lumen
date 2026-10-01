@@ -444,6 +444,10 @@ pnpm typecheck                # 类型检查
 
 | 文档 | 内容 |
 | --- | --- |
+| [DeepSeek Harness 接入调研](docs/deepseek-harness-research-2026-10-02.md) | 官方 SDK、文件技能、流程知识库接入方式、发行与验证边界 |
+| [流程问答接入设计](docs/design-flow-qa-harness-2026-10-02.md) | 用户已确认：悬浮聊天、知识范围、引用、缓存及可选 Harness 引擎 |
+| [快捷键盘点](docs/shortcut-inventory-2026-10-02.md) | 全局、应用、上下文和画布操作清单，以及配置与真实冲突边界 |
+| [流程问答实施计划](docs/superpowers/plans/2026-10-02-flow-qa-harness.md) | 授权检索、对话服务、官方引擎、浮层及正式安装验收 |
 | `docs/work-log.md` | **工作记录**：按轮次记录每一轮"做了什么、没做到什么、怎么验证的"，新增轮次的约定写在文件开头 |
 | `docs/ui-ux-audit-0.4.0.md` | **0.4.0 发布前 UI/UX 审计阶段记录**：真实路径、实际修改、未实测项及发布阻断条件 |
 | `docs/remediation-report.md` | **项目整改报告**：逐条列出修复了什么问题、怎么修的、新增了哪些测试、还有哪些没做 |
