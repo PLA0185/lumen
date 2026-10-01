@@ -17,6 +17,7 @@ export const assetId = (url: string | undefined): string | null => {
 }
 export const assetGet = (id: string): Promise<ContentAsset> => invokeData('content_asset_get', { id })
 export const assetImportPath = (path: string): Promise<ContentAsset> => invokeData('content_asset_import_path', { path })
+export const assetExtract = (id: string): Promise<{ text: string; images: ContentAsset[]; warnings: string[] }> => invokeData('content_asset_extract', { id })
 export const assetExport = (id: string, path: string): Promise<void> => invokeData('content_asset_export', { id, path })
 export async function assetImportFile(file: File): Promise<ContentAsset> {
   if (file.size > 20 * 1024 * 1024) throw new Error('单个文件最多 20 MiB，请分拆大文件')

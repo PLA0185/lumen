@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
-import { assetImportFile, assetImportPath, assetMarkdown, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
+import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
 import { ContentMarkdown } from './ContentMarkdown'
 
-type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void }
-export function ContentEditor({ onBusyChange, ...props }: Props) {
+type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void; extractFiles?: boolean }
+export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const mounted = useRef(true)
   const pending = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(false)
+  const [recognize, setRecognize] = useState(extractFiles)
+  const [importResults, setImportResults] = useState('')
   useEffect(() => {
     onBusyChange?.(busy)
     return () => onBusyChange?.(false)
@@ -36,7 +38,7 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
     if (!field || pending.current || field.disabled || field.readOnly) return
     const value = field.value, start = field.selectionStart, end = field.selectionEnd
     const focused = document.activeElement
-    pending.current = true; setBusy(true); setError('')
+    pending.current = true; setBusy(true); setError(''); setImportResults('')
     try {
       const text = await load()
       if (!mounted.current || !field.isConnected) return
@@ -56,11 +58,41 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
   }
   const importMany = async (loads: Array<() => Promise<ContentAsset>>) => {
     const parts: string[] = []
+    const errors: string[] = []
+    const overflow: string[] = []
+    const field = ref.current
+    const remaining = field && field.maxLength >= 0 ? field.maxLength - field.value.length + field.selectionEnd - field.selectionStart : Infinity
+    const fits = (part: string) => `\n${[...parts, part].join('\n')}\n`.length <= remaining
+    const addReference = (asset: ContentAsset) => {
+      const reference = assetMarkdown(asset)
+      if (fits(reference)) parts.push(reference)
+      else overflow.push(reference)
+    }
     // Keep successful files visible even when a later file fails.
     for (const load of loads) {
-      try { parts.push(assetMarkdown(await load())) }
-      catch (e) { setError(contentError(e)) }
+      try {
+        const asset = await load()
+        addReference(asset)
+        if (extractFiles && recognize) {
+          try {
+            const extracted = await assetExtract(asset.id)
+            const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.map(assetMarkdown)].filter(Boolean).join('\n')
+            if (!fits(recognized) && recognized) {
+              const complete = await assetImportFile(new File([recognized], `${asset.name.slice(0, 180)}-识别内容.md`, { type: 'text/plain' }))
+              addReference(complete)
+              errors.push('识别正文超过当前位置剩余字数，完整识别内容已保存为文件；原文件也保留，可另存后分段编辑。')
+            } else if (recognized) parts.push(recognized)
+            errors.push(...extracted.warnings)
+          } catch (e) { errors.push(`${asset.name}：${contentError(e)}。原文件已保留。`) }
+        }
+      }
+      catch (e) { errors.push(contentError(e)) }
     }
+    if (overflow.length) {
+      setImportResults(overflow.join('\n'))
+      errors.push('当前位置字数不足，部分文件未放进当前内容；可从下方导入结果查看或另存。')
+    }
+    if (errors.length) setError(errors.join('\n'))
     return parts.length ? `\n${parts.join('\n')}\n` : ''
   }
   const nativePaste = () => insert(async () => {
@@ -76,7 +108,7 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
       if (!ctx) throw new Error('无法读取剪贴板图片')
       ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0)
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error('图片编码失败')), 'image/png'))
-      return `\n${assetMarkdown(await assetImportFile(new File([blob], `粘贴图片-${Date.now()}.png`, { type: 'image/png' })))}\n`
+      return importMany([() => assetImportFile(new File([blob], `粘贴图片-${Date.now()}.png`, { type: 'image/png' }))])
     } finally { await clipboardImage.close() }
   })
   const current = useRef({ insert, importMany })
@@ -123,9 +155,11 @@ export function ContentEditor({ onBusyChange, ...props }: Props) {
         if (files.length) void insert(() => importMany(files.map((file) => () => assetImportFile(file))))
       }} /></label>
       <button type="button" className="btn btn--quiet btn--sm" aria-expanded={preview} onClick={() => setPreview(!preview)}>{preview ? '收起预览' : '预览内容'}</button>
+      {extractFiles && <label className="setgroup__hint"><input type="checkbox" checked={recognize} disabled={props.disabled || props.readOnly || busy} onChange={e => setRecognize(e.target.checked)} /> 导入时在本机识别内容</label>}
       <span className="setgroup__hint">可粘贴图片、拖入文件，单文件最多 20 MiB</span>
     </div>
     {error && <p className="formerr" role="alert">{error}</p>}
+    {importResults && <div className="mdpreview" aria-label="本次导入结果"><p className="setgroup__hint">本次导入结果（尚未放进当前内容）</p><ContentMarkdown>{importResults}</ContentMarkdown></div>}
     {!preview && images.length > 0 && <div className="mdpreview" aria-label="已插入图片预览"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{images.join('\n')}</ContentMarkdown></div>}
     {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{String(props.value ?? '')}</ContentMarkdown></div>}
   </div>

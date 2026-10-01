@@ -437,7 +437,7 @@ export function MemosView({
                   </label>
                   <label>
                     内容 / 流程说明
-                    <ContentEditor
+                    <ContentEditor extractFiles
                       className="input selectable"
                       aria-label="备忘内容"
                       value={draft.bodyMd}
@@ -481,7 +481,7 @@ export function MemosView({
                               patchStep(i, { owner: e.target.value })
                             }
                           />
-                          <ContentEditor
+                          <ContentEditor extractFiles
                             className="input selectable"
                             aria-label={`第 ${i + 1} 步说明`}
                             maxLength={5000}
