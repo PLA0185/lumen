@@ -11,6 +11,7 @@ import { CloudHistory } from './CloudHistory'
 import { AiFlowDialog } from './AiFlowDialog'
 import { FlowImagePicker } from './FlowImagePicker'
 import { contentImages } from '../lib/content-assets'
+import { FlowCanvas } from './FlowCanvas'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -46,6 +47,9 @@ export function MemosView({
   const [historyId, setHistoryId] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
   const [aiDraft, setAiDraft] = useState(false)
+  const [flowView, setFlowView] = useState<'canvas' | 'list'>('canvas')
+  const [canvasSession, setCanvasSession] = useState(0)
+  const [showList, setShowList] = useState(false)
   const saving = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -116,6 +120,8 @@ export function MemosView({
     setNotice(null)
     await runLatestRequest(detailGate, () => memo.memoGet(id), {
       apply: (doc) => {
+        setCanvasSession(n => n + 1)
+        setFlowView('canvas')
         setAiDraft(false)
         setSelected(doc)
         setDraft(draftOf(doc))
@@ -129,6 +135,8 @@ export function MemosView({
     if (!canLeave()) return
     detailGate.invalidate()
     setSelected(null)
+    setCanvasSession(n => n + 1)
+    setFlowView('canvas')
     setAiDraft(false)
     setEditing(true)
     setError(null)
@@ -224,9 +232,52 @@ export function MemosView({
     ? items.filter((i) => i.category === category)
     : items
 
+  const fullCanvas = draft?.kind === 'flow' && flowView === 'canvas'
+  const metadataFields = draft ? <>
+                  <label>
+                    标题
+                    <input
+                      className="input selectable"
+                      aria-label="备忘标题"
+                      maxLength={500}
+                      value={draft.title}
+                      disabled={busy}
+                      placeholder="例如：客户订单处理流程"
+                      onChange={(e) => patch({ title: e.target.value })}
+                    />
+                  </label>
+                  <label>
+                    分类
+                    <input
+                      className="input selectable"
+                      aria-label="备忘分类"
+                      maxLength={100}
+                      value={draft.category}
+                      disabled={busy}
+                      placeholder="例如：销售、财务、入职学习"
+                      onChange={(e) => patch({ category: e.target.value })}
+                    />
+                  </label>
+                  <details className="memos__materials" open={draft.kind !== 'flow' || flowView === 'list'}>
+                    <summary>内容 / 流程说明与原始材料</summary>
+                    <label>
+                    <ContentEditor extractFiles
+                      className="input selectable"
+                      aria-label="备忘内容"
+                      value={draft.bodyMd}
+                      disabled={busy}
+                      maxLength={100000}
+                      placeholder="记录背景、术语、材料清单和注意事项，支持 Markdown 标题、清单、链接。"
+                      onChange={(e) => patch({ bodyMd: e.target.value })}
+                    />
+                    </label>
+                  </details>
+  </> : null
+
   return (
-    <section className="memos">
+    <section className={`memos${fullCanvas ? ' memos--canvas' : ''}`}>
       <div className="memos__toolbar">
+        {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
         <button
           className="btn btn--primary"
           disabled={busy || trash}
@@ -298,7 +349,7 @@ export function MemosView({
           {notice}
         </p>
       )}
-      <div className="memos__workspace">
+      <div className={`memos__workspace${draft?.kind === 'flow' && flowView === 'canvas' && !showList ? ' memos__workspace--canvas' : ''}`}>
         <aside className="memos__list" aria-label="备忘与流程列表">
           <div className="memos__count">
             {trash ? '回收站' : '全部记录'} · {visible.length} 条
@@ -343,9 +394,11 @@ export function MemosView({
           ) : (
             <>
               <div className="memos__document-actions">
+                {draft.kind === 'flow' && <div className="segmented">{fullCanvas ? <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('canvas')}>画布</button>}</div>}
                 <span className="chip">
-                  {draft.kind === 'flow' ? '业务流程' : '备忘录'}
+                  {fullCanvas ? draft.title || '新流程' : draft.kind === 'flow' ? '业务流程' : '备忘录'}
                 </span>
+                {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
                 {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
@@ -409,45 +462,10 @@ export function MemosView({
                   </button>
                 )}
               </div>
-              {editing && !selected?.deletedAt ? (
+              {!fullCanvas && (editing && !selected?.deletedAt ? (
                 <div className="memos__editor">
-                  <label>
-                    标题
-                    <input
-                      className="input selectable"
-                      aria-label="备忘标题"
-                      maxLength={500}
-                      value={draft.title}
-                      disabled={busy}
-                      placeholder="例如：客户订单处理流程"
-                      onChange={(e) => patch({ title: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    分类
-                    <input
-                      className="input selectable"
-                      aria-label="备忘分类"
-                      maxLength={100}
-                      value={draft.category}
-                      disabled={busy}
-                      placeholder="例如：销售、财务、入职学习"
-                      onChange={(e) => patch({ category: e.target.value })}
-                    />
-                  </label>
-                  <label>
-                    内容 / 流程说明
-                    <ContentEditor extractFiles
-                      className="input selectable"
-                      aria-label="备忘内容"
-                      value={draft.bodyMd}
-                      disabled={busy}
-                      maxLength={100000}
-                      placeholder="记录背景、术语、材料清单和注意事项，支持 Markdown 标题、清单、链接。"
-                      onChange={(e) => patch({ bodyMd: e.target.value })}
-                    />
-                  </label>
-                  {draft.kind === 'flow' && (
+                  {metadataFields}
+                  {draft.kind === 'flow' && flowView === 'list' && (
                     <div className="memos__step-editor">
                       <h3>流程步骤</h3>
                       <p className="setgroup__hint">
@@ -558,12 +576,12 @@ export function MemosView({
                       这条记录在回收站，恢复后可继续编辑。
                     </p>
                   )}
-                  <div className="mdpreview">
+                  <details className="memos__materials" open={draft.kind !== 'flow' || flowView === 'list'}><summary>内容 / 流程说明与原始材料</summary><div className="mdpreview">
                     <ContentMarkdown>
                       {draft.bodyMd || '暂无补充说明。'}
                     </ContentMarkdown>
-                  </div>
-                  {draft.kind === 'flow' && (
+                  </div></details>
+                  {draft.kind === 'flow' && flowView === 'list' && (
                     <ol className="memos__flow" aria-label="业务流程路线">
                       {draft.steps.map((step, i) => (
                         <li className="memos__node" key={step.id}>
@@ -586,13 +604,16 @@ export function MemosView({
                     </ol>
                   )}
                 </div>
-              )}
+              ))}
+              {draft.kind === 'flow' && flowView === 'canvas' && <>
+                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onChange={steps => { setEditing(true); patch({ steps }) }} />
+              </>}
             </>
           )}
         </article>
       </div>
       {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
-      {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}
+      {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setCanvasSession(n => n + 1); setFlowView('canvas'); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}
     </section>
   )
 }

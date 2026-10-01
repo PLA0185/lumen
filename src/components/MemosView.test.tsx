@@ -52,6 +52,19 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('新流程默认在可编辑画布中显示，修改步骤后沿用自动保存', async () => {
+    const saved = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'canvas-flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount()
+    await click('新建流程')
+    expect(document.querySelector('[aria-label="流程画布"]')).toBeTruthy()
+    expect(document.querySelector('.memos--canvas')).toBeTruthy()
+    await fill('备忘标题', 'ERP 发货流程')
+    await fill('第 1 步标题', '创建发货单')
+    await act(async () => vi.advanceTimersByTimeAsync(1100))
+    expect(saved).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({ title: '创建发货单' })] }))
+    expect(document.querySelector('[aria-label="流程画布"]')).toBeTruthy()
+    expect(document.querySelector('.flow-canvas__node')?.textContent).toContain('创建发货单')
+  })
   const config: ai.ProviderConfig = { provider: 'custom', baseUrl: 'http://localhost:11434/v1', model: 'vision-test', timeoutSeconds: 30, maxOutputTokens: 2048, hasApiKey: true }
   const generated: memo.SaveMemoInput = { id: null, expectedRevision: null, title: '订单核对流程', category: '销售', kind: 'flow', bodyMd: '## 原始材料\n\n张三：先核对订单，再通知仓库。', steps: [{ id: 'step-1', title: '核对订单', owner: '待确认', detail: '核对订单数量。' }] }
   it('可把 AI 原始图片放进已有步骤，待关联数量更新，确认前不保存或重新调用 AI', async () => {

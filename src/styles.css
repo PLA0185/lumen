@@ -4558,6 +4558,55 @@ body {
 .memos__node h3 { margin: 3px 0 10px; font-size: calc(var(--font-size-base) * 16 / 14); }
 .memos__step-number { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--c-accent); color: white; font-weight: 700; }
 .memos__owner { color: var(--c-text-2); font-size: var(--font-sm); margin-bottom: 12px; }
+.memos__materials { min-width: 0; }
+.memos__materials > summary { cursor: pointer; color: var(--c-text-2); padding: 8px 0; font-size: var(--font-sm); }
+.memos__materials > label { margin-top: 10px; }
+.flow-canvas { min-width: 0; margin-top: 16px; }
+.memos__workspace--canvas { grid-template-columns: minmax(0, 1fr); }
+.memos__workspace--canvas > .memos__list { display: none; }
+.flow-canvas__toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--font-sm); }
+.flow-canvas__toolbar > input { flex: 1 1 160px; min-width: 120px; max-width: 300px; }
+.flow-canvas__toolbar > select { width: auto; }
+.flow-canvas__zoom { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.flow-canvas__zoom > span { min-width: 40px; text-align: center; }
+.flow-canvas__hint { margin: 12px 0; }
+.flow-canvas__viewport { position: relative; height: clamp(360px, 62vh, 700px); overflow: hidden; border: 1px solid var(--c-border); border-radius: 10px; background-color: var(--c-bg); background-image: radial-gradient(var(--c-border) 1px, transparent 1px); background-size: 20px 20px; touch-action: none; }
+.flow-canvas__viewport:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.flow-canvas__viewport--pan, .flow-canvas__viewport--pan .flow-canvas__node { cursor: grab; user-select: none; }
+.flow-canvas__viewport--pan:active { cursor: grabbing; }
+.flow-canvas__scene { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.flow-canvas__edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; color: var(--c-accent); }
+.flow-canvas .flow-canvas__node { position: absolute; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-content: start; gap: 10px; margin: 0; padding: 16px; border: 1px solid var(--c-border); border-left: 3px solid var(--c-accent); text-align: left; color: var(--c-text); cursor: pointer; box-shadow: 0 3px 10px #0002; }
+.flow-canvas .flow-canvas__node::after { display: none; }
+.flow-canvas__node > div { min-width: 0; }
+.flow-canvas__node h3 { font-size: var(--font-size-base); line-height: 1.4; margin: 0 0 8px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; }
+.flow-canvas__node .memos__owner { margin: 0 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-canvas__summary { color: var(--c-text-3); font-size: var(--font-xs); line-height: 1.5; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; margin: 0; }
+.flow-canvas__node[aria-pressed="true"] { outline: 2px solid var(--c-accent); outline-offset: 3px; }
+.flow-canvas .flow-canvas__node--match { border-color: var(--c-accent); background: var(--c-surface); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-accent) 35%, transparent); }
+.flow-canvas__inspector { position: absolute; z-index: 2; top: 10px; right: 10px; bottom: 10px; width: min(330px, calc(100% - 20px)); background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 8px; box-shadow: 0 8px 30px #0004; padding: 14px; overflow-y: auto; overscroll-behavior: contain; touch-action: auto; }
+.flow-canvas__inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.flow-canvas__inspector .memos__step-fields { border: none; padding: 0; margin: 16px 0 0; }
+.flow-canvas__inspector label { display: grid; gap: 7px; color: var(--c-text-2); font-size: var(--font-sm); }
+.flow-canvas__inspector textarea { min-height: 140px; line-height: 1.6; }
+.flow-canvas__inspector .content-editor__resources { max-height: 250px; }
+.flow-canvas__empty { width: 250px; color: var(--c-text-3); }
+.content:has(> .memos--canvas) { display: flex; flex-direction: column; overflow: hidden; padding-bottom: var(--space-4); }
+.memos--canvas { position: relative; display: flex; flex-direction: column; flex: 1; width: 100%; max-width: none; min-height: 0; }
+.memos--canvas > .memos__toolbar { flex-shrink: 0; }
+.memos--canvas > [role="status"] { display: none; }
+.memos--canvas .memos__workspace { position: relative; flex: 1; min-height: 0; align-items: stretch; }
+.memos--canvas .memos__document { position: relative; height: 100%; min-height: 0; padding: 0; overflow: hidden; }
+.memos--canvas .flow-canvas { position: absolute; inset: 0; z-index: 1; margin: 0; background: var(--c-bg); }
+.memos--canvas .flow-canvas__viewport { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 0; }
+.memos--canvas .memos__document-actions { position: absolute; z-index: 4; top: 12px; left: 16px; right: 16px; width: fit-content; max-width: calc(100% - 32px); padding: 8px; margin: 0; border: 1px solid var(--c-border); border-radius: 8px; background: var(--c-surface); box-shadow: 0 3px 15px #0002; }
+.memos--canvas .memos__document-actions .chip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memos--canvas .flow-canvas__toolbar { position: absolute; z-index: 3; bottom: 16px; left: 16px; right: 16px; padding: 10px; border: 1px solid var(--c-border); border-radius: 8px; background: var(--c-surface); box-shadow: 0 3px 15px #0002; }
+.memos--canvas .flow-canvas__hint { position: absolute; z-index: 2; bottom: 80px; left: 20px; margin: 0; pointer-events: none; }
+.memos--canvas .flow-canvas__inspector { top: 78px; right: 16px; bottom: 100px; width: 340px; }
+.flow-canvas__metadata { padding: 16px 0; margin-bottom: 16px; border-bottom: 1px solid var(--c-border); }
+.memos--canvas > .alert { flex-shrink: 0; }
+.flow-canvas > .alert { position: absolute; z-index: 5; left: 16px; right: 16px; top: 78px; }
 @media (max-width: 850px) {
   .memos__workspace { grid-template-columns: 1fr; }
   .memos__list { max-height: 220px; }
