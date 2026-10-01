@@ -1,9 +1,7 @@
 //! Bounded local document recognition; originals remain immutable resources.
 use crate::{
     commands::AppState,
-    content_assets::{
-        decode_asset, get_asset, mime_for, store_bytes, ContentAsset, MAX_ASSET_BYTES,
-    },
+    content_assets::{decode_asset, get_asset, mime_for, ContentAsset, MAX_ASSET_BYTES},
     db::Db,
     error::{AppError, AppResult},
 };
@@ -604,19 +602,25 @@ pub async fn extract_asset_read_only(asset: ContentAsset) -> AppResult<Extractio
         warnings: parsed.warnings,
     })
 }
-pub async fn extract_asset(db: &Db, asset: ContentAsset) -> AppResult<Extraction> {
+pub async fn prepare_extraction(asset: ContentAsset) -> AppResult<Extraction> {
     let parsed = tokio::task::spawn_blocking(move || parse(&asset))
         .await
         .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
     let mut images = Vec::new();
     for (name, bytes) in parsed.images {
-        images.push(store_bytes(db, &name, bytes).await?);
+        images.push(crate::content_assets::prepare_bytes(&name, bytes)?);
     }
     Ok(Extraction {
         text: parsed.text,
         images,
         warnings: parsed.warnings,
     })
+}
+
+pub async fn extract_asset(db: &Db, asset: ContentAsset) -> AppResult<Extraction> {
+    let extracted = prepare_extraction(asset).await?;
+    crate::content_assets::persist_assets(db, &extracted.images).await?;
+    Ok(extracted)
 }
 
 #[tauri::command]
@@ -720,6 +724,7 @@ fn native_ocr(bytes: &[u8], pages: Option<&[u32]>) -> AppResult<Vec<String>> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::content_assets::store_bytes;
     use base64::{engine::general_purpose::STANDARD, Engine};
     use sha2::{Digest, Sha256};
     use std::io::{Cursor, Write};

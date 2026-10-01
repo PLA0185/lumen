@@ -10,6 +10,79 @@ use serde_json::{json, Value};
 // Local request guard; DeepSeek's documented image-count ceiling is 600.
 const MAX_MEDIA_FILES: usize = 600;
 
+pub struct FlowMedia {
+    pub media: Vec<ContentAsset>,
+    pub references: Vec<ContentAsset>,
+    pub warnings: Vec<String>,
+    pub derived: Vec<ContentAsset>,
+}
+
+/// Explicit flow generation may derive images; importing and generic chat do not.
+pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> AppResult<FlowMedia> {
+    if ids.len() > MAX_MEDIA_FILES {
+        return Err(AppError::validation("一次最多分析 600 个文件"));
+    }
+    let mut result = FlowMedia {
+        media: Vec::new(),
+        references: Vec::new(),
+        warnings: Vec::new(),
+        derived: Vec::new(),
+    };
+    let mut budget = Vec::new();
+    for id in ids {
+        if result.references.iter().any(|a| &a.id == id) {
+            continue;
+        }
+        let original = get_asset(db, id).await?;
+        budget.push(original.clone());
+        check_flow_budget(&budget)?;
+        result.references.push(original.clone());
+        let extract = matches!(
+            original.mime.as_str(),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                | "application/vnd.ms-excel"
+        ) || (original.mime == "application/pdf" && provider == Provider::DeepSeek);
+        if extract {
+            let extracted = crate::document_import::prepare_extraction(original.clone()).await?;
+            result.warnings.extend(
+                extracted
+                    .warnings
+                    .into_iter()
+                    .map(|w| format!("{}：{w}", original.name)),
+            );
+            use base64::{engine::general_purpose::STANDARD, Engine};
+            use sha2::{Digest, Sha256};
+            let mut text = original.clone();
+            text.name = format!("{}.extracted.txt", original.name);
+            text.mime = "text/plain".into();
+            text.byte_size = extracted.text.len() as i64;
+            text.sha256 = hex::encode(Sha256::digest(extracted.text.as_bytes()));
+            text.data_base64 = STANDARD.encode(extracted.text.as_bytes());
+            budget.push(text.clone());
+            budget.extend(extracted.images.iter().cloned());
+            check_flow_budget(&budget)?;
+            if provider == Provider::OpenAI {
+                result.media.push(original);
+            } else {
+                result.media.push(text);
+            }
+            result.references.extend(extracted.images.iter().cloned());
+            result.derived.extend(extracted.images.iter().cloned());
+            result.media.extend(extracted.images);
+        } else {
+            result.media.push(original);
+        }
+    }
+    validate_media(provider, &result.media)?;
+    Ok(result)
+}
+
+fn check_flow_budget(assets: &[ContentAsset]) -> AppResult<()> {
+    // Budget includes originals plus expanded text/images, even if a provider only receives derivatives.
+    validate_media(Provider::OpenAI, assets)
+}
+
 pub fn validate_material_text(text: &str) -> AppResult<()> {
     if text.chars().count() > 80_000 {
         return Err(AppError::validation(
@@ -271,6 +344,31 @@ mod tests {
         bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
         let oversized = vec![asset("large.png", &bytes); 2];
         assert!(validate_media(Provider::DeepSeek, &oversized)
+            .unwrap_err()
+            .message
+            .contains("20 MiB"));
+    }
+
+    #[test]
+    fn expanded_flow_budget_counts_originals_and_extracted_text() {
+        let original = asset("orders.docx", b"PK\x03\x04");
+        let image = asset("image.png", b"\x89PNG\r\n\x1a\nimage-bytes");
+        let mut expanded = vec![image; 600];
+        expanded.push(original.clone());
+        assert!(check_flow_budget(&expanded)
+            .unwrap_err()
+            .message
+            .contains("600"));
+        let text = asset("extracted.txt", "字".repeat(100_001).as_bytes());
+        assert!(check_flow_budget(&[original, text])
+            .unwrap_err()
+            .message
+            .contains("100000"));
+        let mut bytes = vec![0; MAX_ASSET_BYTES / 2 + 1];
+        bytes[..4].copy_from_slice(b"PK\x03\x04");
+        let original = asset("large.docx", &bytes);
+        let text = asset("extracted.txt", &vec![b'a'; MAX_ASSET_BYTES / 2]);
+        assert!(check_flow_budget(&[original, text])
             .unwrap_err()
             .message
             .contains("20 MiB"));

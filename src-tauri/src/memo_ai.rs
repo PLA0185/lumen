@@ -140,9 +140,11 @@ pub async fn ai_generate_flow(
         return Err(AppError::validation("请先粘贴文字、聊天记录或添加截图"));
     }
     crate::ai_media::validate_material_text(&input.text)?;
-    let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
+    let loaded =
+        crate::ai_media::load_flow_media(&state.db, config.provider, &input.asset_ids).await?;
+    let media = loaded.media;
     let mut source = input.text.clone();
-    for asset in &media {
+    for asset in &loaded.references {
         if !source.contains(&format!("lumen-asset:{}", asset.id)) {
             source.push_str(&format!(
                 "\n{}[原始材料](lumen-asset:{})\n",
@@ -154,6 +156,12 @@ pub async fn ai_generate_flow(
                 asset.id
             ));
         }
+    }
+    if !loaded.warnings.is_empty() {
+        source.push_str(&format!(
+            "\n\n## 文件提取说明\n\n{}",
+            loaded.warnings.join("\n")
+        ));
     }
     let manifest = media.iter().enumerate().map(|(index, asset)| serde_json::json!({"order":index+1,"id":asset.id,"name":asset.name,"mime":asset.mime})).collect::<Vec<_>>();
     let request = ChatRequest {
@@ -168,12 +176,223 @@ pub async fn ai_generate_flow(
             media,
         };
     let response = ai::chat(&config, &request).await?;
-    parse_flow(&response.text, &source, &request.media)
+    finish_flow(
+        &state.db,
+        &response.text,
+        &source,
+        &loaded.references,
+        &loaded.derived,
+    )
+    .await
+}
+
+async fn finish_flow(
+    db: &crate::db::Db,
+    raw: &str,
+    source: &str,
+    references: &[ContentAsset],
+    derived: &[ContentAsset],
+) -> AppResult<SaveMemoInput> {
+    let draft = parse_flow(raw, source, references)?;
+    crate::content_assets::persist_assets(db, derived).await?;
+    Ok(draft)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn later_flow_budget_failure_leaves_only_original_assets() {
+        use std::io::{Cursor, Write};
+        let mut zip =
+            zip::ZipWriter::new_append(Cursor::new(crate::document_import::tests::docx())).unwrap();
+        zip.start_file(
+            "word/media/image1.png",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"\x89PNG\r\n\x1a\nimage-bytes").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let dir = std::env::temp_dir().join(format!("lumen-flow-reject-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(&db, "orders.docx", bytes.clone())
+            .await
+            .unwrap();
+        let large = crate::content_assets::store_bytes(
+            &db,
+            "large.txt",
+            vec![b'a'; crate::content_assets::MAX_ASSET_BYTES],
+        )
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            assert!(crate::ai_media::load_flow_media(
+                &db,
+                crate::ai::Provider::DeepSeek,
+                &[original.id.clone(), large.id.clone()]
+            )
+            .await
+            .is_err());
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM content_assets")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+            assert_eq!(
+                count, 2,
+                "rejected generation must not leave embedded images"
+            );
+        }
+        assert_eq!(
+            crate::content_assets::decode_asset(
+                &crate::content_assets::get_asset(&db, &original.id)
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+            bytes
+        );
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn derived_image_insert_failure_rolls_back_all_images() {
+        use std::io::{Cursor, Write};
+        let mut zip =
+            zip::ZipWriter::new_append(Cursor::new(crate::document_import::tests::docx())).unwrap();
+        for name in ["word/media/image1.png", "word/media/image2.png"] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"\x89PNG\r\n\x1a\nimage-bytes").unwrap();
+        }
+        let dir =
+            std::env::temp_dir().join(format!("lumen-derived-rollback-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(
+            &db,
+            "orders.docx",
+            zip.finish().unwrap().into_inner(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("CREATE TRIGGER reject_second_image BEFORE INSERT ON content_assets WHEN NEW.name LIKE '%image2%' BEGIN SELECT RAISE(ABORT, 'fixture insert failure'); END").execute(db.pool()).await.unwrap();
+        assert!(crate::document_import::extract_asset(&db, original)
+            .await
+            .is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM content_assets")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "failed second insert must roll back first image");
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn word_generation_exposes_embedded_image_without_saving_memo() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::{Cursor, Write};
+        let mut zip =
+            zip::ZipWriter::new_append(Cursor::new(crate::document_import::tests::docx())).unwrap();
+        zip.start_file(
+            "word/media/image1.png",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        let png = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB9kAAAAASUVORK5CYII=").unwrap();
+        zip.write_all(&png).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let dir = std::env::temp_dir().join(format!("lumen-word-flow-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(&db, "orders.docx", bytes.clone())
+            .await
+            .unwrap();
+        let loaded = crate::ai_media::load_flow_media(
+            &db,
+            crate::ai::Provider::DeepSeek,
+            std::slice::from_ref(&original.id),
+        )
+        .await
+        .unwrap();
+        assert!(loaded.references.iter().any(|a| a.id == original.id
+            && a.data_base64 == original.data_base64
+            && a.mime == original.mime));
+        assert!(!loaded.warnings.is_empty());
+        let media = loaded.media;
+        assert_eq!(
+            crate::content_assets::decode_asset(
+                &crate::content_assets::get_asset(&db, &original.id)
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+            bytes
+        );
+        let image = media
+            .iter()
+            .find(|a| a.mime.starts_with("image/"))
+            .expect("Word embedded image must be present in generation manifest");
+        assert_eq!(crate::content_assets::decode_asset(image).unwrap(), png);
+        assert!(finish_flow(
+            &db,
+            "invalid model output",
+            "",
+            &loaded.references,
+            &loaded.derived
+        )
+        .await
+        .is_err());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM content_assets")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "model errors must not persist prepared images");
+        let raw = serde_json::json!({"title":"流程","steps":[{"title":"准备"},{"title":"核对","assetIds":[image.id]}]}).to_string();
+        let draft = finish_flow(
+            &db,
+            &raw,
+            &format!("[原始材料](lumen-asset:{})", original.id),
+            &loaded.references,
+            &loaded.derived,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::content_assets::decode_asset(
+                &crate::content_assets::get_asset(&db, &image.id)
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+            png
+        );
+        assert!(!draft.steps[0].detail.contains("lumen-asset:"));
+        assert!(draft.steps[1]
+            .detail
+            .contains(&format!("![{}](lumen-asset:{})", image.name, image.id)));
+        assert!(draft.id.is_none());
+        assert!(parse_flow(&serde_json::json!({"title":"流程","steps":[{"title":"核对","assetIds":[uuid::Uuid::now_v7().to_string()]}]}).to_string(), "", &media).is_err());
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM memo_documents")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(count.0, 0);
+        let native = crate::ai_media::load_flow_media(
+            &db,
+            crate::ai::Provider::OpenAI,
+            std::slice::from_ref(&original.id),
+        )
+        .await
+        .unwrap();
+        assert!(native
+            .media
+            .iter()
+            .any(|a| a.id == original.id && a.data_base64 == original.data_base64));
+        assert!(native.media.iter().any(|a| a.mime == "image/png"));
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     fn test_image(id: &str) -> ContentAsset {
         ContentAsset {

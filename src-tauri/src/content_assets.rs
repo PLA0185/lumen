@@ -78,7 +78,7 @@ pub fn decode_asset(asset: &ContentAsset) -> AppResult<Vec<u8>> {
     Ok(bytes)
 }
 
-pub async fn store_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<ContentAsset> {
+pub fn prepare_bytes(name: &str, bytes: Vec<u8>) -> AppResult<ContentAsset> {
     if bytes.len() > MAX_ASSET_BYTES {
         return Err(AppError::validation("单个文件最多 20 MiB，请分拆大文件"));
     }
@@ -86,7 +86,7 @@ pub async fn store_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<Conte
     if name.is_empty() || name.chars().count() > 255 || name.chars().any(char::is_control) {
         return Err(AppError::validation("文件名应为 1–255 字且不能含控制字符"));
     }
-    let asset = ContentAsset {
+    Ok(ContentAsset {
         id: uuid::Uuid::now_v7().to_string(),
         name: name.to_owned(),
         mime: mime_for(name, &bytes).into(),
@@ -94,10 +94,26 @@ pub async fn store_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<Conte
         byte_size: bytes.len() as i64,
         sha256: hex::encode(Sha256::digest(&bytes)),
         created_at: now_stamp(),
-    };
-    sqlx::query("INSERT INTO content_assets (id,name,mime,data_base64,byte_size,sha256,created_at) VALUES (?,?,?,?,?,?,?)")
-        .bind(&asset.id).bind(&asset.name).bind(&asset.mime).bind(&asset.data_base64).bind(asset.byte_size).bind(&asset.sha256).bind(&asset.created_at)
-        .execute(db.pool()).await?;
+    })
+}
+
+pub async fn persist_assets(db: &Db, assets: &[ContentAsset]) -> AppResult<()> {
+    for asset in assets {
+        decode_asset(asset)?;
+    }
+    let mut transaction = db.pool().begin().await?;
+    for asset in assets {
+        sqlx::query("INSERT INTO content_assets (id,name,mime,data_base64,byte_size,sha256,created_at) VALUES (?,?,?,?,?,?,?)")
+            .bind(&asset.id).bind(&asset.name).bind(&asset.mime).bind(&asset.data_base64).bind(asset.byte_size).bind(&asset.sha256).bind(&asset.created_at)
+            .execute(&mut *transaction).await?;
+    }
+    transaction.commit().await?;
+    Ok(())
+}
+
+pub async fn store_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<ContentAsset> {
+    let asset = prepare_bytes(name, bytes)?;
+    persist_assets(db, std::slice::from_ref(&asset)).await?;
     Ok(asset)
 }
 
