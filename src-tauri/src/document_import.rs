@@ -593,6 +593,17 @@ pub fn extract_local(asset: &ContentAsset) -> AppResult<String> {
     Ok(parse(asset)?.text)
 }
 
+/// Question answering must not persist extracted embedded images into business storage.
+pub async fn extract_asset_read_only(asset: ContentAsset) -> AppResult<Extraction> {
+    let parsed = tokio::task::spawn_blocking(move || parse(&asset))
+        .await
+        .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
+    Ok(Extraction {
+        text: parsed.text,
+        images: Vec::new(),
+        warnings: parsed.warnings,
+    })
+}
 pub async fn extract_asset(db: &Db, asset: ContentAsset) -> AppResult<Extraction> {
     let parsed = tokio::task::spawn_blocking(move || parse(&asset))
         .await
@@ -1052,7 +1063,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(windows)]
-    fn printed_fixture() -> (Vec<u8>, Vec<u8>, u32, u32) {
+    pub(crate) fn printed_fixture() -> (Vec<u8>, Vec<u8>, u32, u32) {
         // Synthetic fixture: System.Drawing Bitmap(500,120), white background,
         // DrawString("ORDER 123", Font("Arial",40), black,10,10), PNG.
         // A printed font exercises ordinary OCR rather than ambiguous pixel glyphs.
