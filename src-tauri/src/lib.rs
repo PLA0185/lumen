@@ -27,6 +27,7 @@ pub mod ai_features;
 pub mod ai_media;
 pub mod attachments;
 pub mod backup;
+pub mod canvas_input;
 pub mod cloud_sync;
 pub mod commands;
 #[cfg(test)]
@@ -139,6 +140,7 @@ pub fn run() {
         // 更新安装完成后需要重启应用
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            canvas_input::install(app.handle())?;
             // ---------------- 数据目录与数据库 ----------------
             // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.lumen），
             // 而不是安装目录：这样 NSIS 卸载程序的"删除应用数据"选项才能
@@ -295,6 +297,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            canvas_input::canvas_input_set_active,
             commands::ping,
             commands::app_info,
             commands::app_data_paths,
