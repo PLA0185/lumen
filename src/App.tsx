@@ -474,8 +474,8 @@ export default function App() {
       <div className="main">
         <header className="topbar">
           <div className="topbar__heading">
-            <h1 className="topbar__title">{meta.title}</h1>
-            <div className="topbar__subtitle">{meta.subtitle}</div>
+            <h1 className="topbar__title" title={meta.title}>{meta.title}</h1>
+            <div className="topbar__subtitle" title={meta.subtitle}>{meta.subtitle}</div>
           </div>
 
           <div className="topbar__actions">
