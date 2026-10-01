@@ -159,7 +159,7 @@ export function AiAssistant({ compact = false, creationDefaults }: { compact?: b
               <ContentEditor
                 className="input selectable ai-assistant__input"
                 value={text}
-                maxLength={20000}
+                maxLength={80000}
                 aria-label="发送给 AI 的文本"
                 placeholder={
                   mode === 'tasks'

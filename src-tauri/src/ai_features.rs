@@ -915,11 +915,7 @@ pub async fn ai_organize(
             "请先输入文本或添加需要分析的图片、文件",
         ));
     }
-    if text.chars().count() > 20_000 {
-        return Err(AppError::validation(
-            "输入过长，请分段整理（上限 20000 字符）",
-        ));
-    }
+    crate::ai_media::validate_material_text(text)?;
 
     // 已有任务摘要用于去重判断，但**不发送备注**（除用户显式开启）
     let (brief, _index) = collect_task_brief(&state, None, 80, input.send_notes).await?;
@@ -1292,9 +1288,7 @@ pub async fn ai_plan(
     });
 
     let extra = input.text.as_deref().unwrap_or("");
-    if extra.chars().count() > 20_000 {
-        return Err(AppError::validation("补充说明超过 20000 字"));
-    }
+    crate::ai_media::validate_material_text(extra)?;
     let user = format!("{user}\n用户补充说明：{extra}");
     let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
     let resp = ai::chat(
@@ -1492,9 +1486,7 @@ pub async fn ai_review(
     };
     let (start, end) = review_range(&input.horizon, anchor)?;
     let text = input.text.as_deref().unwrap_or("").trim();
-    if text.chars().count() > 20_000 {
-        return Err(AppError::validation("总结文本超过 20000 字，请分段处理"));
-    }
+    crate::ai_media::validate_material_text(text)?;
 
     // 统计口径与统计页保持一致，避免"复盘说的和界面显示的不一样"
     let stats = crate::stats::collect_calendar_stats(&state, start, end).await?;

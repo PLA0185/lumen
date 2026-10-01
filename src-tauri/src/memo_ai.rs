@@ -109,11 +109,7 @@ pub async fn ai_generate_flow(
     if text.is_empty() && input.asset_ids.is_empty() {
         return Err(AppError::validation("请先粘贴文字、聊天记录或添加截图"));
     }
-    if input.text.chars().count() > 20_000 {
-        return Err(AppError::validation(
-            "原始材料文字最多 20000 字，请分段整理",
-        ));
-    }
+    crate::ai_media::validate_material_text(&input.text)?;
     let media = crate::ai_media::load_media(&state.db, config.provider, &input.asset_ids).await?;
     let mut source = input.text.clone();
     for asset in &media {
