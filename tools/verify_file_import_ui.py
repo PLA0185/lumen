@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 import threading
 import uuid
@@ -32,8 +33,9 @@ assert not invoke('cloud_sync_status')['config']
 assert not invoke('ai_provider_key_status')['custom']
 
 
-def click(label):
-    probe = 'Array.from(document.querySelectorAll("button")).find(b=>!b.disabled && b.textContent.trim()===' + json.dumps(label) + ')'
+def click(label, area='', aria_label=None):
+    match = 'b.getAttribute("aria-label")===' + json.dumps(aria_label) if aria_label else 'b.textContent.trim()===' + json.dumps(label)
+    probe = 'Array.from(document.querySelectorAll(' + json.dumps(area + ' button') + ')).find(b=>!b.disabled && ' + match + ')'
     assert t.wait_for(probe), label
     t.eval(probe + '.dataset.fileVerify="1"')
     t.eval('document.querySelector("[data-file-verify]").scrollIntoView({block:"center",behavior:"instant"})')
@@ -42,7 +44,7 @@ def click(label):
     t.eval('document.querySelectorAll("[data-file-verify]").forEach(b=>delete b.dataset.fileVerify)')
 
 
-def import_file(area, filename, expected):
+def import_file(area, filename, expected, recognize=True):
     selector = area + ' input[type=file]'
     before = t.eval('document.querySelector(' + json.dumps(area + ' textarea') + ').value')
     t.eval('(()=>{const f=document.querySelector(' + json.dumps(area + ' textarea') + ');f.focus();f.setSelectionRange(f.value.length,f.value.length)})()')
@@ -50,12 +52,27 @@ def import_file(area, filename, expected):
     node = t.call('DOM.querySelector', {'nodeId': root, 'selector': selector})['nodeId']
     assert node
     t.call('DOM.setFileInputFiles', {'nodeId': node, 'files': [str((args.fixtures / filename).resolve())]})
-    assert t.wait_for('(()=>{const f=document.querySelector(' + json.dumps(area + ' textarea') + ');return f.getAttribute("aria-busy")==="false" && f.value!==' + json.dumps(before) + ' && f.value.includes(' + json.dumps(expected) + ')})()', timeout=30), filename
-    print('PASS: native file input recognizes ' + filename + ' and retains original reference.', flush=True)
+    assert t.wait_for('(()=>{const f=document.querySelector(' + json.dumps(area + ' textarea') + ');return f.getAttribute("aria-busy")==="false" && f.value!==' + json.dumps(before) + ' && f.value.includes(' + json.dumps(filename) + ')})()', timeout=30), filename
+    imported = t.eval('document.querySelector(' + json.dumps(area + ' textarea') + ').value')
+    assert imported.startswith(before), filename
+    assert re.fullmatch(r'\n!?\[' + re.escape(filename) + r'\]\(lumen-asset:[0-9a-f-]{36}\)\n', imported[len(before):]), 'Import must append only the original reference: ' + filename
+    assert expected not in imported[len(before):], 'Import unexpectedly parsed ' + filename
+    assert t.wait_for('Array.from(document.querySelectorAll(' + json.dumps(area + ' .content-asset') + ')).some(card=>card.textContent.includes(' + json.dumps(filename) + '))')
+    if filename.endswith('.png'):
+        assert t.wait_for('Array.from(document.querySelectorAll(' + json.dumps(area + ' .content-asset img') + ')).some(img=>img.alt===' + json.dumps(filename) + ' && img.naturalWidth>0)')
+    print('PASS: native file input adds only original ' + filename + ' with a visible resource card.', flush=True)
+    if recognize:
+        click('识别内容', area, '识别内容：' + filename)
+        assert t.wait_for('(()=>{const f=document.querySelector(' + json.dumps(area + ' textarea') + ');return f.getAttribute("aria-busy")==="false" && f.value.includes(' + json.dumps(expected) + ')})()', timeout=30), filename
+        recognized = t.eval('document.querySelector(' + json.dumps(area + ' textarea') + ').value')
+        assert recognized.startswith(imported), 'Manual recognition must preserve the original input: ' + filename
+        print('PASS: real mouse click explicitly recognizes ' + filename + ' and retains original reference.', flush=True)
 
 
 click('备忘与流程')
 click('新建流程')
+assert t.eval('!!document.querySelector(`[aria-label="流程画布"]`)')
+click('返回列表')
 ui.set_react_input(t, '[aria-label="备忘标题"]', '隔离验收：普通文件导入')
 area = '.memos__editor .content-editor'
 for name, text in [('orders.docx', '先核对订单'), ('orders.xlsx', 'ABC\t\t12'), ('orders.pdf', 'Ship order ABC'), ('printed.png', 'ORDER')]:
@@ -97,7 +114,7 @@ try:
     config = {'provider': 'custom', 'baseUrl': f'http://127.0.0.1:{server.server_port}/v1', 'model': 'local-http-file-fixture', 'timeoutSeconds': 15, 'maxOutputTokens': 2048, 'hasApiKey': False}
     invoke('ai_set_config', {'config': config, 'apiKey': str(uuid.uuid4())})
     click('AI 生成流程')
-    import_file('.ai-flow-dialog .content-editor', 'orders.docx', '先核对订单')
+    import_file('.ai-flow-dialog .content-editor', 'orders.docx', '先核对订单', recognize=False)
     click('生成流程草稿')
     assert t.wait_for('document.querySelector(`[aria-label="备忘标题"]`)?.value==="隔离验收：文件生成流程"', timeout=30)
     assert t.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0')
@@ -110,7 +127,7 @@ try:
     print('PASS: local Word text conversion and embedded image reach real HTTP fixture; generated step displays image and remains unconfirmed.', flush=True)
     click('确认保存流程')
     assert t.wait_for('document.querySelector(".memos")?.textContent.includes("已保存到本机")')
-    print('6 native file-import checks passed; generated fixtures and local HTTP, not a real model or user document.', flush=True)
+    print('Native file-import and generated-image checks passed; generated fixtures and local HTTP, not a real model or user document.', flush=True)
 finally:
     invoke('ai_clear_key', {'provider': 'custom'})
     assert not invoke('ai_provider_key_status')['custom']

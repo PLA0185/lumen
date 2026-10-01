@@ -12,7 +12,6 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(false)
-  const [recognize, setRecognize] = useState(extractFiles)
   const [importResults, setImportResults] = useState('')
   useEffect(() => {
     onBusyChange?.(busy)
@@ -20,7 +19,7 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   }, [busy, onBusyChange])
   const latest = useRef(props)
   latest.current = props
-  const images = String(props.value ?? '').match(/!\[[^\]]*\]\(lumen-asset:[^)]+\)/g) ?? []
+  const references = String(props.value ?? '').match(/!?\[[^\]\n]*\]\(lumen-asset:[0-9a-f-]{36}\)/gi) ?? []
   const removeAsset = (id: string) => {
     const field = ref.current
     if (!field || field.disabled || field.readOnly || pending.current) return
@@ -33,9 +32,11 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   }
   const onRemoveAsset = props.disabled || props.readOnly || busy ? undefined : removeAsset
 
-  const insert = async (load: () => Promise<string>) => {
+  const insert = async (load: () => Promise<string>, preserveExisting = false) => {
     const field = ref.current
     if (!field || pending.current || field.disabled || field.readOnly) return
+    // A real click focuses the resource button; retain the editor caret before busy hides it.
+    if (preserveExisting) field.focus()
     const value = field.value, start = field.selectionStart, end = field.selectionEnd
     const focused = document.activeElement
     pending.current = true; setBusy(true); setError(''); setImportResults('')
@@ -44,7 +45,7 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
       if (!mounted.current || !field.isConnected) return
       if (field.value !== value || field.selectionStart !== start || field.selectionEnd !== end || document.activeElement !== focused) throw new Error('导入期间内容或编辑位置发生变化，请在需要的位置重新粘贴')
       if (!text) return
-      const range = text.includes('lumen-asset:') ? contentInsertionRange(value, start, end) : { start, end }
+      const range = preserveExisting ? contentInsertionRange(value, end, end) : text.includes('lumen-asset:') ? contentInsertionRange(value, start, end) : { start, end }
       if (field.maxLength >= 0 && value.length - (range.end - range.start) + text.length > field.maxLength) throw new Error(`内容超过 ${field.maxLength} 字，请缩短后重新导入`)
       // Controlled textarea updates through its native editing/input path.
       field.focus()
@@ -73,18 +74,6 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
       try {
         const asset = await load()
         addReference(asset)
-        if (extractFiles && recognize) {
-          try {
-            const extracted = await assetExtract(asset.id)
-            const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.map(assetMarkdown)].filter(Boolean).join('\n')
-            if (!fits(recognized) && recognized) {
-              const complete = await assetImportFile(new File([recognized], `${asset.name.slice(0, 180)}-识别内容.md`, { type: 'text/plain' }))
-              addReference(complete)
-              errors.push('识别正文超过当前位置剩余字数，完整识别内容已保存为文件；原文件也保留，可另存后分段编辑。')
-            } else if (recognized) parts.push(recognized)
-            errors.push(...extracted.warnings)
-          } catch (e) { errors.push(`${asset.name}：${contentError(e)}。原文件已保留。`) }
-        }
       }
       catch (e) { errors.push(contentError(e)) }
     }
@@ -95,6 +84,29 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
     if (errors.length) setError(errors.join('\n'))
     return parts.length ? `\n${parts.join('\n')}\n` : ''
   }
+  const extractAsset = (asset: ContentAsset) => insert(async () => {
+    try {
+      const extracted = await assetExtract(asset.id)
+      const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.map(assetMarkdown)].filter(Boolean).join('\n')
+      const remaining = ref.current && ref.current.maxLength >= 0 ? ref.current.maxLength - ref.current.value.length : Infinity
+      let text = recognized ? `\n${recognized}\n` : ''
+      const warnings = [...extracted.warnings]
+      if (text.length > remaining) {
+        const complete = await assetImportFile(new File([recognized], `${asset.name.slice(0, 180)}-识别内容.md`, { type: 'text/plain' }))
+        text = `\n${assetMarkdown(complete)}\n`
+        warnings.push('识别正文超过当前位置剩余字数，完整识别内容已保存为文件；原文件也保留，可另存后分段编辑。')
+        if (text.length > remaining) {
+          setImportResults(assetMarkdown(complete))
+          warnings.push('当前位置字数不足，完整文件未放进当前内容；可从下方导入结果查看或另存。')
+          text = ''
+        }
+      }
+      if (!recognized && !warnings.length) warnings.push('没有识别到可插入的内容，原文件已保留。')
+      if (warnings.length) setError(warnings.join('\n'))
+      return text
+    } catch (e) { throw new Error(`${asset.name}：${contentError(e)}。原文件已保留。`, { cause: e }) }
+  }, true)
+  const onExtractAsset = extractFiles && !props.disabled && !props.readOnly && !busy ? extractAsset : undefined
   const nativePaste = () => insert(async () => {
     let clipboardImage
     try { clipboardImage = await readImage() } catch { return readText() }
@@ -155,12 +167,11 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
         if (files.length) void insert(() => importMany(files.map((file) => () => assetImportFile(file))))
       }} /></label>
       <button type="button" className="btn btn--quiet btn--sm" aria-expanded={preview} onClick={() => setPreview(!preview)}>{preview ? '收起预览' : '预览内容'}</button>
-      {extractFiles && <label className="setgroup__hint"><input type="checkbox" checked={recognize} disabled={props.disabled || props.readOnly || busy} onChange={e => setRecognize(e.target.checked)} /> 导入时在本机识别内容</label>}
-      <span className="setgroup__hint">可粘贴图片、拖入文件，单文件最多 20 MiB</span>
+      <span className="setgroup__hint">可粘贴图片、拖入文件，单文件最多 20 MiB{extractFiles && '；添加后保留原文件，点击“识别内容”才在本机识别'}</span>
     </div>
     {error && <p className="formerr" role="alert">{error}</p>}
     {importResults && <div className="mdpreview" aria-label="本次导入结果"><p className="setgroup__hint">本次导入结果（尚未放进当前内容）</p><ContentMarkdown>{importResults}</ContentMarkdown></div>}
-    {!preview && images.length > 0 && <div className="mdpreview" aria-label="已插入图片预览"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{images.join('\n')}</ContentMarkdown></div>}
-    {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset}>{String(props.value ?? '')}</ContentMarkdown></div>}
+    {!preview && references.length > 0 && <div className="mdpreview" aria-label="已插入图片 / 文件预览"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset}>{references.join('\n')}</ContentMarkdown></div>}
+    {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset}>{String(props.value ?? '')}</ContentMarkdown></div>}
   </div>
 }
