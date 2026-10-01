@@ -54,6 +54,26 @@ async function fill(label: string, value: string) {
 describe('独立备忘与业务流程', () => {
   const config: ai.ProviderConfig = { provider: 'custom', baseUrl: 'http://localhost:11434/v1', model: 'vision-test', timeoutSeconds: 30, maxOutputTokens: 2048, hasApiKey: true }
   const generated: memo.SaveMemoInput = { id: null, expectedRevision: null, title: '订单核对流程', category: '销售', kind: 'flow', bodyMd: '## 原始材料\n\n张三：先核对订单，再通知仓库。', steps: [{ id: 'step-1', title: '核对订单', owner: '待确认', detail: '核对订单数量。' }] }
+  it('可把 AI 原始图片放进已有步骤，待关联数量更新，确认前不保存或重新调用 AI', async () => {
+    const image: assets.ContentAsset = { id:'00000000-0000-7000-8000-000000000001',name:'发货表.png',mime:'image/png',dataBase64:'',byteSize:24,sha256:'hash',createdAt:'' }
+    vi.spyOn(assets, 'assetGet').mockResolvedValue(image)
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
+    const body = `${generated.bodyMd}\n${assets.assetMarkdown(image)}`
+    const generate = vi.spyOn(ai, 'aiGenerateFlow').mockResolvedValue({ ...generated, bodyMd: body })
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id:'new-flow',revision:1,createdAt:'',updatedAt:'',deletedAt:null }))
+    await mount(); await click('AI 生成流程'); await fill('流程原始材料', '根据原图整理'); await click('生成流程草稿')
+    expect(document.body.textContent).toContain('还有 1 张原图未关联步骤')
+    const picker = document.querySelector<HTMLSelectElement>('[aria-label="第 1 步关联原图"]')
+    expect(picker).toBeTruthy()
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')!.set!.call(picker, image.id); picker!.dispatchEvent(new Event('change',{bubbles:true})) })
+    await click('放到此步骤')
+    expect((document.querySelector('[aria-label="第 1 步说明"]') as HTMLTextAreaElement).value).toContain(assets.assetMarkdown(image))
+    expect(document.body.textContent).toContain('原图均已关联步骤')
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(save).not.toHaveBeenCalled(); expect(generate).toHaveBeenCalledOnce()
+    await click('确认保存流程')
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({bodyMd:body,steps:[expect.objectContaining({detail:expect.stringContaining(assets.assetMarkdown(image))})]}))
+  })
   it('图片仍在导入时不能生成，避免漏发所选截图', async () => {
     vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
     vi.spyOn(assets, 'assetImportFile').mockReturnValue(new Promise(() => {}))

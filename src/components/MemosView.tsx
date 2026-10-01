@@ -9,6 +9,8 @@ import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { Icon } from './Icons'
 import { CloudHistory } from './CloudHistory'
 import { AiFlowDialog } from './AiFlowDialog'
+import { FlowImagePicker } from './FlowImagePicker'
+import { contentImages } from '../lib/content-assets'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -48,6 +50,10 @@ export function MemosView({
   const [error, setError] = useState<string | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const imageSource = draft ? `${draft.bodyMd}\n${draft.steps.map(step => step.detail).join('\n')}` : ''
+  const originalImages = contentImages(draft?.bodyMd ?? '')
+  const attachedImages = new Set(draft?.steps.flatMap(step => contentImages(step.detail).map(image => image.id)))
+  const missingImages = originalImages.filter(image => !attachedImages.has(image.id))
   const listGate = useRef(createRequestGate()).current
   const detailGate = useRef(createRequestGate()).current
   const dirty =
@@ -447,6 +453,7 @@ export function MemosView({
                       <p className="setgroup__hint">
                         保存后按以下顺序显示流程路线。每个步骤可写负责人和具体操作。
                       </p>
+                      {originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}
                       {draft.steps.map((step, i) => (
                         <fieldset
                           className="memos__step-fields"
@@ -484,6 +491,7 @@ export function MemosView({
                               patchStep(i, { detail: e.target.value })
                             }
                           />
+                          <FlowImagePicker source={imageSource} detail={step.detail} step={i + 1} onChange={detail => patchStep(i, { detail })} />
                           <div className="memos__step-actions">
                             <button
                               className="btn btn--ghost btn--sm"

@@ -415,8 +415,10 @@ select {
 }
 
 .topbar__heading {
-  flex: 0 0 156px;
-  min-width: 156px;
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: min(360px, 40%);
 }
 
 .topbar__title {
@@ -424,12 +426,17 @@ select {
   font-weight: 650;
   letter-spacing: -0.01em;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar__subtitle {
   margin-top: 1px;
   font-size: 0.8em;
   color: var(--c-text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .topbar__actions {
@@ -4537,6 +4544,9 @@ body {
 .memos .memos__editor textarea { min-height: 150px; resize: vertical; line-height: 1.7; }
 .memos__step-fields { display: grid; gap: 10px; min-width: 0; margin: 14px 0; padding: 16px; border: 1px solid var(--c-border); border-radius: 8px; }
 .memos__step-fields legend { color: var(--c-accent); padding: 0 6px; }
+.flow-image-picker { display: grid; gap: 10px; }
+.flow-image-picker__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.flow-image-picker__controls select { flex: 1 1 220px; min-width: 0; max-width: 420px; }
 .memos .memos__step-fields textarea { min-height: 80px; }
 .memos__empty { padding: 30px 10px; color: var(--c-text-2); line-height: 1.8; }
 .memos__reading { overflow-wrap: anywhere; }
