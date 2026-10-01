@@ -597,6 +597,18 @@ select {
 .ai-quick-dialog { width: min(900px, calc(100vw - 48px)); max-height: calc(100vh - 64px); padding: 20px; background: var(--c-surface); color: var(--c-text); border: 1px solid var(--c-border); border-radius: var(--radius); overflow: auto; }
 .ai-quick-dialog::backdrop { background: rgb(0 0 0 / 55%); }
 .ai-quick-dialog__close { float: right; margin-bottom: 12px; }
+.ai-flow-dialog { width: min(820px, calc(100vw - 48px)); padding: 28px; }
+.ai-flow-dialog__header { margin-bottom: 24px; }
+.ai-flow-dialog h2 { margin: 0 0 12px; }
+.ai-flow-dialog h3 { margin: 0 0 8px; font-size: 16px; }
+.ai-flow-dialog p { margin: 0; line-height: 1.7; }
+.ai-flow-dialog__material > .setgroup__hint { margin-bottom: 14px; }
+.ai-flow-dialog .content-editor textarea { height: 240px; min-height: 180px; padding: 14px; line-height: 1.7; resize: vertical; }
+.ai-flow-dialog .content-editor__tools { margin-top: 12px; gap: 12px; }
+.ai-flow-dialog__footer { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--c-border); }
+.ai-flow-dialog__footer > p + p { margin-top: 10px; }
+.ai-flow-dialog__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+@media (max-width: 600px) { .ai-flow-dialog { padding: 20px; } .ai-flow-dialog .content-editor textarea { height: 200px; } }
 
 .task--done .task__title {
   text-decoration: line-through;
