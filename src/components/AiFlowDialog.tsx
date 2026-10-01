@@ -11,6 +11,7 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
   const [config, setConfig] = useState<ai.ProviderConfig | null>(null)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
   const reload = async () => {
     try { const value = await ai.aiGetConfig(); if (mounted.current) { setConfig(value); setError('') } }
@@ -24,7 +25,7 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
     return () => { mounted.current = false }
   }, [])
   const generate = async () => {
-    if (running.current || !config) return
+    if (running.current || importing || !config) return
     running.current = true; setBusy(true); setError('')
     try { const draft = await ai.aiGenerateFlow(config, text); if (mounted.current) onGenerated(draft) }
     catch (e) { if (mounted.current) setError(contentError(e)) }
@@ -38,14 +39,14 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
     <section className="ai-flow-dialog__material" aria-label="原始材料输入区">
       <h3>原始材料</h3>
       <p className="setgroup__hint">可以直接粘贴文字，也可以粘贴或拖入截图。不明确的内容会标为“待确认”。</p>
-      <ContentEditor className="input selectable" aria-label="流程原始材料" value={text} onChange={e => setText(e.target.value)} disabled={busy} maxLength={20000} rows={10} placeholder={'例如：\n张三：收到订单，先核对型号和数量。\n李四：确认后发给仓库，缺货时先联系客户。\n\n也可以粘贴微信聊天记录或截图。'} />
+      <ContentEditor className="input selectable" aria-label="流程原始材料" value={text} onChange={e => setText(e.target.value)} onBusyChange={setImporting} disabled={busy} maxLength={20000} rows={10} placeholder={'例如：\n张三：收到订单，先核对型号和数量。\n李四：确认后发给仓库，缺货时先联系客户。\n\n也可以粘贴微信聊天记录或截图。'} />
     </section>
     <footer className="ai-flow-dialog__footer">
     <p className="setgroup__hint">点击生成才会发送所选材料到当前 AI 服务。生成的草稿需确认后才会保存。</p>
     {config?.hasApiKey && config.model.trim() ? <p className="setgroup__hint">当前模型：{config.model}。截图识别取决于模型的图片能力，看不清的文字需要人工核对。</p> : <p className="setgroup__hint">请先在「设置 → AI」保存模型和 API 密钥，再返回此处刷新配置。</p>}
     {error && <p role="alert" className="alert alert--error selectable">{error}</p>}
     <div className="ai-flow-dialog__actions">
-      <button className="btn btn--primary" disabled={busy || !text.trim() || !config?.hasApiKey || !config.model.trim()} onClick={() => void generate()}>{busy ? '生成中…' : '生成流程草稿'}</button>
+      <button className="btn btn--primary" disabled={busy || importing || !text.trim() || !config?.hasApiKey || !config.model.trim()} onClick={() => void generate()}>{busy ? '生成中…' : '生成流程草稿'}</button>
       <button className="btn btn--ghost" disabled={busy} onClick={() => void reload()}>刷新 AI 配置</button>
       <button className="btn btn--ghost" disabled={busy} onClick={onClose}>取消生成</button>
     </div>

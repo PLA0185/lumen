@@ -237,7 +237,17 @@ export function MemosView({
           <Icon name="plus" size={15} />
           新建流程
         </button>
-        <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => { if (canLeave()) setAiOpen(true) }}>AI 生成流程</button>
+        <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => {
+          if (!canLeave()) return
+          if (dirty) {
+            setDraft(selected ? draftOf(selected) : null)
+            setEditing(false)
+            setAiDraft(false)
+            setError(null)
+            setNotice(null)
+          }
+          setAiOpen(true)
+        }}>AI 生成流程</button>
         <select
           className="input input--compact"
           aria-label="备忘分类筛选"

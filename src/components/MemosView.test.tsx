@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import * as memo from '../lib/memos-ipc'
 import * as ai from '../lib/ai-ipc'
+import * as assets from '../lib/content-assets'
 import { MemosView } from './MemosView'
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
@@ -53,6 +54,34 @@ async function fill(label: string, value: string) {
 describe('独立备忘与业务流程', () => {
   const config: ai.ProviderConfig = { provider: 'custom', baseUrl: 'http://localhost:11434/v1', model: 'vision-test', timeoutSeconds: 30, maxOutputTokens: 2048, hasApiKey: true }
   const generated: memo.SaveMemoInput = { id: null, expectedRevision: null, title: '订单核对流程', category: '销售', kind: 'flow', bodyMd: '## 原始材料\n\n张三：先核对订单，再通知仓库。', steps: [{ id: 'step-1', title: '核对订单', owner: '待确认', detail: '核对订单数量。' }] }
+  it('图片仍在导入时不能生成，避免漏发所选截图', async () => {
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
+    vi.spyOn(assets, 'assetImportFile').mockReturnValue(new Promise(() => {}))
+    const generate = vi.spyOn(ai, 'aiGenerateFlow')
+    await mount()
+    await click('AI 生成流程')
+    await fill('流程原始材料', '请结合即将添加的截图整理流程。')
+    const input = document.querySelector('dialog input[type=file]')!
+    Object.defineProperty(input, 'files', { value: [new File(['image'], '截图.png', { type: 'image/png' })] })
+    await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })))
+    const button = [...document.querySelectorAll('button')].find(b => b.textContent === '生成流程草稿')!
+    expect(button.disabled).toBe(true)
+    await act(async () => button.click())
+    expect(generate).not.toHaveBeenCalled()
+  })
+  it('确认放弃修改后取消生成，不会恢复保存已放弃的草稿', async () => {
+    vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
+    const save = vi.spyOn(memo, 'memoSave')
+    await mount()
+    await click('新建备忘')
+    await fill('备忘标题', '这份草稿要放弃')
+    await click('AI 生成流程')
+    expect(window.confirm).toHaveBeenCalled()
+    await click('取消生成')
+    await act(async () => vi.advanceTimersByTimeAsync(2000))
+    expect(save).not.toHaveBeenCalled()
+    expect(document.querySelector('[aria-label="备忘标题"]')).toBeNull()
+  })
   it('AI 草稿和修改都不自动写库，确认后只保存新的流程', async () => {
     vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
     const generate = vi.spyOn(ai, 'aiGenerateFlow').mockResolvedValue({ ...generated, id: 'existing-record', expectedRevision: 8 })

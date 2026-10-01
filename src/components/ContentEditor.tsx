@@ -4,14 +4,18 @@ import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { assetImportFile, assetImportPath, assetMarkdown, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
 import { ContentMarkdown } from './ContentMarkdown'
 
-type Props = ComponentProps<'textarea'>
-export function ContentEditor(props: Props) {
+type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void }
+export function ContentEditor({ onBusyChange, ...props }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const mounted = useRef(true)
   const pending = useRef(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState(false)
+  useEffect(() => {
+    onBusyChange?.(busy)
+    return () => onBusyChange?.(false)
+  }, [busy, onBusyChange])
   const latest = useRef(props)
   latest.current = props
   const images = String(props.value ?? '').match(/!\[[^\]]*\]\(lumen-asset:[^)]+\)/g) ?? []
