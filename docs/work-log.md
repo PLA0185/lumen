@@ -2647,3 +2647,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [分项实现与独立复核计划](superpowers/plans/2026-10-02-flow-qa-harness.md)
 - [全部应用快捷键盘点与配置边界](shortcut-inventory-2026-10-02.md)
 - 原生验收脚本：`tools/verify_flow_canvas_ui.py`、`tools/verify_ai_flow_ui.py`、`tools/verify_file_import_ui.py`。本机证据在仓库外 `D:/Codex/lumen-verification-20261002/`，不将日志、原件、数据库或运行程序提交 Git。
+## 第 38 轮 · 2026-10-02 · 流程问答任务 1：授权检索与可验证来源
+
+### 做了
+
+- 增加只读流程授权上下文：当前流程含未保存草稿；全部范围排除普通备忘和回收站。精准/模糊搜索最多 10 项，保留真实步骤顺序。
+- 只接受授权正文中的 Markdown 附件引用；按需解析、每段最多 8,000 字、返回下一段位置和原解析警告。新增复用现有 parser 的只读入口，不写入内嵌图片资源。
+- 引用由上下文生成编号，校验完整字段、草稿摘要及数据库最新版本/删除状态，拒绝伪造和过期来源。
+
+### 没做到
+
+- 本轮仅实现任务 1 的知识层；问答会话、模型/Harness 工具调度、聊天 UI、发布及实机问答尚未实现，由已批准的后续任务负责。
+- 真实 API/Harness 问答未验证：本轮不使用 API Key，也未运行模型请求。推送和 CI 未验证：按控制任务要求只提交、不推送。
+- 本轮采用文件名和提取文本字符范围定位，保留 parser 原有 PDF 页/工作表标题，不伪造结构化页码或表格坐标。
+
+### 怎么验证的
+
+- 新增接口先以可编译的最小实现运行：4 项行为测试实际失败；补充回归变异验证也真实失败，包括内嵌图片误写、丢失 OCR 警告、绕过来源校验和最新版本检查、长正文证据遗漏命中词。
+- 最终 Rust 448 项、前端 241 项通过；冻结锁文件安装、typecheck、build、lint、cargo fmt --check、cargo clippy --all-targets --all-features -- -D warnings 通过。只使用临时数据库及已有 parser OCR fixture。
+- 验证原附件字节、资源行数和流程 revision 不变；没有读取生产数据。构建出现原有 Vite 动态导入提示和基线同样的 linker_messages 信息。
+
+### 相关文档
+
+- [批准设计](design-flow-qa-harness-2026-10-02.md)、[实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)。任务自查与红绿证据见本地 `.superpowers/sdd/2026-10-02-flow-qa-harness/task-1-report.md`（执行报告未作为产品文档发布）。
