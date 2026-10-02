@@ -2791,3 +2791,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [实施计划 Task 11](superpowers/plans/2026-10-02-flow-qa-harness.md)。回归在 `src/lib/store.pagination.test.ts`，原生检查在 `tools/verify_flow_readability_ui.py`；隔离证据在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.11/preflight/`。
+
+
+## 第 44 轮 · 2026-10-02 · AI 流程忠实转换，不附加审阅要求
+
+### 做了
+
+- 移除系统提示中主动整理所需材料、完成标准和待确认问题的指令；只保留原文已有说明，明确不因缺截图、菜单或字段解释而提出补充要求。
+- 未指定负责人或操作说明留空；原文明确的规则、材料和问题仍保留，未知图片不凭空归属，不转成问题清单。
+- 修改仅影响新生成，不自动删除已保存的用户正文。生成对话框说明与文档同步更新。
+
+### 没做到
+
+- 未自动改写既有流程中的待确认问题；模型在所有文档上的准确性未验证。真实验证只覆盖一份自造定稿流程，不代表所有 SOP。
+- 正式 0.4.11 安装仍在准备，当前正常窗口尚未加载新提示。
+
+### 怎么验证的
+
+- 空说明回归实际先红（原先返回待确认）后绿；Rust memo_ai 9 项通过，Rust 全量 464 项及完整 fmt/clippy 门禁通过。
+- 隔离 profile 使用原有 DeepSeek 服务配置、apiKey=None，实际调用 deepseek-flash 一次，材料为自造三步定稿 SOP。返回原三步、未指定负责人为空、无待确认/所需材料/补充要求；草稿未写业务库。没有发送用户文档、替换或清除 DeepSeek 密钥。
+
+### 相关文档
+
+- [AI 流程说明](ai-flow-2026-10-01.md)、[实施计划 Task 11](superpowers/plans/2026-10-02-flow-qa-harness.md)。合成输入与返回证据在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.11/real-deepseek-synthetic-flow.json`。

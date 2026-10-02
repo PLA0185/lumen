@@ -35,7 +35,7 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
     </header>
     <section className="ai-flow-dialog__material" aria-label="原始材料输入区">
       <h3>原始材料</h3>
-      <p className="setgroup__hint">可以直接粘贴文字，也可以粘贴或拖入截图。不明确的内容会标为“待确认”。</p>
+      <p className="setgroup__hint">可以直接粘贴文字，也可以粘贴或拖入截图。按原文整理步骤及对应图片，保留已有说明。</p>
       <p className="setgroup__hint">文字和图片可以混用：按聊天顺序粘贴，把相关原图放在对应文字旁；折叠的图片先展开，模糊缩略图请换原图。</p>
       <p className="setgroup__hint">可添加 Word（DOCX）、Excel（XLSX / XLS）、PDF 和图片，添加时只保留原文件。需要正文时点击文件旁的“识别内容”；点击生成后才解析并发送所选材料给 AI。图片与扫描件文字需核对。</p>
       <p className="setgroup__hint">已引用 {ai.inputAssetIds(text).length} 个图片 / 文件。单次材料总大小最多 20 MiB，本机数量上限 600 个。正文最多 20000 字，含资源引用最多 80000 字；模型还可能有自己的限制。</p>
