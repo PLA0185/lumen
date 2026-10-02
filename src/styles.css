@@ -4622,3 +4622,7 @@ body {
 .cloud-history { position: fixed; inset: 0; background: #0009; display: grid; place-items: center; z-index: 1000; padding: 20px; }
 .cloud-history__panel { background: var(--bg-panel, #171a21); border: 1px solid var(--border, #343b49); border-radius: 12px; padding: 20px; width: min(800px, 95vw); max-height: 90vh; overflow: auto; }
 .quickadd__ai { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
+
+.ai-model-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.ai-model-picker select { max-width: 320px; }
+.ai-model-picker [role=alert] { flex-basis: 100%; }

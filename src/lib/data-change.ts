@@ -12,10 +12,13 @@ export type DataDomain =
   | 'recurrence'
   | 'focus'
   | 'stats'
+  | 'aiConfig'
   | 'all'
 
 /** A command has one authoritative invalidation policy, regardless of its caller. */
 export const MUTATION_DOMAINS = {
+  ai_set_config: ['aiConfig'],
+  ai_clear_key: ['aiConfig'],
   memo_save: ['memos'],
   memo_set_deleted: ['memos'],
   cloud_sync_restore: ['memos'],

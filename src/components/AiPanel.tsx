@@ -170,7 +170,9 @@ export function AiPanel() {
     setNotice(null)
     try {
       const msg = await ai.aiTestConnection(cfg)
-      setNotice(msg)
+      const saved = await ai.aiGetConfig()
+      const same = saved && saved.provider === cfg.provider && saved.baseUrl === cfg.baseUrl && saved.model === cfg.model && saved.timeoutSeconds === cfg.timeoutSeconds && saved.maxOutputTokens === cfg.maxOutputTokens
+      setNotice(same ? msg : `${msg}。当前填写的配置尚未保存，请点击「保存配置」后在助手中使用。`)
     } catch (e) {
       setError(errText(e))
     } finally {

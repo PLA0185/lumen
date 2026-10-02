@@ -3,25 +3,22 @@ import * as ai from '../lib/ai-ipc'
 import type { SaveMemoInput } from '../lib/memos-ipc'
 import { contentError } from '../lib/content-assets'
 import { ContentEditor } from './ContentEditor'
+import { useAiConfig } from '../lib/use-ai-config'
+import { AiModelPicker } from './AiModelPicker'
 
 export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; onGenerated: (draft: SaveMemoInput) => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const running = useRef(false)
   const mounted = useRef(true)
-  const [config, setConfig] = useState<ai.ProviderConfig | null>(null)
+  const { config, loading, configError, reload } = useAiConfig()
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState('')
-  const reload = async () => {
-    try { const value = await ai.aiGetConfig(); if (mounted.current) { setConfig(value); setError('') } }
-    catch (e) { if (mounted.current) setError(contentError(e)) }
-  }
   useEffect(() => {
     mounted.current = true
     dialog.current?.showModal()
     dialog.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
-    void reload()
     return () => { mounted.current = false }
   }, [])
   const generate = async () => {
@@ -46,10 +43,11 @@ export function AiFlowDialog({ onClose, onGenerated }: { onClose: () => void; on
     </section>
     <footer className="ai-flow-dialog__footer">
     <p className="setgroup__hint">点击生成才会发送所选材料到当前 AI 服务。生成的草稿需确认后才会保存。</p>
-    {config?.hasApiKey && config.model.trim() ? <p className="setgroup__hint">当前模型：{config.model}。截图识别取决于模型的图片能力，看不清的文字需要人工核对。</p> : <p className="setgroup__hint">请先在「设置 → AI」保存模型和 API 密钥，再返回此处刷新配置。</p>}
+    {config?.hasApiKey ? <AiModelPicker config={config} disabled={busy || loading} onSaved={reload} /> : !loading && !configError && <p className="setgroup__hint">请先在「设置 → AI」保存模型和 API 密钥。</p>}
+    {configError && <p role="alert" className="alert alert--error">{configError}</p>}
     {error && <p role="alert" className="alert alert--error selectable">{error}</p>}
     <div className="ai-flow-dialog__actions">
-      <button className="btn btn--primary" disabled={busy || importing || !text.trim() || !config?.hasApiKey || !config.model.trim()} onClick={() => void generate()}>{busy ? '生成中…' : '生成流程草稿'}</button>
+      <button className="btn btn--primary" disabled={busy || loading || !!configError || importing || !text.trim() || !config?.hasApiKey || !config.model.trim()} onClick={() => void generate()}>{busy ? '生成中…' : '生成流程草稿'}</button>
       <button className="btn btn--ghost" disabled={busy} onClick={() => void reload()}>刷新 AI 配置</button>
       <button className="btn btn--ghost" disabled={busy} onClick={onClose}>取消生成</button>
     </div>

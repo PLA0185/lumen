@@ -4,6 +4,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import * as ai from '../lib/ai-ipc'
 import { AiAssistant } from './AiAssistant'
+import { invokeData } from '../lib/data-change'
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn().mockResolvedValue(null) }))
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
@@ -34,6 +36,27 @@ async function fill(selector: string, value: string) {
   })
 }
 describe('AI 助手完整交互（模拟模型，真实 React 状态）', () => {
+  it('保存配置通知立即刷新旧的未配置状态，换模型保留密钥并用于生成', async () => {
+    await mount(false)
+    const config = { provider: 'deep_seek' as const, baseUrl: 'https://api.deepseek.com', model: 'configured-model', hasApiKey: true, timeoutSeconds: 60, maxOutputTokens: 8192 }
+    vi.mocked(ai.aiGetConfig).mockResolvedValue(config)
+    await act(async () => { await invokeData('ai_set_config', { config, apiKey: null }) })
+    expect(document.body.textContent).not.toContain('尚未配置 AI 密钥')
+    expect(document.body.textContent).toContain('configured-model')
+    vi.spyOn(ai, 'aiListModels').mockResolvedValue({ ok: true, models: ['configured-model', 'chosen-model'] })
+    const save = vi.spyOn(ai, 'aiSetConfig').mockImplementation(async c => { vi.mocked(ai.aiGetConfig).mockResolvedValue(c); return c })
+    await click('选择模型')
+    await fill('[aria-label="助手使用的模型"]', 'chosen-model')
+    expect(save).toHaveBeenCalledWith({ ...config, model: 'chosen-model' }, null)
+    expect(document.body.textContent).toContain('chosen-model')
+  })
+  it('读取配置失败显示真实错误，不误报未配置密钥', async () => {
+    await mount()
+    vi.mocked(ai.aiGetConfig).mockRejectedValue(new Error('配置读取失败'))
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    expect(document.body.textContent).toContain('配置读取失败')
+    expect(document.body.textContent).not.toContain('尚未配置 AI 密钥')
+  })
   it('生成不自动保存，允许清空与改标题，只应用选中条目，并选择自然月年总结', async () => {
     const preview: ai.DiffPreview = { previewId: 'test-preview', capability: '整理任务', summary: '2 条', acceptable: true, raw: '{}', issues: [], usage: null, dataScopeNote: '测试范围', items: ['候选一','候选二'].map((title) => ({ action: 'create', taskId: null, title, changes: [], note: null })) }
     const organize = vi.spyOn(ai, 'aiOrganize').mockResolvedValue(preview)
