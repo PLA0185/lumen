@@ -1,5 +1,5 @@
 import { ContentEditor } from './ContentEditor'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { format } from 'date-fns'
 import * as ai from '../lib/ai-ipc'
 import { IpcError } from '../lib/ipc'
@@ -7,10 +7,11 @@ import { useApp } from '../lib/store'
 import { DiffPreviewDialog } from './DiffPreviewDialog'
 import { AiPanel } from './AiPanel'
 import { Icon } from './Icons'
+import { useAiConfig } from '../lib/use-ai-config'
+import { AiModelPicker } from './AiModelPicker'
 
 export function AiAssistant({ compact = false, creationDefaults }: { compact?: boolean; creationDefaults?: ai.CreationDefaults }) {
-  const [config, setConfig] = useState<ai.ProviderConfig | null>(null)
-  const [loaded, setLoaded] = useState(false)
+  const { config, loading, configError, reload } = useAiConfig()
   const [settings, setSettings] = useState(false)
   const [text, setText] = useState('')
   const [mode, setMode] = useState<'tasks' | 'plan' | 'review'>('tasks')
@@ -24,19 +25,6 @@ export function AiAssistant({ compact = false, creationDefaults }: { compact?: b
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const pushToast = useApp((s) => s.pushToast)
-  const reload = async () => {
-    try {
-      setConfig(await ai.aiGetConfig())
-      setError(null)
-    } catch (e) {
-      setError(e instanceof IpcError ? e.userMessage() : String(e))
-    } finally {
-      setLoaded(true)
-    }
-  }
-  useEffect(() => {
-    void reload()
-  }, [])
 
   const send = async () => {
     if (running.current || !config) return
@@ -71,7 +59,8 @@ export function AiAssistant({ compact = false, creationDefaults }: { compact?: b
     }
   }
   const canSend =
-    loaded &&
+    !loading &&
+    !configError &&
     !!config?.hasApiKey &&
     !!config.model.trim() &&
     !busy &&
@@ -141,7 +130,8 @@ export function AiAssistant({ compact = false, creationDefaults }: { compact?: b
               </button>
             ))}
           </div>
-          {loaded && (!config?.hasApiKey || !config.model.trim()) && (
+          {configError && <p className="alert alert--error" role="alert">{configError}<button className="btn btn--quiet" onClick={() => void reload()}>重新读取配置</button></p>}
+          {!loading && !configError && (!config?.hasApiKey || !config.model.trim()) && (
             <p className="alert alert--warn" role="status">
               {config?.hasApiKey
                 ? '请选择模型，再开始使用 AI。'
@@ -149,9 +139,7 @@ export function AiAssistant({ compact = false, creationDefaults }: { compact?: b
             </p>
           )}
           {config?.hasApiKey && (
-            <p className="setgroup__hint">
-              当前模型：{config.model || '未选择'}
-            </p>
+            <AiModelPicker config={config} disabled={busy || loading} onSaved={reload} />
           )}
           {(
 
