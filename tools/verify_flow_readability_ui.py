@@ -15,6 +15,7 @@ assert profile!=(Path(os.environ['APPDATA'])/'com.pla0185.lumen').resolve()
 assert not invoke('cloud_sync_status')['config']
 assert not a.output_dir.resolve().is_relative_to(repo)
 a.output_dir.mkdir(parents=True,exist_ok=True);checks=[];sizes=[]
+previous_font=t.eval('localStorage.getItem("lumen.fontSize")')
 # Only resize the explicitly named isolated process; WebView2 interactions remain CDP.
 user32=ctypes.WinDLL('user32',use_last_error=True)
 user32.GetDpiForWindow.argtypes=[wintypes.HWND];user32.GetDpiForWindow.restype=wintypes.UINT
@@ -22,6 +23,7 @@ user32.MoveWindow.argtypes=[wintypes.HWND,ctypes.c_int,ctypes.c_int,ctypes.c_int
 user32.GetClientRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
 user32.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
 user32.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
 callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
 windows=[]
 @callback_type
@@ -32,6 +34,7 @@ def collect(hwnd,_):
     return True
 user32.EnumWindows(collect,0)
 assert len(windows)==1,'Require the exact main window of the isolated process'
+original_rect=wintypes.RECT();assert user32.GetWindowRect(windows[0],ctypes.byref(original_rect))
 def resize(width,height):
     hwnd=windows[0];outer=wintypes.RECT();client=wintypes.RECT()
     assert user32.GetWindowRect(hwnd,ctypes.byref(outer)) and user32.GetClientRect(hwnd,ctypes.byref(client))
@@ -107,4 +110,8 @@ except Exception:
     (a.output_dir/'failure-sizes.json').write_text(json.dumps(sizes,ensure_ascii=False,indent=2),encoding='utf-8')
     raise
 finally:
-    t.close()
+    try:
+        t.eval('localStorage.'+('removeItem("lumen.fontSize")' if previous_font is None else 'setItem("lumen.fontSize",'+json.dumps(previous_font)+')')+';window.dispatchEvent(new StorageEvent("storage",{key:"lumen.fontSize"}))')
+        user32.MoveWindow(windows[0],original_rect.left,original_rect.top,original_rect.right-original_rect.left,original_rect.bottom-original_rect.top,True)
+    finally:
+        t.close()
