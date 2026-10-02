@@ -105,6 +105,47 @@ beforeEach(() => {
 })
 
 describe('列表分页', () => {
+  it('空列表后台刷新期间保持已加载状态，不反复切换加载占位', async () => {
+    listTasks.mockResolvedValueOnce([])
+    countTasks.mockResolvedValue({ total: 0 })
+    await useApp.getState().reload()
+    let finish!: (tasks: Task[]) => void
+    listTasks.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const refresh = useApp.getState().handleExternalChange()
+    expect(useApp.getState().loadState).toBe('ready')
+    finish([])
+    await refresh
+    expect(useApp.getState().loadState).toBe('ready')
+  })
+
+  it('首次加载仍有加载状态，刷新失败仍明确显示错误', async () => {
+    let finish!: (tasks: Task[]) => void
+    listTasks.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    countTasks.mockResolvedValue({ total: 0 })
+    const initial = useApp.getState().reload()
+    expect(useApp.getState().loadState).toBe('loading')
+    finish([])
+    await initial
+    listTasks.mockRejectedValueOnce(new Error('数据库读取失败'))
+    await useApp.getState().reload()
+    expect(useApp.getState().loadState).toBe('error')
+    expect(useApp.getState().loadError).toContain('数据库读取失败')
+  })
+
+  it('换视图后旧刷新失败不会覆盖已完成的新列表', async () => {
+    let fail!: (error: Error) => void
+    listTasks.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }))
+    countTasks.mockResolvedValue({ total: 0 })
+    const old = useApp.getState().reload()
+    useApp.setState({ queryGeneration: useApp.getState().queryGeneration + 1 })
+    listTasks.mockResolvedValueOnce([])
+    await useApp.getState().reload()
+    fail(new Error('旧查询失败'))
+    await old
+    expect(useApp.getState().loadState).toBe('ready')
+    expect(useApp.getState().loadError).toBeNull()
+  })
+
   it('reload 只取第一页，并同时拿到总数', async () => {
     listTasks.mockResolvedValue(makeTasks(1, PAGE_SIZE))
     countTasks.mockResolvedValue({ total: 1200 })

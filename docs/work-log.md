@@ -2769,3 +2769,25 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.10 发布说明](../RELEASE_NOTES.md)、[实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)。证据保存在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.10/`。
+
+
+## 第 43 轮 · 2026-10-02 · 空列表刷新稳定性与旧请求错误保护
+
+### 做了
+
+- 已显示的列表/空态在后台刷新时保持 ready，首次读取仍显示加载占位，读取失败仍显示真实错误。
+- 旧查询返回错误时检查查询代数，避免旧失败覆盖已经完成的新视图。
+
+### 没做到
+
+- 本轮不改变后台同步触发频率；真实网盘的错误重试链未在远端验收。0.4.11 正式安装尚未执行，安装结果另记。
+
+### 怎么验证的
+
+- 两项行为测试实际先红后绿：空列表刷新期间原先变成 loading，旧查询失败原先覆盖新 ready。连同首次加载/刷新失败用例，分页状态测试 21 项通过。
+- 实际隔离 WebView2 中派发十次真实 Ctrl+R，MutationObserver 确认空态节点未卸载、未替换为 skeleton；实际列表读取照常完成。
+- 完整前端 275 项、类型、构建、lint 与 Rust 464 项、fmt、完整 clippy 门禁通过；已有构建信息警告不作为功能成功证据。
+
+### 相关文档
+
+- [实施计划 Task 11](superpowers/plans/2026-10-02-flow-qa-harness.md)。回归在 `src/lib/store.pagination.test.ts`，原生检查在 `tools/verify_flow_readability_ui.py`；隔离证据在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.11/preflight/`。

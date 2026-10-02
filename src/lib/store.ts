@@ -314,7 +314,8 @@ export const useApp = create<AppStore>((set, get) => ({
     const s = get()
     // 记下这次请求属于哪一代查询（第三轮任务书 §4.3）
     const generation = s.queryGeneration
-    set({ loadState: 'loading', loadError: null })
+    // 后台刷新保留已显示的列表或空态，首次读取仍显示加载占位。
+    set({ loadState: s.loadState === 'ready' ? 'ready' : 'loading', loadError: null })
     try {
       const query = buildQuery(s)
       // 列表与总数**同时**取，且用同一套条件（§10 要求条件完全一致）：
@@ -346,6 +347,7 @@ export const useApp = create<AppStore>((set, get) => ({
         loadError: null,
       })
     } catch (e) {
+      if (get().queryGeneration !== generation) return
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
       set({ loadState: 'error', loadError: msg })
     }
