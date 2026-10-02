@@ -286,6 +286,14 @@ async fn v5_upgrade_recovers_template_without_using_completed_or_exception() {
 
 #[tokio::test]
 async fn whole_series_rule_change_removes_old_future_schedule() {
+    use chrono::{Datelike, Duration, Utc, Weekday};
+
+    // 整系列修改保留过去记录；本用例必须始终检查未来区间。
+    let mut start = Utc::now().date_naive() + Duration::days(7);
+    while start.weekday() != Weekday::Thu {
+        start += Duration::days(1);
+    }
+    let until = start + Duration::days(15);
     let (state, dir) = setup("rec-whole-rule").await;
     let created = create_recurring_impl(
         &state,
@@ -299,7 +307,7 @@ async fn whole_series_rule_change_removes_old_future_schedule() {
             tag_ids: vec![],
             rrule: "FREQ=DAILY".into(),
             tzid: Some("UTC".into()),
-            dtstart_local: "2026-10-01T09:00:00".into(),
+            dtstart_local: format!("{start}T09:00:00"),
             has_start_time: Some(true),
             due_local: None,
             materialize_days: Some(30),
@@ -321,23 +329,26 @@ async fn whole_series_rule_change_removes_old_future_schedule() {
     assert!(result.regenerated > 0);
     let dates: Vec<(String,)> = sqlx::query_as(
         "SELECT occurrence_key FROM tasks WHERE series_id = ?1 AND deleted_at IS NULL
-         AND occurrence_key >= '2026-10-01' AND occurrence_key < '2026-10-16'
+         AND occurrence_key >= ?2 AND occurrence_key < ?3
          ORDER BY occurrence_key",
     )
     .bind(&created.series_id)
+    .bind(start.to_string())
+    .bind(until.to_string())
     .fetch_all(state.db.pool())
     .await
     .unwrap();
     assert_eq!(dates.len(), 3, "旧 daily schedule 不应留在未来");
-    assert!(dates[0].0.starts_with("2026-10-01T09:00"));
-    assert!(dates[1].0.starts_with("2026-10-08T09:00"));
-    assert!(dates[2].0.starts_with("2026-10-15T09:00"));
+    for (index, (date,)) in dates.iter().enumerate() {
+        let expected = start + Duration::days(7 * index as i64);
+        assert!(date.starts_with(&format!("{expected}T09:00")));
+    }
     // 未来请求重复物化也不能把旧 daily 规则重新带回来。
     let added = recurring_materialize_inner(
         &state,
         created.series_id.clone(),
-        "2026-10-01T00:00:00.000Z".into(),
-        "2026-10-16T00:00:00.000Z".into(),
+        format!("{start}T00:00:00.000Z"),
+        format!("{until}T00:00:00.000Z"),
     )
     .await
     .unwrap();
