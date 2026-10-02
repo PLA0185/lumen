@@ -2971,3 +2971,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [卡片与图片操作说明](flow-inline-images-2026-10-02.md)、[实施计划 Task 12–15](superpowers/plans/2026-10-02-flow-qa-harness.md)、[0.4.13 发布说明](../RELEASE_NOTES.md)。原生脚本 tools/verify_inline_images_ui.py；隔离证据在 D:/Codex/lumen-verification-20261002/inline-images/evidence-independent/，测试库一致性备份在其上级目录，不入库。
+
+## 第 51 轮 · 2026-10-02 · 0.4.13 正式安装与单实例数据核对
+
+### 做了
+
+- 0.4.13 签名安装包真实构建完成，验证配置中的更新公钥可验证安装包，修改一个字节的副本被拒绝；静默安装退出码 0，正式路径的文件和产品版本为 0.4.13。
+- 源码及第 50 轮记录已提交推送；GitHub CI 36970909365 的 frontend / rust 都 completed/success。v0.4.13 标签推送到 d4c05f3，公开 Release 工作流已触发。
+- 安装前做 Home 一致性快照；安装后 19 张业务表逐行相同，全部 settings 相同，数据库完整性和外键检查通过。
+- 只启动正式路径一个 Lumen；真实鼠标打开已有流程，11 节点/30 张完整解码原图、左侧菜单、可点击流程名称、152px 紧凑导航和无步骤详情侧栏正常，字号 14/缩放 1 保持。
+
+### 没做到
+
+- 本记录时公开 Release 仍在构建，公开下载、latest.json 和下载文件签名未验证；不得将本地安装包签名检查等同于公开发布检查。
+- 本轮正式 Home 没有再次执行全部 32 项写入测试，避免在真实流程里创建测试图片、重排或删除步骤；源码变动的完整交互证据为第 50 轮隔离验收，正式版本做与安装相关的只读检查。
+- 整体导图导出/设置、完整快捷键、悬浮流程 AI 问答和可选 Harness 接入仍未完成，继续原计划，未结束全部请求。
+
+### 怎么验证的
+
+- 构建工具 updater-secret.ps1 从 DPAPI 加载签名信息，未打印密码；verify-updater-signature.mjs 执行真实签名正例和篡改负例，安装后 VersionInfo 双版本一致。
+- SQLite backup 而非复制 WAL 主文件，19 张业务表逐行对照和 settings 整行相等；integrity_check 为 ok，foreign_key_check 0 错误。
+- 正式 WebView2 真实鼠标定位已有文档，30 图片 naturalWidth 均非零；进程路径枚举只有 PID 57292 的正式 Lumen，没有遗留测试实例。验证源代码 CI 为 https://github.com/PLA0185/lumen/actions/runs/36970909365。
+
+### 相关文档
+
+- [卡片与图片操作](flow-inline-images-2026-10-02.md)、[实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)、[发布说明](../RELEASE_NOTES.md)。安装包、签名、前后数据和截图证据在 D:/Codex/lumen-verification-20261002/release-0.4.13/，不入库。
