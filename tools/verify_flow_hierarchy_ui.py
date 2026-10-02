@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.append(request)
         parts = request['messages'][-1]['content']
-        text = next(part['text'] for part in parts if part.get('type') == 'text')
+        text = parts if isinstance(parts, str) else next(part['text'] for part in parts if part.get('type') == 'text')
         blocks = json.loads(text.split('编号原文块（只能引用这些块进行分层）：\n', 1)[1].split('\n\n随后提供', 1)[0])
         if len(requests) == 1:
             content = {'schemaVersion': 2, 'steps': [{'begin': 1, 'end': len(blocks), 'detail': '模型新增完成标准和补图要求'}]}
@@ -102,6 +102,8 @@ try:
     details = [f'### {i+1}.1 操作甲\n\n点击甲入口。\n\n![原图甲](lumen-asset:{assets[i*2]["id"]})\n图{i*2+1} 甲入口\n### {i+1}.2 操作乙\n\n点击乙入口。\n\n![原图乙](lumen-asset:{assets[i*2+1]["id"]})\n图{i*2+2} 乙入口' for i in range(2)]
     original = invoke('memo_save', {'input': {'id': None, 'expectedRevision': None, 'title': '原文分层验收-' + str(uuid.uuid4())[:8], 'category': '原分类', 'kind': 'flow', 'bodyMd': '## 原始材料\n\n' + '\n\n'.join(details), 'steps': [{'id': str(uuid.uuid4()), 'title': f'{i+1}. 原章节' + ('甲' if i == 0 else '乙'), 'owner': '', 'detail': details[i]} for i in range(2)]}})
     click('备忘与流程', 'document.querySelector(".sidebar")')
+    if t.eval('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="显示记录列表"&&b.getBoundingClientRect().width>0)'):
+        click('显示记录列表')
     click('刷新列表')
     click(original['title'])
     click('细分流程')
