@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type { FlowStep } from '../lib/memos-ipc'
 import { ContentEditor } from './ContentEditor'
 import { ContentMarkdown } from './ContentMarkdown'
@@ -46,13 +46,16 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
   const selected = steps.findIndex(step => step.id === selectedId)
   const step = steps[selected]
   const matches = query.trim() ? steps.flatMap((step, i) => match(step, query, mode === 'exact') ? [i] : []) : []
-  function syncNative(active = pointerInside.current && !isInput(document.activeElement), force = false) {
+  const ownsInput = useCallback(() => {
+    return !isInput(document.activeElement) && (pointerInside.current || !!viewport.current?.contains(document.activeElement))
+  }, [])
+  const syncNative = useCallback((active = ownsInput(), force = false) => {
     if (!force && nativeActive.current === active) return
     nativeActive.current = active
     void setCanvasInputActive(active).catch(() => {
       if (mounted.current) setInputError('画布键盘控制未能同步，请重新打开流程。')
     })
-  }
+  }, [ownsInput])
   function availableRect(inspectorOpen = infoOpen) {
     const element = viewport.current, rect = element?.getBoundingClientRect()
     const width = rect?.width || 800, height = rect?.height || 520
@@ -101,6 +104,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
     mounted.current = true
     const element = viewport.current
     if (!element) return
+    let listening = true, windowFocused = true
     const wheel = (event: WheelEvent) => {
       if (!event.altKey || isInput(event.target)) return
       event.preventDefault()
@@ -108,19 +112,20 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
       zoom(Math.exp(-Math.max(-300, Math.min(300, event.deltaY)) * .002), event.clientX - rect.left, event.clientY - rect.top)
     }
     const keydown = (event: KeyboardEvent) => {
-      if (event.code !== 'Space' || event.isComposing || isInput(event.target) || (!pointerInside.current && !element.contains(event.target as Node))) return
+      if (event.code !== 'Space' || event.isComposing || isInput(event.target) || !ownsInput()) return
       event.preventDefault(); event.stopPropagation(); spaceHeld.current = true; setSpace(true)
     }
     const clear = () => { spaceHeld.current = false; setSpace(false); drag.current = null }
-    const blur = () => { clear(); syncNative(false) }
+    const blur = () => { windowFocused = false; clear(); syncNative(false) }
     const focus = () => syncNative()
+    const focusout = () => queueMicrotask(() => { if (listening && windowFocused) syncNative() })
     // Windows clears its scope on native deactivation even if WebView DOM focus is retained.
-    const refocus = () => syncNative(pointerInside.current && !isInput(document.activeElement), true)
+    const refocus = () => { windowFocused = true; syncNative(ownsInput(), true) }
     const keyup = (event: KeyboardEvent) => { if (event.code === 'Space') { if (spaceHeld.current) { event.preventDefault(); event.stopPropagation() }; clear() } }
     element.addEventListener('wheel', wheel, { passive: false })
-    window.addEventListener('keydown', keydown, true); window.addEventListener('keyup', keyup, true); window.addEventListener('blur', blur); window.addEventListener('focusin', focus); window.addEventListener('focus', refocus)
-    return () => { mounted.current = false; syncNative(false); element.removeEventListener('wheel', wheel); window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true); window.removeEventListener('blur', blur); window.removeEventListener('focusin', focus); window.removeEventListener('focus', refocus) }
-  }, [])
+    window.addEventListener('keydown', keydown, true); window.addEventListener('keyup', keyup, true); window.addEventListener('blur', blur); window.addEventListener('focusin', focus); window.addEventListener('focusout', focusout); window.addEventListener('focus', refocus)
+    return () => { listening = false; mounted.current = false; syncNative(false); element.removeEventListener('wheel', wheel); window.removeEventListener('keydown', keydown, true); window.removeEventListener('keyup', keyup, true); window.removeEventListener('blur', blur); window.removeEventListener('focusin', focus); window.removeEventListener('focusout', focusout); window.removeEventListener('focus', refocus) }
+  }, [ownsInput, syncNative])
   function patch(changes: Partial<FlowStep>) { if (!disabled && !readOnly) onChange(steps.map((s, i) => i === selected ? { ...s, ...changes } : s)) }
   function move(direction: number) {
     const target = selected + direction
@@ -147,7 +152,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
     </div>
     <p className="setgroup__hint flow-canvas__hint">空格＋拖动平移 · Alt＋滚轮缩放 · 点击卡片查看和编辑；连线表示操作先后顺序</p>
     <div ref={viewport} className={`flow-canvas__viewport${space ? ' flow-canvas__viewport--pan' : ''}`} aria-label="流程画布" tabIndex={0}
-      onPointerEnter={e => { pointerInside.current = !isInput(e.target); syncNative() }} onPointerLeave={() => { pointerInside.current = false; syncNative(false) }}
+      onPointerEnter={e => { pointerInside.current = !isInput(e.target); syncNative() }} onPointerLeave={() => { pointerInside.current = false; syncNative() }}
       onPointerDown={e => {
         if (!space || e.button !== 0 || isInput(e.target)) return
         e.preventDefault(); viewport.current?.setPointerCapture(e.pointerId)
