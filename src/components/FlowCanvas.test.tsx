@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, expect, it, vi } from 'vitest'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { FlowCanvas } from './FlowCanvas'
 import type { FlowStep } from '../lib/memos-ipc'
@@ -23,6 +23,92 @@ async function input(label: string, text: string) {
   const el = document.querySelector(`[aria-label="${label}"]`) as HTMLInputElement
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, text); el.dispatchEvent(new Event('input', { bubbles: true })) })
 }
+async function edit(index = 0) {
+  await act(async () => document.querySelectorAll('.flow-canvas__node')[index]!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+}
+async function click(label: string) {
+  const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.getAttribute('aria-label') === label || b.textContent === label)
+  expect(button, label).toBeTruthy()
+  await act(async () => button!.click())
+}
+async function controlled(initial: FlowStep[] = steps) {
+  function Harness() { const [value, setValue] = useState(initial); return <FlowCanvas steps={value} source="" onChange={setValue} /> }
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<Harness />))
+}
+it('单击只选中，双击在原卡片内编辑，任何步骤都不弹出详情侧栏', async () => {
+  await controlled()
+  const before = (document.querySelector('.flow-canvas__scene') as HTMLElement).style.transform
+  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+  expect((document.querySelector('.flow-canvas__scene') as HTMLElement).style.transform).toBe(before)
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+  expect(document.querySelector('[aria-label="第 1 步标题"]')).toBeNull()
+  await edit()
+  const node = document.querySelector('.flow-canvas__node')!
+  expect(node.querySelector('[aria-label="第 1 步标题"]')).not.toBeNull()
+  await input('第 1 步标题', '修改后的步骤')
+  await click('完成编辑')
+  expect(node.querySelector('h3')?.textContent).toBe('修改后的步骤')
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+})
+it('序号菜单支持真正交换和移动到指定序号，正文随稳定节点保留，连线与导航更新', async () => {
+  const initial = Array.from({ length: 4 }, (_, i) => ({ id: `node-${i}`, title: `标题${i}`, owner: `负责人${i}`, detail: `正文${i}` }))
+  await controlled(initial)
+  await click('第 1 步操作')
+  const target = document.querySelector<HTMLSelectElement>('[aria-label="交换目标步骤"]')!
+  expect(target).not.toBeNull()
+  await act(async () => { target.value = 'node-3'; target.dispatchEvent(new Event('change', { bubbles: true })) })
+  await click('交换位置')
+  const ids = () => [...document.querySelectorAll<HTMLElement>('.flow-canvas__node')].map(n => n.dataset.stepId)
+  expect(ids()).toEqual(['node-3', 'node-1', 'node-2', 'node-0'])
+  expect(document.querySelector('[data-step-id="node-0"]')?.textContent).toContain('正文0')
+  expect(document.querySelectorAll('.flow-canvas__edges > path')).toHaveLength(3)
+  expect(document.querySelector('[aria-label="定位第 4 步：标题0"]')).not.toBeNull()
+  await click('第 4 步操作')
+  const destination = document.querySelector<HTMLSelectElement>('[aria-label="移动目标位置"]')!
+  await act(async () => { destination.value = '1'; destination.dispatchEvent(new Event('change', { bubbles: true })) })
+  await click('移动到此位置')
+  expect(ids()).toEqual(['node-3', 'node-0', 'node-1', 'node-2'])
+})
+it('添加直接在新卡片内编辑，步骤菜单保留前后插入、上下移及确认删除', async () => {
+  await controlled()
+  await click('添加步骤')
+  expect(document.querySelectorAll('.flow-canvas__node')).toHaveLength(3)
+  expect(document.querySelectorAll('.flow-canvas__node')[2]!.querySelector('[aria-label="第 3 步标题"]')).not.toBeNull()
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+  await click('第 3 步操作')
+  await click('上移')
+  expect(document.querySelectorAll<HTMLElement>('.flow-canvas__node')[2]!.dataset.stepId).toBe('two')
+  await click('第 2 步操作')
+  await click('在后面添加')
+  expect(document.querySelectorAll('.flow-canvas__node')).toHaveLength(4)
+  await click('第 3 步操作')
+  await click('删除步骤')
+  expect(document.querySelectorAll('.flow-canvas__node')).toHaveLength(4)
+  await click('确认删除此步骤')
+  expect(document.querySelectorAll('.flow-canvas__node')).toHaveLength(3)
+})
+it('卡片大小与位置可拖动修改，自动排版保留尺寸并按顺序对齐留间距', async () => {
+  await controlled()
+  const resize = document.querySelector<HTMLButtonElement>('[aria-label="调整第 1 步卡片大小"]')
+  expect(resize).not.toBeNull()
+  resize!.setPointerCapture = vi.fn(); resize!.releasePointerCapture = vi.fn()
+  await act(async () => resize!.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 2, clientX: 420, clientY: 148, bubbles: true })))
+  await act(async () => resize!.dispatchEvent(new PointerEvent('pointermove', { pointerId: 2, clientX: 620, clientY: 248, bubbles: true })))
+  await act(async () => resize!.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2, bubbles: true })))
+  expect((document.querySelector('.flow-canvas__node') as HTMLElement).style.width).toBe('620px')
+  const move = document.querySelector<HTMLButtonElement>('[aria-label="移动第 1 步卡片"]')!
+  move.setPointerCapture = vi.fn(); move.releasePointerCapture = vi.fn()
+  await act(async () => move.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 3, clientX: 20, clientY: 20, bubbles: true })))
+  await act(async () => move.dispatchEvent(new PointerEvent('pointermove', { pointerId: 3, clientX: 220, clientY: 100, bubbles: true })))
+  await act(async () => move.dispatchEvent(new PointerEvent('pointerup', { pointerId: 3, bubbles: true })))
+  expect((document.querySelector('.flow-canvas__node') as HTMLElement).style.left).toBe('200px')
+  await click('自动排版')
+  const nodes = document.querySelectorAll<HTMLElement>('.flow-canvas__node')
+  expect(nodes[0]!.style.left).toBe('0px'); expect(nodes[0]!.style.width).toBe('620px')
+  expect(nodes[1]!.style.left).toBe('716px')
+  expect(nodes[1]!.style.top).toBe('0px')
+})
 it('超过三步仍从左到右排列，打开时保持可阅读的原始比例', async () => {
   await mount()
   await act(async () => root!.render(<FlowCanvas steps={Array.from({ length: 5 }, (_, i) => ({ ...steps[0]!, id: String(i) }))} source="" onChange={() => {}} />))
@@ -47,7 +133,7 @@ it('卡片直接显示完整 Markdown 和原图，不靠打开详情才能查看
   await mount()
   await act(async () => root!.render(<FlowCanvas steps={[{ ...steps[0]!, detail: `第一段完整说明\n\n**最后一段不能省略**\n\n${assets.assetMarkdown(image)}` }]} source="" onChange={() => {}} />))
   const node = document.querySelector<HTMLElement>('.flow-canvas__node')!
-  expect(node.querySelector('strong')?.textContent).toBe('最后一段不能省略')
+  expect([...node.querySelectorAll('strong')].map(n => n.textContent).join('')).toBe('最后一段不能省略')
   expect(node.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
   expect(node.querySelector('img')?.getAttribute('alt')).toBe('操作.png')
   expect(node.style.height).toBe('')
@@ -83,11 +169,11 @@ it('鼠标中键直接拖动画布，释放和失焦后停止', async () => {
   expect(scene.style.transform).toBe(released)
   expect(viewport.classList.contains('flow-canvas__viewport--pan')).toBe(false)
 })
-it('查看步骤只显示所选步骤，不重复整份流程的背景与材料', async () => {
+it('双击步骤仅在所选卡片内编辑，不重复整份流程的背景与材料', async () => {
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<FlowCanvas steps={steps} source="" metadata={<h2>整份流程背景与材料</h2>} onChange={() => {}} />))
-  await act(async () => (document.querySelectorAll('.flow-canvas__node')[1] as HTMLButtonElement).click())
-  const inspector = document.querySelector('[aria-label="第 2 步详情"]')!
+  await edit(1)
+  const inspector = document.querySelectorAll('.flow-canvas__node')[1]!
   expect(inspector.textContent).not.toContain('整份流程背景与材料')
   expect(inspector.querySelector('[aria-label="第 2 步标题"]')).not.toBeNull()
   expect(inspector.querySelector('[aria-label="第 1 步标题"]')).toBeNull()
@@ -101,7 +187,8 @@ it('流程信息入口单独展示整体说明，切回步骤后整体说明隐�
   expect(document.querySelector('[aria-label="流程信息"]')?.textContent).toContain('整份流程背景与材料')
   expect(document.querySelector('.flow-canvas__inspector [aria-label="第 1 步标题"]')).toBeNull()
   await act(async () => (document.querySelectorAll('.flow-canvas__node')[1] as HTMLButtonElement).click())
-  expect(document.querySelector('.flow-canvas__inspector')?.textContent).not.toContain('整份流程背景与材料')
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+  await edit(1)
   expect(document.querySelector('[aria-label="第 2 步标题"]')).not.toBeNull()
 })
 it('精准搜索保持连续文本匹配，模糊搜索允许分散关键词，结果定位步骤', async () => {
@@ -114,7 +201,7 @@ it('精准搜索保持连续文本匹配，模糊搜索允许分散关键词，�
   await act(async () => (document.querySelector('[aria-label="下一个搜索结果"]') as HTMLButtonElement).click())
   expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.textContent).toContain('通知仓库')
 })
-it('普通滚轮直接缩放并保持鼠标指向的位置，详情输入滚轮不缩放画布', async () => {
+it('普通滚轮直接缩放并保持鼠标指向的位置，卡片输入滚轮不缩放画布', async () => {
   const viewport = await mount()
   vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON() {} })
   const scene = () => document.querySelector('.flow-canvas__scene') as HTMLElement
@@ -124,14 +211,14 @@ it('普通滚轮直接缩放并保持鼠标指向的位置，详情输入滚轮�
   expect(scene().style.transform).not.toBe(before)
   expect(event.defaultPrevented).toBe(true)
   expect(document.querySelector('[aria-label="画布缩放比例"]')?.textContent).not.toBe('100%')
-  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+  await edit()
   const edited = scene().style.transform
   await act(async () => document.querySelector('[aria-label="第 1 步说明"]')!.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })))
   expect(scene().style.transform).toBe(edited)
 })
 it('空格在编辑输入中正常打字，画布拖动模式在松键与失焦后停止', async () => {
   const viewport = await mount()
-  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLButtonElement).click())
+  await edit()
   const input = document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement
   const typed = new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true })
   await act(async () => { input.focus(); input.dispatchEvent(typed) })
@@ -151,10 +238,10 @@ it('切换步骤后延迟到达的附件不会插入另一步的空白说明', a
   await act(async () => root!.render(<FlowCanvas steps={steps.map(s => ({ ...s, detail: '' }))} source="" onChange={change} initialEdit />))
   const field = document.querySelector('[aria-label="第 1 步说明"]') as HTMLTextAreaElement
   field.focus(); field.setSelectionRange(0, 0)
-  const file = document.querySelector('.flow-canvas__inspector input[type=file]')!
+  const file = document.querySelector('.flow-canvas__inline-editor input[type=file]')!
   Object.defineProperty(file, 'files', { value: [new File(['abc'], '订单.txt')] })
   await act(async () => file.dispatchEvent(new Event('change', { bubbles: true })))
-  await act(async () => (document.querySelectorAll('.flow-canvas__node')[1] as HTMLButtonElement).click())
+  await edit(1)
   const next = document.querySelector('[aria-label="第 2 步说明"]') as HTMLTextAreaElement
   next.focus(); next.setSelectionRange(0, 0)
   await act(async () => finish({ id: '00000000-0000-7000-8000-000000000001', name: '订单.txt', mime: 'text/plain', byteSize: 3, dataBase64: '', sha256: '', createdAt: '' }))
@@ -218,7 +305,7 @@ it('原生菜单拦截仅在画布拥有输入时启用，编辑、失焦和卸�
   await act(async () => window.dispatchEvent(new Event('focus')))
   expect(guard.mock.calls.length).toBe(beforeRefocus + 1)
   expect(guard).toHaveBeenLastCalledWith(true)
-  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLButtonElement).click())
+  await edit()
   await act(async () => (document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement).focus())
   expect(guard).toHaveBeenLastCalledWith(false)
   await act(async () => viewport.focus())
@@ -261,8 +348,8 @@ it('键盘聚焦画布或节点时无需鼠标进入，离开指针仍保护，�
   const node = document.querySelector('.flow-canvas__node') as HTMLButtonElement
   await act(async () => node.focus())
   expect(guard).toHaveBeenLastCalledWith(true)
-  await act(async () => node.click())
-  const inspectorButton = document.querySelector('.flow-canvas__inspector button') as HTMLButtonElement
+  await edit()
+  const inspectorButton = document.querySelector('.flow-canvas__inline-editor button') as HTMLButtonElement
   await act(async () => inspectorButton.focus())
   expect(guard).toHaveBeenLastCalledWith(false)
   const field = document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement

@@ -52,6 +52,29 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('流程名称下拉切换前保存当前卡片，读取失败或版本冲突保留草稿', async () => {
+    const first: memo.MemoDocument = { id: 'first', title: '流程甲', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{ id: 'step-a', title: '操作甲', owner: '', detail: '原文甲' }] }
+    const second: memo.MemoDocument = { ...first, id: 'second', title: '流程乙', steps: [{ id: 'step-b', title: '操作乙', owner: '', detail: '原文乙' }] }
+    const get = vi.spyOn(memo, 'memoGet').mockImplementation(async id => id === first.id ? first : second)
+    const saved = vi.spyOn(memo, 'memoSave').mockRejectedValueOnce(new Error('版本冲突，草稿保留')).mockImplementation(async input => ({ ...first, ...input, id: first.id, revision: 2 }))
+    await mount('', [first, second])
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await fill('第 1 步标题', '未保存的新操作')
+    const switcher = document.querySelector('[aria-label="切换流程：流程甲"]') as HTMLButtonElement
+    expect(switcher).not.toBeNull()
+    await act(async () => switcher.click())
+    await click('流程乙')
+    expect(saved).toHaveBeenCalledOnce()
+    expect(get).not.toHaveBeenCalledWith(second.id)
+    expect((document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement).value).toBe('未保存的新操作')
+    expect(document.body.textContent).toContain('版本冲突，草稿保留')
+    await click('流程乙')
+    expect(saved.mock.calls[1]![0].steps[0]!.title).toBe('未保存的新操作')
+    expect(get).toHaveBeenCalledWith(second.id)
+    expect(document.querySelector('[aria-label="切换流程：流程乙"]')).not.toBeNull()
+    expect(document.querySelector('.flow-canvas__node')?.textContent).toContain('原文乙')
+  })
   it('新流程默认在可编辑画布中显示，修改步骤后沿用自动保存', async () => {
     const saved = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'canvas-flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
     await mount()
@@ -60,12 +83,12 @@ describe('独立备忘与业务流程', () => {
     expect(document.querySelector('.memos--canvas')).toBeTruthy()
     await click('流程信息')
     await fill('备忘标题', 'ERP 发货流程')
-    await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
     await fill('第 1 步标题', '创建发货单')
     await act(async () => vi.advanceTimersByTimeAsync(1100))
     expect(saved).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({ title: '创建发货单' })] }))
     expect(document.querySelector('[aria-label="流程画布"]')).toBeTruthy()
-    expect(document.querySelector('.flow-canvas__node')?.textContent).toContain('创建发货单')
+    expect((document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement).value).toBe('创建发货单')
   })
   const config: ai.ProviderConfig = { provider: 'custom', baseUrl: 'http://localhost:11434/v1', model: 'vision-test', timeoutSeconds: 30, maxOutputTokens: 2048, hasApiKey: true }
   const generated: memo.SaveMemoInput = { id: null, expectedRevision: null, title: '订单核对流程', category: '销售', kind: 'flow', bodyMd: '## 原始材料\n\n张三：先核对订单，再通知仓库。', steps: [{ id: 'step-1', title: '核对订单', owner: '待确认', detail: '核对订单数量。' }] }
@@ -79,11 +102,12 @@ describe('独立备忘与业务流程', () => {
     await mount(); await click('AI 生成流程'); await fill('流程原始材料', '根据原图整理'); await click('生成流程草稿')
     await click('流程信息')
     expect(document.body.textContent).toContain('还有 1 张原图未关联步骤')
-    await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
-    const picker = document.querySelector<HTMLSelectElement>('[aria-label="第 1 步关联原图"]')
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    const picker = document.querySelector<HTMLElement>('.flow-image-picker [aria-label="选择原图"]')
     expect(picker).toBeTruthy()
-    await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value')!.set!.call(picker, image.id); picker!.dispatchEvent(new Event('change',{bubbles:true})) })
-    await click('放到此步骤')
+    expect(document.querySelector('.flow-image-picker select')).toBeNull()
+    await act(async () => picker!.click())
+    await click('添加到此步骤')
     expect((document.querySelector('[aria-label="第 1 步说明"]') as HTMLTextAreaElement).value).toContain(assets.assetMarkdown(image))
     await click('流程信息')
     expect(document.body.textContent).toContain('原图均已关联步骤')
@@ -170,7 +194,7 @@ describe('独立备忘与业务流程', () => {
     await click('新建流程')
     await click('流程信息')
     await fill('备忘标题', '还在整理的流程')
-    await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
     await fill('第 1 步说明', '稍后补充步骤名称，先记录操作')
     expect((Array.from(document.querySelectorAll('button')).find(b => b.textContent === '保存并查看') as HTMLButtonElement).disabled).toBe(false)
     await act(async () => vi.advanceTimersByTimeAsync(1000))
@@ -260,19 +284,14 @@ describe('独立备忘与业务流程', () => {
     await click('新建流程')
     await click('流程信息')
     await fill('备忘标题', '订单流程验收')
-    await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
     await fill('第 1 步标题', '审核')
     await fill('第 1 步负责人', '运营')
     await click('添加步骤')
     await fill('第 2 步标题', '接收资料')
     await fill('第 2 步说明', '核对文件')
-    await act(async () =>
-      (
-        document.querySelector(
-          '[aria-label="第 2 步上移"]',
-        ) as HTMLButtonElement
-      ).click(),
-    )
+    await act(async () => (document.querySelector('[aria-label="第 2 步操作"]') as HTMLButtonElement).click())
+    await click('上移')
     await click('保存并查看')
     expect(save).toHaveBeenCalledOnce()
     expect(save.mock.calls[0]![0].steps.map((s) => s.title)).toEqual([

@@ -12,6 +12,7 @@ import { AiFlowDialog } from './AiFlowDialog'
 import { FlowImagePicker } from './FlowImagePicker'
 import { contentImages } from '../lib/content-assets'
 import { FlowCanvas } from './FlowCanvas'
+import { FlowSwitcher } from './FlowSwitcher'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -40,6 +41,7 @@ export function MemosView({
   const [category, setCategory] = useState('')
   const [selected, setSelected] = useState<memo.MemoDocument | null>(null)
   const [draft, setDraft] = useState<memo.SaveMemoInput | null>(null)
+  const latestDraft = useRef(draft); latestDraft.current = draft
   const [editing, setEditing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -113,12 +115,15 @@ export function MemosView({
 
   const canLeave = () =>
     !busy && !saving.current && (!dirty || window.confirm('当前修改尚未保存。放弃修改吗？'))
-  const open = async (id: string) => {
-    if (!canLeave()) return
+  const load = async (id: string, flowOnly = false) => {
     setBusy(true)
     setError(null)
     setNotice(null)
-    await runLatestRequest(detailGate, () => memo.memoGet(id), {
+    return runLatestRequest(detailGate, async () => {
+      const doc = await memo.memoGet(id)
+      if (flowOnly && (doc.kind !== 'flow' || doc.deletedAt)) throw new Error('此流程已经删除或不再可用，请刷新流程列表')
+      return doc
+    }, {
       apply: (doc) => {
         setCanvasSession(n => n + 1)
         setFlowView('canvas')
@@ -130,6 +135,28 @@ export function MemosView({
       reject: (e) => setError(errorText(e)),
       finish: () => setBusy(false),
     })
+  }
+  const open = async (id: string) => { if (canLeave()) await load(id) }
+  const switchFlow = async (id: string): Promise<boolean> => {
+    if (id === selected?.id || busy || saving.current) return false
+    if (dirty && (aiDraft || !draft?.title.trim())) { setError('请先填写流程名称并确认保存当前草稿，再切换流程。'); return false }
+    if (dirty && draft) {
+      const captured = draft, token = detailGate.begin()
+      saving.current = true; setBusy(true); setError(null)
+      try {
+        const doc = await memo.memoSave(captured)
+        if (!detailGate.isCurrent(token)) return false
+        setSelected(doc)
+        if (JSON.stringify(latestDraft.current) !== JSON.stringify(captured)) {
+          setDraft(current => current ? { ...current, id: doc.id, expectedRevision: doc.revision } : current)
+          setError('保存期间内容发生变化，新输入已保留，请重新选择要切换的流程。')
+          return false
+        }
+        setDraft(draftOf(doc)); setEditing(false); setNotice('已保存到本机')
+      } catch (e) { if (detailGate.isCurrent(token)) setError(errorText(e)); return false }
+      finally { saving.current = false; setBusy(false) }
+    }
+    return load(id, true)
   }
   const create = (kind: 'memo' | 'flow') => {
     if (!canLeave()) return
@@ -395,9 +422,7 @@ export function MemosView({
             <>
               <div className="memos__document-actions">
                 {draft.kind === 'flow' && <div className="segmented">{fullCanvas ? <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('canvas')}>画布</button>}</div>}
-                <span className="chip">
-                  {fullCanvas ? draft.title || '新流程' : draft.kind === 'flow' ? '业务流程' : '备忘录'}
-                </span>
+                {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
                 {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
                 {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
