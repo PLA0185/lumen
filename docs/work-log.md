@@ -2841,3 +2841,25 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [实施计划 Task 11](superpowers/plans/2026-10-02-flow-qa-harness.md)、[发布说明](../RELEASE_NOTES.md)。原生脚本 `tools/verify_flow_readability_ui.py` / `tools/verify_flow_canvas_ui.py`；截图和检查数据在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.11/preflight/readability-final/`。
+
+
+## 第 46 轮 · 2026-10-02 · 0.4.11 集成与签名发布准备
+
+### 做了
+
+- 版本三处统一为 0.4.11，Cargo.lock 与发布说明同步；空态、忠实 AI 转换、完整卡片/直排导航与顶部布局分别独立提交。
+- 使用 SQLite backup API 保存正常 Home 一致性快照，读取当前界面状态到仓库外；本次没有打开的流程编辑草稿，未代替用户确认保存。隔离验收后恢复正常 0.4.10 窗口供使用，签名更新包构建中。
+
+### 没做到
+
+- 本节提交时 0.4.11 最新 CI、签名构建、正式安装及正式程序重验尚未完成；不能把预览验证写成正式版本已更新，实际结果另记。
+- 完整自定义快捷键、多格式流程图导出、24 小时缓存悬浮聊天和 Harness 产品接入仍未实现；原计划尚未结束。
+
+### 怎么验证的
+
+- 实际冻结依赖安装、typecheck、前端全量 275 项、build、lint、cargo fmt --check、Rust 全量 464 项、cargo clippy --all-targets --all-features -- -D warnings 均成功。最终 App/画布调整后重新运行前端、构建和完整 clippy；0.4.11 三处版本与标签校验一致。
+- Git 跟踪检查无密钥、数据库、日志或构建产物；私钥短语只命中说明文档。预览实机与真实 DeepSeek 的证据及边界分别见第 43–45 轮。
+
+### 相关文档
+
+- [0.4.11 发布说明](../RELEASE_NOTES.md)、[实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)。Home 快照、界面状态及安装证据保存在仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.11/`。
