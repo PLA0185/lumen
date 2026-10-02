@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
-import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
+import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentImages, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
 import { ContentMarkdown } from './ContentMarkdown'
 
 type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void; extractFiles?: boolean }
@@ -87,7 +87,8 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   const extractAsset = (asset: ContentAsset) => insert(async () => {
     try {
       const extracted = await assetExtract(asset.id)
-      const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.map(assetMarkdown)].filter(Boolean).join('\n')
+      const anchored = new Set(contentImages(extracted.text).map(image => image.id))
+      const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.filter(image => !anchored.has(image.id.toLowerCase())).map(assetMarkdown)].filter(Boolean).join('\n')
       const remaining = ref.current && ref.current.maxLength >= 0 ? ref.current.maxLength - ref.current.value.length : Infinity
       let text = recognized ? `\n${recognized}\n` : ''
       const warnings = [...extracted.warnings]
