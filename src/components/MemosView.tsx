@@ -45,6 +45,7 @@ export function MemosView({
   const latestDraft = useRef(draft); latestDraft.current = draft
   const [editing, setEditing] = useState(false)
   const [loading, setLoading] = useState(true)
+  const listLoaded = useRef(false)
   const [busy, setBusy] = useState(false)
   const [autoSaving, setAutoSaving] = useState(false)
   const [historyId, setHistoryId] = useState('')
@@ -68,10 +69,11 @@ export function MemosView({
     !!draft &&
     (!selected || JSON.stringify(draft) !== JSON.stringify(draftOf(selected)))
   const reload = useCallback(async () => {
-    setLoading(true)
+    if (!listLoaded.current) setLoading(true)
     await runLatestRequest(listGate, () => memo.memoList(query, trash), {
       apply: (rows) => {
-        setItems(rows)
+        listLoaded.current = true
+        setItems(current => JSON.stringify(current) === JSON.stringify(rows) ? current : rows)
         setListError(null)
       },
       reject: (e) => setListError(errorText(e)),
@@ -88,21 +90,24 @@ export function MemosView({
   }, [listGate, detailGate])
   useEffect(() => {
     const timer = setTimeout(() => void reload(), 250)
-    const off = onDataChanged(['memos'], () => {
-      void reload()
-      if (selected && !editing && !busy && !restructuring) {
-        void runLatestRequest(detailGate, () => memo.memoGet(selected.id), {
-          apply: doc => { setSelected(doc); setDraft(draftOf(doc)) },
-          reject: e => setError(errorText(e)),
-        })
-      }
-    })
     return () => {
       clearTimeout(timer)
       listGate.invalidate()
-      off()
     }
-  }, [reload, listGate, selected, editing, busy, detailGate, restructuring])
+  }, [reload, listGate])
+  useEffect(() => onDataChanged(['memos'], () => {
+      void reload()
+      if (selected && !editing && !busy && !restructuring) {
+        void runLatestRequest(detailGate, () => memo.memoGet(selected.id), {
+          apply: doc => {
+            setSelected(current => JSON.stringify(current) === JSON.stringify(doc) ? current : doc)
+            const next = draftOf(doc)
+            setDraft(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)
+          },
+          reject: e => setError(errorText(e)),
+        })
+      }
+    }), [reload, selected, editing, busy, detailGate, restructuring])
   useEffect(() => {
     onDirtyChange?.(dirty || busy || autoSaving)
   }, [dirty, busy, autoSaving, onDirtyChange])
@@ -184,7 +189,7 @@ export function MemosView({
     })
   }
   const save = useCallback(async (automatic = false) => {
-    if (!draft || busy || saving.current || (automatic && aiDraft)) return
+    if (!draft || busy || saving.current || (automatic && aiDraft)) return false
     saving.current = true
     if (automatic) setAutoSaving(true)
     else setBusy(true)
@@ -198,8 +203,10 @@ export function MemosView({
       else { setDraft(draftOf(doc)); setEditing(false); setAiDraft(false) }
       setNotice('已保存到本机')
       await reload()
+      return true
     } catch (e) {
       setError(errorText(e))
+      return false
     } finally {
       setBusy(false)
       setAutoSaving(false)
@@ -316,9 +323,81 @@ export function MemosView({
                   </details>
   </> : null
 
+  const documentActions = draft ? (
+              <div className="memos__document-actions memos__document-actions--merged">
+                {draft.kind === 'flow' && <div className="segmented">{fullCanvas ? <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('canvas')}>画布</button>}</div>}
+                {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
+                {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
+                {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
+                {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
+                {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
+                {!selected?.deletedAt &&
+                  (editing ? (
+                    <>
+                      <button
+                        className="btn btn--primary"
+                        disabled={
+                          busy || autoSaving ||
+                          !draft.title.trim()
+                        }
+                        onClick={() => void save(false)}
+                      >
+                        {busy || autoSaving ? '保存中…' : aiDraft ? '确认保存流程' : '保存并查看'}
+                      </button>
+                      <button
+                        className="btn btn--ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          if (!canLeave()) return
+                          setDraft(selected ? draftOf(selected) : null)
+                          setEditing(false)
+                          setAiDraft(false)
+                        }}
+                      >
+                        取消编辑
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn--ghost"
+                      disabled={busy}
+                      onClick={() => setEditing(true)}
+                    >
+                      编辑记录
+                    </button>
+                  ))}
+                <button
+                  className="btn btn--ghost"
+                  disabled={busy}
+                  onClick={() =>
+                    void (async () => {
+                      try {
+                        await writeText(memo.memoMarkdown(draft))
+                        setNotice('已复制记录内容')
+                      } catch (e) {
+                        setError(errorText(e))
+                      }
+                    })()
+                  }
+                >
+                  复制内容
+                </button>
+                {selected && (
+                  <button
+                    className="btn btn--ghost"
+                    disabled={busy}
+                    onClick={() => void removeOrRestore()}
+                  >
+                    {selected.deletedAt ? '恢复记录' : '删除记录'}
+                  </button>
+                )}
+              </div>
+  ) : null
+
   return (
     <section className={`memos${fullCanvas ? ' memos--canvas' : ''}`}>
       <div className="memos__toolbar">
+        {documentActions}
         {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
         <button
           className="btn btn--primary"
@@ -435,74 +514,6 @@ export function MemosView({
             </div>
           ) : (
             <>
-              <div className="memos__document-actions">
-                {draft.kind === 'flow' && <div className="segmented">{fullCanvas ? <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('canvas')}>画布</button>}</div>}
-                {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
-                {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
-                {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
-                {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
-                {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
-                {!selected?.deletedAt &&
-                  (editing ? (
-                    <>
-                      <button
-                        className="btn btn--primary"
-                        disabled={
-                          busy || autoSaving ||
-                          !draft.title.trim()
-                        }
-                        onClick={() => void save(false)}
-                      >
-                        {busy || autoSaving ? '保存中…' : aiDraft ? '确认保存流程' : '保存并查看'}
-                      </button>
-                      <button
-                        className="btn btn--ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          if (!canLeave()) return
-                          setDraft(selected ? draftOf(selected) : null)
-                          setEditing(false)
-                          setAiDraft(false)
-                        }}
-                      >
-                        取消编辑
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      className="btn btn--ghost"
-                      disabled={busy}
-                      onClick={() => setEditing(true)}
-                    >
-                      编辑记录
-                    </button>
-                  ))}
-                <button
-                  className="btn btn--ghost"
-                  disabled={busy}
-                  onClick={() =>
-                    void (async () => {
-                      try {
-                        await writeText(memo.memoMarkdown(draft))
-                        setNotice('已复制记录内容')
-                      } catch (e) {
-                        setError(errorText(e))
-                      }
-                    })()
-                  }
-                >
-                  复制内容
-                </button>
-                {selected && (
-                  <button
-                    className="btn btn--ghost"
-                    disabled={busy}
-                    onClick={() => void removeOrRestore()}
-                  >
-                    {selected.deletedAt ? '恢复记录' : '删除记录'}
-                  </button>
-                )}
-              </div>
               {!fullCanvas && (editing && !selected?.deletedAt ? (
                 <div className="memos__editor">
                   {metadataFields}
@@ -647,7 +658,7 @@ export function MemosView({
                 </div>
               ))}
               {draft.kind === 'flow' && flowView === 'canvas' && <>
-                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onChange={steps => { setEditing(true); patch({ steps }) }} />
+                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onFinishEditing={async () => { if (aiDraft) return true; if (!dirty) { setEditing(false); return true }; return save(false) }} onChange={steps => { setEditing(true); patch({ steps }) }} />
               </>}
             </>
           )}

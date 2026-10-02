@@ -25,8 +25,8 @@ function isInput(target: EventTarget | null) {
   return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], .flow-canvas__inspector, .flow-canvas__inline-editor')
 }
 
-export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly = false, initialEdit = false, metadata }: {
-  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode
+export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled = false, readOnly = false, initialEdit = false, metadata }: {
+  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; onFinishEditing?: () => Promise<boolean>; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => initialEdit ? steps[0]?.id ?? null : null)
   const [query, setQuery] = useState('')
@@ -37,7 +37,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
     setLastInitialEdit(initialEdit)
     if (!initialEdit) setEditingId(null)
   }
-  const [menu, setMenu] = useState<{ id: string; anchor: HTMLButtonElement } | null>(null)
+  const [menu, setMenu] = useState<{ id: string; anchor: HTMLButtonElement; point?: {x:number; y:number} } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   const [mode, setMode] = useState('fuzzy')
   const [layout, setLayout] = useState('horizontal')
@@ -54,6 +54,44 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
   const spaceHeld = useRef(false)
   const nativeActive = useRef(false)
   const mounted = useRef(true)
+  const committing = useRef<Promise<boolean> | null>(null)
+  const finishEditing = useCallback(() => {
+    if (committing.current) return committing.current
+    if (!editingId || disabled) return Promise.resolve(false)
+    const task = (async () => {
+      try {
+        if (onFinishEditing && !await onFinishEditing()) return false
+        setEditingId(current => current === editingId ? null : current)
+        return true
+      } catch (e) {
+        setInputError(e instanceof Error ? e.message : String(e))
+        return false
+      }
+    })()
+    committing.current = task
+    void task.finally(() => { committing.current = null })
+    return task
+  }, [editingId, disabled, onFinishEditing])
+  useEffect(() => {
+    const outside = (e: MouseEvent) => {
+      const target = e.target
+      if (!(target instanceof Element)) return
+      const dialog = target.closest('dialog[open], [role="dialog"]')
+      if (dialog && !dialog.contains(viewport.current)) return
+      if (infoOpen && !target.closest('.flow-canvas__inspector, [data-flow-info-toggle]')) setInfoOpen(false)
+      const editor = viewport.current?.querySelector('.flow-canvas__inline-editor')
+      if (editingId && editor && !editor.contains(target) && !target.closest('button, a, input, textarea, select, .flow-canvas__node, .flow-canvas__inspector')) {
+        e.preventDefault(); e.stopPropagation()
+        void finishEditing()
+      }
+    }
+    document.addEventListener('click', outside, true)
+    document.addEventListener('dblclick', outside, true)
+    return () => {
+      document.removeEventListener('click', outside, true)
+      document.removeEventListener('dblclick', outside, true)
+    }
+  }, [editingId, infoOpen, finishEditing])
   const drag = useRef<{ id: number; x: number; y: number; originX: number; originY: number } | null>(null)
   const pendingFocus = useRef<string | null>(null)
   const viewTouched = useRef(false)
@@ -259,7 +297,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
       {!readOnly && <button className="btn btn--ghost btn--sm" disabled={disabled} onClick={() => { onChange(autoArrange(steps)); pendingFocus.current = selectedId ?? steps[0]?.id ?? null }}>自动排版</button>}
       {query.trim() && <><span role="status">{matches.length} 个匹配</span><button className="btn btn--ghost btn--sm" disabled={!matches.length} aria-label="下一个搜索结果" onClick={() => focus(matches.find(i => i > selected) ?? matches[0]!)}>定位下一项</button></>}
       <div className="flow-canvas__zoom">
-        <button className="btn btn--ghost btn--sm" onClick={() => { setEditingId(null); setInfoOpen(true); closeMenu() }}>流程信息</button>
+        <button className="btn btn--ghost btn--sm" data-flow-info-toggle onClick={() => { setEditingId(null); setInfoOpen(open => !open); closeMenu() }}>流程信息</button>
         <button className="btn btn--ghost btn--sm" aria-label="缩小画布" onClick={() => zoom(1 / 1.2)}>−</button>
         <span aria-label="画布缩放比例">{Math.round(view.scale * 100)}%</span>
         <button className="btn btn--ghost btn--sm" aria-label="放大画布" onClick={() => zoom(1.2)}>＋</button>
@@ -295,15 +333,30 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
         </svg>
         {steps.map((s, i) => { const p = position(i); return <article tabIndex={0} key={s.id} data-step-id={s.id} style={{ left: p.x, top: p.y, width: p.width, minHeight: transient?.id === s.id ? transient.layout.minHeight : s.layout?.minHeight ?? HEIGHT }}
           className={`flow-canvas__node memos__node${matches.includes(i) ? ' flow-canvas__node--match' : ''}`} aria-label={`查看第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-pressed={selectedId === s.id}
-          onClick={e => { if (!space && !panning && !(e.target as Element).closest('a, button, input, textarea, select, .flow-canvas__inline-editor') && !window.getSelection()?.toString()) focus(i, false) }}
-          onDoubleClick={e => { if (!space && !panning && !(e.target as Element).closest('a, button, img, input, textarea, select, .flow-canvas__inline-editor')) beginEdit(i) }}
+          onClick={e => { if (!space && !panning && !(e.target as Element).closest('a, button, input, textarea, select, .flow-canvas__inline-editor') && !window.getSelection()?.toString()) {
+            if (editingId && editingId !== s.id) void finishEditing().then(ok => { if (ok) focus(i, false) })
+            else focus(i, false)
+          } }}
+          onDoubleClick={e => { if (!space && !panning && !(e.target as Element).closest('a, button, img, input, textarea, select, .flow-canvas__inline-editor')) {
+            if (editingId && editingId !== s.id) void finishEditing().then(ok => { if (ok) beginEdit(i) })
+            else beginEdit(i)
+          } }}
+          onContextMenu={e => {
+            if (disabled || readOnly || (e.target as Element).closest('input, textarea, select, [contenteditable="true"]')) return
+            e.preventDefault(); e.stopPropagation()
+            const anchor = e.currentTarget.querySelector<HTMLButtonElement>('.flow-canvas__number')!
+            const next = { id: s.id, anchor, point: {x:e.clientX, y:e.clientY} }
+            const open = () => { setSelectedId(s.id); setInfoOpen(false); setMenu(next) }
+            if (editingId) void finishEditing().then(ok => { if (ok) open() })
+            else open()
+          }}
           onKeyDown={e => { if (e.key === 'Enter' && e.target === e.currentTarget) { e.preventDefault(); beginEdit(i) } }}>
           <button type="button" className="memos__step-number flow-canvas__number" aria-label={`第 ${i + 1} 步操作`} aria-haspopup="dialog" aria-expanded={menu?.id === s.id} disabled={readOnly || disabled} onClick={e => {
             setSelectedId(s.id); setInfoOpen(false)
             setMenu(menu?.id === s.id ? null : { id: s.id, anchor: e.currentTarget })
           }}>{i + 1}</button>
           <div className="flow-canvas__content">{!readOnly && <button type="button" className="flow-canvas__move-handle" aria-label={`移动第 ${i + 1} 步卡片`} title="拖动移动卡片" disabled={disabled} onPointerDown={e => startManipulation(e, s.id, 'move')} onPointerMove={changeManipulation} onPointerUp={e => finishManipulation(e)} onPointerCancel={e => finishManipulation(e, true)} onLostPointerCapture={e => finishManipulation(e, true)}>⠿</button>}{editingId === s.id && !readOnly ? <fieldset className="memos__step-fields flow-canvas__inline-editor" disabled={disabled}>
-            <div className="memos__step-actions"><strong>编辑第 {i + 1} 步</strong><button type="button" className="btn btn--ghost btn--sm" onClick={() => setEditingId(null)}>完成编辑</button></div>
+            <div className="memos__step-actions"><strong>编辑第 {i + 1} 步</strong><button type="button" className="btn btn--ghost btn--sm" onClick={() => void finishEditing()}>完成编辑</button></div>
             <label>步骤标题<input className="input selectable" aria-label={`第 ${i + 1} 步标题`} maxLength={300} placeholder="做什么" value={s.title} onChange={e => patch(s.id, { title: e.target.value })} /></label>
             <label>负责人（可留空）<input className="input selectable" aria-label={`第 ${i + 1} 步负责人`} maxLength={100} value={s.owner} onChange={e => patch(s.id, { owner: e.target.value })} /></label>
             <label>操作说明<ContentEditor key={s.id} extractFiles className="input selectable" aria-label={`第 ${i + 1} 步说明`} maxLength={5000} value={s.detail} disabled={disabled} onChange={e => patch(s.id, { detail: e.target.value })} /></label>
@@ -317,7 +370,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
         {metadata && <div className="flow-canvas__metadata">{metadata}</div>}
       </aside>}
     </div>
-    {menu && <FlowStepMenu key={menu.id} steps={steps} id={menu.id} anchor={menu.anchor} disabled={disabled || readOnly} onClose={closeMenu} onMove={target => reorder(target)} onSwap={id => reorder(steps.findIndex(s => s.id === id), true)} onAdd={add} onDelete={() => {
+    {menu && <FlowStepMenu key={menu.id} steps={steps} id={menu.id} anchor={menu.anchor} point={menu.point} disabled={disabled || readOnly} onClose={closeMenu} onMove={target => reorder(target)} onSwap={id => reorder(steps.findIndex(s => s.id === id), true)} onAdd={add} onDelete={() => {
       if (disabled || readOnly) return
       const index = steps.findIndex(s => s.id === menu.id)
       const nextId = steps[index - 1]?.id ?? steps[index + 1]?.id ?? null

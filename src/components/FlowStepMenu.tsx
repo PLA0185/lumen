@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { flowStepDisplayTitle, type FlowStep } from '../lib/memos-ipc'
 
-export function FlowStepMenu({ steps, id, anchor, disabled, onClose, onMove, onSwap, onAdd, onDelete }: {
-  steps: FlowStep[]; id: string; anchor: HTMLButtonElement; disabled: boolean
+export function FlowStepMenu({ steps, id, anchor, point, disabled, onClose, onMove, onSwap, onAdd, onDelete }: {
+  steps: FlowStep[]; id: string; anchor: HTMLButtonElement; point?: {x:number; y:number}; disabled: boolean
   onClose(): void; onMove(index: number): void; onSwap(id: string): void; onAdd(index: number): void; onDelete(): void
 }) {
   const index = steps.findIndex(s => s.id === id)
@@ -33,7 +33,7 @@ export function FlowStepMenu({ steps, id, anchor, disabled, onClose, onMove, onS
     }
   }, [anchor, onClose])
   if (index < 0) return null
-  return createPortal(<div ref={panel} tabIndex={-1} role="dialog" aria-label={`第 ${index + 1} 步操作菜单`} className="flow-step-menu" style={{ left: Math.max(8, Math.min(rect.left, window.innerWidth - 328)), top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 450)) }}>
+  return createPortal(<div ref={panel} tabIndex={-1} role="dialog" aria-label={`第 ${index + 1} 步操作菜单`} className="flow-step-menu" style={{ left: Math.max(8, Math.min(point?.x ?? rect.left, window.innerWidth - 328)), top: Math.max(8, Math.min(point?.y ?? rect.bottom + 8, window.innerHeight - 450)) }}>
     <div className="flow-canvas__inspector-head"><strong>第 {index + 1} 步</strong><button type="button" className="btn btn--quiet btn--sm" aria-label="关闭步骤菜单" onClick={onClose}>关闭</button></div>
     <fieldset disabled={disabled}>
       <div className="memos__step-actions"><button className="btn btn--ghost btn--sm" disabled={index === 0} onClick={() => onMove(index - 1)}>上移</button><button className="btn btn--ghost btn--sm" disabled={index === steps.length - 1} onClick={() => onMove(index + 1)}>下移</button></div>

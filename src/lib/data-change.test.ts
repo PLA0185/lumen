@@ -36,7 +36,7 @@ describe('mutation architecture', () => {
 
   it('keeps change publication out of components and the store', () => {
     const paths = readdirSync(join(root, 'src/components'))
-      .filter((name) => name.endsWith('.tsx'))
+      .filter((name) => name.endsWith('.tsx') && !name.endsWith('.test.tsx'))
       .map((name) => join(root, 'src/components', name))
     paths.push(join(root, 'src/lib/store.ts'))
     for (const path of paths) {

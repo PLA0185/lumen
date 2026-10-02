@@ -4536,7 +4536,7 @@ body {
 /* 备忘与业务流程：摘要列表与可阅读的操作路线。 */
 .memos { max-width: 1400px; margin: 0 auto; }
 .memos__toolbar, .memos__document-actions, .memos__step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.memos__toolbar { margin-bottom: 14px; }
+.memos__toolbar { position: sticky; top: 0; z-index: 6; flex-shrink: 0; margin-bottom: 14px; padding: 8px 0; background: var(--c-bg); }
 .memos__workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 16px; align-items: start; }
 .memos__list, .memos__document { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 10px; padding: 16px; min-width: 0; }
 .memos__list { max-height: calc(100vh - 230px); overflow-y: auto; }
@@ -4546,6 +4546,7 @@ body {
 .memos__item span { color: var(--c-text-3); font-size: var(--font-xs); }
 .memos__document { min-height: 420px; }
 .memos__document-actions { padding-bottom: 14px; border-bottom: 1px solid var(--c-border); margin-bottom: 20px; }
+.memos__document-actions--merged { display: contents; }
 .memos__editor { display: grid; gap: 16px; }
 .memos__editor label { display: grid; gap: 7px; color: var(--c-text-2); font-size: var(--font-sm); }
 .memos .memos__editor textarea { min-height: 150px; resize: vertical; line-height: 1.7; }
@@ -4678,7 +4679,6 @@ body {
 .memos--canvas .flow-canvas { position: absolute; inset: 0; z-index: 1; margin: 0; background: var(--c-bg); }
 .memos--canvas .flow-canvas__viewport { position: absolute; inset: 0; width: 100%; height: 100%; border: none; border-radius: 0; }
 .memos--canvas .flow-canvas__nav { position: absolute; z-index: 4; top: var(--flow-nav-top, 84px); left: 50%; transform: translateX(-50%); margin: 0; }
-.memos--canvas .memos__document-actions { position: absolute; z-index: 4; top: 12px; left: 16px; right: 16px; width: fit-content; max-width: calc(100% - 32px); padding: 8px; margin: 0; border: 1px solid var(--c-border); border-radius: 8px; background: var(--c-surface); box-shadow: 0 3px 15px #0002; }
 .memos--canvas .memos__document-actions .chip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memos--canvas .flow-canvas__toolbar { position: absolute; z-index: 3; bottom: 16px; left: 16px; right: 16px; padding: 10px; border: 1px solid var(--c-border); border-radius: 8px; background: var(--c-surface); box-shadow: 0 3px 15px #0002; }
 .memos--canvas .flow-canvas__hint { position: absolute; z-index: 2; bottom: 80px; left: 20px; margin: 0; pointer-events: none; }

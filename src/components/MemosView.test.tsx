@@ -6,6 +6,7 @@ import * as memo from '../lib/memos-ipc'
 import * as ai from '../lib/ai-ipc'
 import * as assets from '../lib/content-assets'
 import { MemosView } from './MemosView'
+import { publishDataChange } from '../lib/data-change'
 
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +53,37 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('打开记录及后台刷新不重复安排列表读取，不插入挤动卡片的加载提示', async () => {
+    const doc: memo.MemoDocument = { id: 'stable', title: '稳定列表', category: '', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '已保存正文', steps: [] }
+    vi.spyOn(memo, 'memoGet').mockImplementation(async () => structuredClone(doc))
+    await mount('', [doc])
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    expect(memo.memoList).toHaveBeenCalledTimes(1)
+    const card = document.querySelector('.memos__item')
+    let resolve!: (rows: memo.MemoSummary[]) => void
+    vi.mocked(memo.memoList).mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    await act(async () => publishDataChange(['memos']))
+    expect(document.querySelector('.memos__list')?.textContent).not.toContain('读取中')
+    expect(document.querySelector('.memos__item')).toBe(card)
+    await act(async () => resolve([structuredClone(doc)]))
+    await act(async () => vi.advanceTimersByTimeAsync(500))
+    expect(memo.memoList).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('.memos__item')).toBe(card)
+    expect(document.querySelector('.memos__reading')?.textContent).toContain('已保存正文')
+  })
+  it('流程名称、记录操作与创建筛选合并在顶部工具栏，画布不再叠第二条菜单', async () => {
+    const doc: memo.MemoDocument = { id: 'merged', title: '合并菜单流程', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{id:'one',title:'原操作',owner:'',detail:'原说明'}] }
+    vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
+    await mount('', [doc])
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    const toolbar = document.querySelector('.memos__toolbar')!
+    expect(toolbar.querySelector('[aria-label="切换流程：合并菜单流程"]')).not.toBeNull()
+    for (const label of ['细分流程', '历史版本', '编辑记录', '复制内容', '删除记录', '新建流程', 'AI 生成流程']) {
+      expect([...toolbar.querySelectorAll('button')].some(b => b.textContent?.trim() === label), label).toBe(true)
+    }
+    expect(document.querySelector('.memos__document .memos__document-actions')).toBeNull()
+  })
   it('流程名称下拉切换前保存当前卡片，读取失败或版本冲突保留草稿', async () => {
     const first: memo.MemoDocument = { id: 'first', title: '流程甲', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{ id: 'step-a', title: '操作甲', owner: '', detail: '原文甲' }] }
     const second: memo.MemoDocument = { ...first, id: 'second', title: '流程乙', steps: [{ id: 'step-b', title: '操作乙', owner: '', detail: '原文乙' }] }
@@ -74,6 +106,33 @@ describe('独立备忘与业务流程', () => {
     expect(get).toHaveBeenCalledWith(second.id)
     expect(document.querySelector('[aria-label="切换流程：流程乙"]')).not.toBeNull()
     expect(document.querySelector('.flow-canvas__node')?.textContent).toContain('原文乙')
+  })
+  it('点卡片外实际保存修改，写入失败保留输入，重试成功才退出编辑', async () => {
+    const doc: memo.MemoDocument = { id:'outside', title:'原流程',category:'',kind:'flow',revision:1,createdAt:'',updatedAt:'',deletedAt:null,bodyMd:'',steps:[{id:'step',title:'原步骤',owner:'',detail:'原说明'},{id:'next',title:'下一个步骤',owner:'',detail:'下一段原文'}] }
+    vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
+    const save = vi.spyOn(memo, 'memoSave').mockRejectedValueOnce(new Error('写入失败，未保存')).mockImplementation(async input => ({...doc,...input,id:doc.id,revision:2}))
+    await mount('', [doc])
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})))
+    await fill('第 1 步说明', '用户修改的说明')
+    await act(async () => (document.querySelector('.flow-canvas__viewport') as HTMLElement).click())
+    expect(save).toHaveBeenCalledOnce()
+    expect((document.querySelector('[aria-label="第 1 步说明"]') as HTMLTextAreaElement).value).toBe('用户修改的说明')
+    expect(document.body.textContent).toContain('写入失败，未保存')
+    await act(async () => (document.querySelector('.flow-canvas__viewport') as HTMLElement).click())
+    expect(save).toHaveBeenCalledTimes(2)
+    expect(save.mock.calls[1]![0].steps[0]!.detail).toBe('用户修改的说明')
+    expect(document.querySelector('.flow-canvas__inline-editor')).toBeNull()
+    expect(document.querySelector('.flow-canvas__node')?.textContent).toContain('用户修改的说明')
+    let resolve!: (saved: memo.MemoDocument) => void
+    save.mockImplementationOnce(() => new Promise(r => { resolve = r }))
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})))
+    await fill('第 1 步说明', '继续修改后换到另一步')
+    const next = document.querySelectorAll<HTMLElement>('.flow-canvas__node')[1]!
+    await act(async () => { next.click(); next.click(); next.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})) })
+    expect(save).toHaveBeenCalledTimes(3)
+    await act(async () => resolve({...doc,...save.mock.calls[2]![0],id:doc.id,revision:3}))
+    expect(document.querySelector('[aria-label="第 2 步标题"]')).not.toBeNull()
   })
   it('已有流程细分先预览，取消不写库，确认保留原元数据且冲突保留预览', async () => {
     const original: memo.MemoDocument = { id: 'existing', title: '原流程', category: '原分类', kind: 'flow', revision: 4, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '原始材料归档', steps: [{ id: 'old', title: '2. 原章节', owner: '', detail: '原说明甲。\n\n原说明乙。' }] }
