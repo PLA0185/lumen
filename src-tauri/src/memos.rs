@@ -14,6 +14,19 @@ pub struct FlowStep {
     pub title: String,
     pub owner: String,
     pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<FlowStepLayout>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FlowStepLayout {
+    pub width: f64,
+    pub min_height: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -83,6 +96,20 @@ pub(crate) fn validate(input: &SaveMemoInput) -> AppResult<()> {
         validate_text(&step.title, "步骤标题", 300)?;
         validate_text(&step.owner, "负责人", 100)?;
         validate_text(&step.detail, "步骤说明", 5_000)?;
+        if let Some(layout) = &step.layout {
+            if !layout.width.is_finite()
+                || !(280.0..=2400.0).contains(&layout.width)
+                || !layout.min_height.is_finite()
+                || !(148.0..=20_000.0).contains(&layout.min_height)
+                || layout.x.is_some() != layout.y.is_some()
+                || [layout.x, layout.y]
+                    .into_iter()
+                    .flatten()
+                    .any(|value| !value.is_finite() || value.abs() > 1_000_000.0)
+            {
+                return Err(AppError::validation("步骤布局大小或位置无效"));
+            }
+        }
     }
     if input.id.is_some() != input.expected_revision.is_some() {
         return Err(AppError::validation("修改已有记录必须携带原版本号"));
@@ -208,6 +235,63 @@ pub async fn memo_set_deleted(
 mod tests {
     use super::*;
 
+    #[test]
+    fn layout_rejects_invalid_sizes_and_unpaired_positions() {
+        let mut value = input();
+        for layout in [
+            FlowStepLayout {
+                width: 20.0,
+                min_height: 148.0,
+                x: None,
+                y: None,
+            },
+            FlowStepLayout {
+                width: 420.0,
+                min_height: 20.0,
+                x: None,
+                y: None,
+            },
+            FlowStepLayout {
+                width: 420.0,
+                min_height: 148.0,
+                x: Some(0.0),
+                y: None,
+            },
+            FlowStepLayout {
+                width: f64::NAN,
+                min_height: 148.0,
+                x: None,
+                y: None,
+            },
+            FlowStepLayout {
+                width: 420.0,
+                min_height: 148.0,
+                x: Some(1_000_001.0),
+                y: Some(0.0),
+            },
+        ] {
+            value.steps[0].layout = Some(layout);
+            assert!(validate(&value).is_err(), "无效布局不能保存");
+        }
+        value.steps[0].layout = Some(FlowStepLayout {
+            width: 620.0,
+            min_height: 300.0,
+            x: Some(-100.0),
+            y: Some(80.0),
+        });
+        validate(&value).unwrap();
+        let json = serde_json::to_value(&value.steps[0]).unwrap();
+        assert_eq!(json["layout"]["width"], 620.0);
+        value.steps[0].layout = None;
+        assert!(
+            serde_json::to_value(&value.steps[0])
+                .unwrap()
+                .get("layout")
+                .is_none(),
+            "旧 JSON 不新增布局字段"
+        );
+    }
+
     fn input() -> SaveMemoInput {
         SaveMemoInput {
             id: None,
@@ -217,6 +301,7 @@ mod tests {
             kind: "flow".into(),
             body_md: "注意核对".into(),
             steps: vec![FlowStep {
+                layout: None,
                 id: "a".into(),
                 title: "收集资料".into(),
                 owner: "同事".into(),

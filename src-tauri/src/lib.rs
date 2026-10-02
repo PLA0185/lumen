@@ -306,6 +306,7 @@ pub fn run() {
             content_assets::content_asset_import_path,
             content_assets::content_asset_get,
             content_assets::content_asset_export,
+            content_assets::content_image_export,
             document_import::content_asset_extract,
             commands::task_create,
             commands::task_update,

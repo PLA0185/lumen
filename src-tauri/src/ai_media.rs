@@ -99,8 +99,10 @@ pub fn validate_material_text(text: &str) -> AppResult<()> {
             "原始材料（含图片引用）最多 80000 字，请分段整理",
         ));
     }
-    let references = regex::Regex::new(r"!?\[[^\]\n]*\]\(lumen-asset:[0-9a-fA-F-]{36}\)")
-        .expect("constant asset token regex");
+    let references = regex::Regex::new(
+        r#"!?\[[^\]\n]*\]\(lumen-asset:[0-9a-fA-F-]{36}(?: "(?:\\.|[^"\\\n])*")?\)"#,
+    )
+    .expect("constant asset token regex");
     if references.replace_all(text, "").chars().count() > 20_000 {
         return Err(AppError::validation("材料文字最多 20000 字"));
     }

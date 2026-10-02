@@ -214,3 +214,77 @@ pub async fn content_asset_export(
     std::fs::write(path, decode_asset(&asset)?)?;
     Ok(())
 }
+
+fn export_image(path: &Path, data_base64: &str) -> AppResult<()> {
+    use std::io::Write;
+    if !path.is_absolute() || data_base64.len() > MAX_ASSET_BYTES.div_ceil(3) * 4 {
+        return Err(AppError::validation("图片导出路径无效或超过 20 MiB"));
+    }
+    let bytes = STANDARD
+        .decode(data_base64)
+        .map_err(|_| AppError::validation("图片编码无效"))?;
+    if bytes.len() > MAX_ASSET_BYTES {
+        return Err(AppError::validation("图片导出超过 20 MiB"));
+    }
+    let extension = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let matches = match mime_for("", &bytes) {
+        "image/png" => extension == "png",
+        "image/jpeg" => matches!(extension.as_str(), "jpg" | "jpeg"),
+        "image/webp" => extension == "webp",
+        _ => false,
+    };
+    if !matches {
+        return Err(AppError::validation("导出图片内容与文件扩展名不匹配"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::validation("图片导出目录无效"))?;
+    let temporary = parent.join(format!(".lumen-image-{}.tmp", uuid::Uuid::now_v7()));
+    let result = (|| -> AppResult<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[tauri::command]
+pub fn content_image_export(path: String, data_base64: String) -> AppResult<()> {
+    export_image(Path::new(&path), &data_base64)
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    #[test]
+    fn annotated_image_export_preserves_existing_on_invalid_input_and_writes_real_bytes() {
+        let dir = std::env::temp_dir().join(format!("lumen-image-export-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("备注.png");
+        std::fs::write(&path, b"existing").unwrap();
+        assert!(export_image(&path, "bad base64").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        assert!(export_image(&path, &STANDARD.encode(b"not an image")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        let bytes = b"\x89PNG\r\n\x1a\nencoded image";
+        export_image(&path, &STANDARD.encode(bytes)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert!(export_image(&dir.join("wrong.jpg"), &STANDARD.encode(bytes)).is_err());
+        assert!(!dir.join("wrong.jpg").exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

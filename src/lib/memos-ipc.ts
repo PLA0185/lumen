@@ -7,6 +7,7 @@ export interface FlowStep {
   title: string
   owner: string
   detail: string
+  layout?: { width: number; minHeight: number; x?: number; y?: number }
 }
 export interface MemoSummary {
   id: string

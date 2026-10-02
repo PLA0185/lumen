@@ -409,12 +409,14 @@ mod tests {
             body_md: "核对订单后生成发货单".into(),
             steps: vec![
                 FlowStep {
+                    layout: None,
                     id: "z".into(),
                     title: "核对".into(),
                     owner: "".into(),
                     detail: "核对订单".into(),
                 },
                 FlowStep {
+                    layout: None,
                     id: "a".into(),
                     title: "生成发货单".into(),
                     owner: "".into(),
@@ -545,6 +547,7 @@ mod citation_tests {
             kind: "flow".into(),
             body_md: "已授权操作".into(),
             steps: vec![FlowStep {
+                layout: None,
                 id: "s".into(),
                 title: "检查".into(),
                 owner: "".into(),
@@ -867,12 +870,14 @@ mod review_regressions {
         let mut current = draft("".into());
         current.steps = vec![
             crate::memos::FlowStep {
+                layout: None,
                 id: "z".into(),
                 title: "核对".into(),
                 owner: "".into(),
                 detail: "".into(),
             },
             crate::memos::FlowStep {
+                layout: None,
                 id: "a".into(),
                 title: "发货".into(),
                 owner: "".into(),

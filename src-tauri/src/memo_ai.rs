@@ -102,8 +102,10 @@ fn validate_step_image_reuse(
     source: &str,
     media: &[ContentAsset],
 ) -> AppResult<()> {
-    let images = regex::Regex::new(r"!\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})\)")
-        .expect("constant image reference regex");
+    let images = regex::Regex::new(
+        r#"!\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})(?: "(?:\\.|[^"\\\n])*")?\)"#,
+    )
+    .expect("constant image reference regex");
     for asset in media.iter().filter(|a| a.mime.starts_with("image/")) {
         let count_in = |text: &str| {
             images
@@ -135,9 +137,10 @@ pub(crate) fn parse_flow(
     }
     let references = regex::Regex::new(r"lumen-asset:([0-9a-fA-F-]{36})")
         .expect("constant asset reference regex");
-    let markdown_references =
-        regex::Regex::new(r"(!?)\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})\)")
-            .expect("constant asset markdown regex");
+    let markdown_references = regex::Regex::new(
+        r#"(!?)\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})(?: "(?:\\.|[^"\\\n])*")?\)"#,
+    )
+    .expect("constant asset markdown regex");
     for text in
         std::iter::once(model.body_md.as_str()).chain(model.steps.iter().map(|s| s.detail.as_str()))
     {
@@ -193,6 +196,7 @@ pub(crate) fn parse_flow(
                     }
                 }
                 Ok(FlowStep {
+                    layout: None,
                     id: uuid::Uuid::now_v7().to_string(),
                     title: s.title.trim().into(),
                     owner: if source.contains(s.owner.trim()) {
@@ -214,6 +218,7 @@ pub(crate) fn parse_flow(
         draft.steps = sections
             .into_iter()
             .map(|section| FlowStep {
+                layout: None,
                 id: uuid::Uuid::now_v7().to_string(),
                 title: section.title,
                 owner: owner
@@ -369,6 +374,17 @@ mod tests {
         assert!(
             parse_flow(&raw, &source, &[image]).is_err(),
             "AI 不能把仅出现一次的原图随意放到多个步骤"
+        );
+    }
+
+    #[test]
+    fn image_captions_cannot_bypass_duplicate_reference_guard() {
+        let image = test_image(&uuid::Uuid::now_v7().to_string());
+        let token = format!("![图片](lumen-asset:{} \"发货单备注\")", image.id);
+        let raw = serde_json::json!({"title":"流程","steps":[{"title":"准备","detail":token},{"title":"核对","detail":token}]}).to_string();
+        assert!(
+            parse_flow(&raw, &token, &[image]).is_err(),
+            "图片备注不能绕过原文重复配图校验"
         );
     }
 
