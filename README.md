@@ -444,6 +444,7 @@ pnpm typecheck                # 类型检查
 
 | 文档 | 内容 |
 | --- | --- |
+| [流程分组与细分设计](docs/flow-hierarchy-2026-10-02.md) | 已有小标题被整章节点吞并的原因、文档层级优先与 AI 辅助的方案；分组界面尚未实现 |
 | [Word 流程与 AI 忠实性修复](docs/word-flow-fidelity-2026-10-02.md) | 原文章节、图片位置、重复引用和模型补写的原因与程序校验 |
 | [流程卡片与图片操作](docs/flow-inline-images-2026-10-02.md) | 卡片内编辑、序号菜单、布局、中文断行、图片备注批注及真实验证边界 |
 | [DeepSeek Harness 接入调研](docs/deepseek-harness-research-2026-10-02.md) | 官方 SDK、文件技能、流程知识库接入方式、发行与验证边界 |
