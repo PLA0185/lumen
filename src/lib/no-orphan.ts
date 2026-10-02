@@ -40,6 +40,8 @@ export function protectedText(text: string): Array<{ text: string; protect: bool
 }
 const inlineTags = new Set(['strong', 'em', 'del', 'a', 'span'])
 function isInline(node: Node): boolean {
+  // A local link renders an interactive resource, not its label's text fragments.
+  if (node.tagName === 'a' && String(node.properties?.href ?? '').startsWith('lumen-asset:')) return false
   return node.type === 'text' || (node.type === 'element' && inlineTags.has(node.tagName ?? '') && (node.children ?? []).every(isInline))
 }
 function protectInline(nodes: Node[]): Node[] {

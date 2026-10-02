@@ -9,6 +9,16 @@ import * as annotations from '../lib/image-annotations'
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const asset: assets.ContentAsset = { id: '00000000-0000-7000-8000-000000000001', name: 'image1.png', mime: 'image/png', byteSize: 24, dataBase64: '', sha256: '', createdAt: '' }
+it('中文文件名的一个原文件引用只显示一个组件，合法的两次引用仍显示两次', async () => {
+  const original = { ...asset, name: '出货SOP_标准版.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }
+  vi.spyOn(assets, 'assetGet').mockResolvedValue(original)
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  const token = assets.assetMarkdown(original)
+  await act(async () => root!.render(<ContentMarkdown>{token}</ContentMarkdown>))
+  expect(host.querySelectorAll('.content-asset')).toHaveLength(1)
+  await act(async () => root!.render(<ContentMarkdown>{`${token}\n\n${token}`}</ContentMarkdown>))
+  expect(host.querySelectorAll('.content-asset')).toHaveLength(2)
+})
 let root: Root | undefined
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ''; vi.restoreAllMocks(); vi.mocked(save).mockReset() })
 async function mount(caption = '', writable = true) {
