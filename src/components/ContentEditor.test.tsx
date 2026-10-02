@@ -21,6 +21,19 @@ async function mount(initial = '操作说明', readOnly = false, extractFiles = 
   return field
 }
 const asset: assets.ContentAsset = { id:'00000000-0000-7000-8000-000000000001', name:'业务截图.png', mime:'image/png',dataBase64:'',byteSize:24,sha256:'hash',createdAt:'2026-09-30' }
+it('说明输入框整条底边调整高度，宽度不随拖动改变', async () => {
+  const field = await mount()
+  Object.defineProperty(field, 'offsetHeight', { value: 200 })
+  vi.spyOn(field, 'getBoundingClientRect').mockReturnValue({ height: 200 } as DOMRect)
+  const edge = document.querySelector<HTMLElement>('[aria-label="调整内容高度"]')
+  expect(edge).not.toBeNull()
+  edge!.setPointerCapture = vi.fn(); edge!.releasePointerCapture = vi.fn()
+  await act(async () => edge!.dispatchEvent(new PointerEvent('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 200, bubbles: true })))
+  await act(async () => edge!.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 150, clientY: 280, bubbles: true })))
+  await act(async () => edge!.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true })))
+  expect(field.style.height).toBe('280px')
+  expect(field.style.width).toBe('')
+})
 it('完整预览中在图片前新增段落，复用已读取资源和图片 URL', async () => {
   const read = vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
   const field = await mount(assets.assetMarkdown(asset))

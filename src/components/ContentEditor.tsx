@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type ComponentProps } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
-import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentImages, contentInsertionRange, contentError, type ContentAsset } from '../lib/content-assets'
+import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentImages, contentInsertionRange, contentAssetPattern, replaceImageReference, contentError, type ContentAsset } from '../lib/content-assets'
 import { ContentMarkdown } from './ContentMarkdown'
 
 type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void; extractFiles?: boolean }
 export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null)
+  const resize = useRef<{ pointer: number; y: number; height: number; scale: number; previous: string } | null>(null)
   const mounted = useRef(true)
   const pending = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -19,11 +20,11 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   }, [busy, onBusyChange])
   const latest = useRef(props)
   latest.current = props
-  const references = String(props.value ?? '').match(/!?\[[^\]\n]*\]\(lumen-asset:[0-9a-f-]{36}\)/gi) ?? []
+  const references = String(props.value ?? '').match(contentAssetPattern()) ?? []
   const removeAsset = (id: string) => {
     const field = ref.current
     if (!field || field.disabled || field.readOnly || pending.current) return
-    const value = field.value.replace(/!?\[[^\]\n]*\]\(lumen-asset:([0-9a-f-]{36})\)/gi, (token, reference: string) => reference.toLowerCase() === id.toLowerCase() ? '' : token)
+    const value = field.value.replace(contentAssetPattern(), (token, reference: string) => reference.toLowerCase() === id.toLowerCase() ? '' : token)
     field.focus()
     field.setSelectionRange(0, field.value.length)
     if (document.execCommand?.('insertText', false, value)) return
@@ -31,6 +32,15 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
     field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }))
   }
   const onRemoveAsset = props.disabled || props.readOnly || busy ? undefined : removeAsset
+  const updateImage = (id: string, replacement: string | null) => {
+    const field = ref.current
+    if (!mounted.current || !field || field.disabled || field.readOnly || pending.current) throw new Error('当前内容不可编辑，请稍后重试')
+    const value = replaceImageReference(field.value, id, replacement)
+    if (field.maxLength >= 0 && value.length > field.maxLength) throw new Error(`内容超过 ${field.maxLength} 字，请缩短备注后重试`)
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set?.call(field, value)
+    field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertReplacementText' }))
+  }
+  const onUpdateImage = props.disabled || props.readOnly || busy ? undefined : updateImage
 
   const insert = async (load: () => Promise<string>, preserveExisting = false) => {
     const field = ref.current
@@ -140,7 +150,7 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
     return () => { disposed = true; mounted.current = false; off?.() }
   }, [])
   return <div className="content-editor">
-    <textarea {...props} ref={ref} data-content-editor="true" aria-busy={busy}
+    <div className="content-editor__field"><textarea {...props} ref={ref} data-content-editor="true" aria-busy={busy}
       onKeyDown={(e) => {
         props.onKeyDown?.(e)
         if (!e.defaultPrevented && !e.altKey && !e.nativeEvent.isComposing && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
@@ -162,6 +172,19 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
         const files = [...e.dataTransfer.files]
         void insert(() => importMany(files.map((file) => () => assetImportFile(file))))
       }} />
+    <button type="button" className="content-editor__resize" aria-label={`调整${props['aria-label'] || '输入框'}高度`} title="拖动底边调整高度" disabled={props.disabled} onPointerDown={e => {
+      if (e.button !== 0 || !ref.current) return
+      e.preventDefault(); e.stopPropagation(); const field = ref.current, height = field.offsetHeight || 200
+      resize.current = { pointer: e.pointerId, y: e.clientY, height, scale: field.getBoundingClientRect().height / height || 1, previous: field.style.height }
+      e.currentTarget.setPointerCapture(e.pointerId)
+    }} onPointerMove={e => {
+      const start = resize.current
+      if (start?.pointer !== e.pointerId || !ref.current) return
+      ref.current.style.height = `${Math.max(80, Math.min(10000, start.height + (e.clientY - start.y) / start.scale))}px`
+    }} onPointerUp={e => { resize.current = null; if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId) }} onPointerCancel={() => { if (resize.current && ref.current) ref.current.style.height = resize.current.previous; resize.current = null }} onLostPointerCapture={() => { resize.current = null }} onKeyDown={e => {
+      if (!ref.current || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return
+      e.preventDefault(); e.stopPropagation(); ref.current.style.height = `${Math.max(80, Math.min(10000, ref.current.offsetHeight + (e.key === 'ArrowUp' ? -16 : 16)))}px`
+    }}><span aria-hidden="true" /></button></div>
     <div className="content-editor__tools">
       <label className="btn btn--quiet btn--sm">{busy ? '正在导入…' : '添加图片 / 文件'}<input className="sr-only" type="file" multiple disabled={props.disabled || props.readOnly || busy} onChange={(e) => {
         const files = [...(e.target.files ?? [])]; e.target.value = ''
@@ -172,7 +195,7 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
     </div>
     {error && <p className="formerr" role="alert">{error}</p>}
     {importResults && <div className="mdpreview" aria-label="本次导入结果"><p className="setgroup__hint">本次导入结果（尚未放进当前内容）</p><ContentMarkdown>{importResults}</ContentMarkdown></div>}
-    {!preview && references.length > 0 && <div className="mdpreview" aria-label="已插入图片 / 文件预览"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset}>{references.join('\n')}</ContentMarkdown></div>}
-    {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset}>{String(props.value ?? '')}</ContentMarkdown></div>}
+    {!preview && references.length > 0 && <div className="mdpreview" aria-label="已插入图片 / 文件预览"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset} onUpdateImage={onUpdateImage}>{references.join('\n')}</ContentMarkdown></div>}
+    {preview && <div className="mdpreview"><ContentMarkdown onRemoveAsset={onRemoveAsset} onExtractAsset={onExtractAsset} onUpdateImage={onUpdateImage}>{String(props.value ?? '')}</ContentMarkdown></div>}
   </div>
 }
