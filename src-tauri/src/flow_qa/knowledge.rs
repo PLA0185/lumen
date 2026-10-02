@@ -9,6 +9,15 @@ use crate::{
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, sync::Mutex};
 
+fn step_text(step: &memos::FlowStep) -> String {
+    let group = step
+        .group
+        .as_ref()
+        .map(|g| format!("章节：{}\n{}\n", g.title, g.path.join(" > ")))
+        .unwrap_or_default();
+    format!("{group}{}\n{}\n{}", step.title, step.owner, step.detail)
+}
+
 pub struct KnowledgeContext {
     documents: Vec<MemoDocument>,
     draft_hash: Option<String>,
@@ -144,13 +153,7 @@ impl KnowledgeContext {
             );
             let mut texts = vec![(None, "流程正文".to_owned(), text)];
             for (index, step) in doc.steps.iter().enumerate() {
-                let text = format!(
-                    "步骤 {}：{}\n{}\n{}",
-                    index + 1,
-                    step.title,
-                    step.owner,
-                    step.detail
-                );
+                let text = format!("步骤 {}：{}", index + 1, step_text(step));
                 texts.push((Some(step.id.as_str()), format!("步骤 {}", index + 1), text));
             }
             for (step, locator, text) in texts {
@@ -202,10 +205,7 @@ impl KnowledgeContext {
                 Some(id),
                 None,
                 format!("步骤 {}", index + 1),
-                format!(
-                    "{}\n{}\n{}",
-                    selected.title, selected.owner, selected.detail
-                ),
+                step_text(selected),
             )?;
         } else {
             self.issue(
@@ -224,7 +224,7 @@ impl KnowledgeContext {
                     Some(&s.id),
                     None,
                     format!("步骤 {}", index + 1),
-                    format!("{}\n{}\n{}", s.title, s.owner, s.detail),
+                    step_text(s),
                 )?;
             }
         }
@@ -409,6 +409,7 @@ mod tests {
             body_md: "核对订单后生成发货单".into(),
             steps: vec![
                 FlowStep {
+                    group: None,
                     layout: None,
                     id: "z".into(),
                     title: "核对".into(),
@@ -416,6 +417,7 @@ mod tests {
                     detail: "核对订单".into(),
                 },
                 FlowStep {
+                    group: None,
                     layout: None,
                     id: "a".into(),
                     title: "生成发货单".into(),
@@ -432,6 +434,28 @@ mod tests {
     async fn cleanup(db: Db, dir: std::path::PathBuf) {
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn grouped_step_search_and_citations_include_original_chapter_context() {
+        let (db, dir) = db().await;
+        let mut draft = input();
+        draft.steps[0].group = Some(crate::memos::FlowGroup {
+            id: "source-1".into(),
+            title: "原文发货章节".into(),
+            path: vec!["数量核对阶段".into()],
+        });
+        let ctx = KnowledgeContext::load(&db, QaScope::Current { current: draft })
+            .await
+            .unwrap();
+        let found = ctx.search("原文发货章节", true, 10).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].step_id.as_deref(), Some("z"));
+        assert!(ctx.search("数量核对阶段", true, 10).unwrap()[0]
+            .evidence
+            .contains("数量核对阶段"));
+        let step = ctx.get_flow(None, Some("z")).unwrap();
+        assert_eq!(step.steps[0].group.as_ref().unwrap().title, "原文发货章节");
+        cleanup(db, dir).await;
     }
     #[tokio::test]
     async fn current_draft_search_and_order_are_real() {
@@ -547,6 +571,7 @@ mod citation_tests {
             kind: "flow".into(),
             body_md: "已授权操作".into(),
             steps: vec![FlowStep {
+                group: None,
                 layout: None,
                 id: "s".into(),
                 title: "检查".into(),
@@ -870,6 +895,7 @@ mod review_regressions {
         let mut current = draft("".into());
         current.steps = vec![
             crate::memos::FlowStep {
+                group: None,
                 layout: None,
                 id: "z".into(),
                 title: "核对".into(),
@@ -877,6 +903,7 @@ mod review_regressions {
                 detail: "".into(),
             },
             crate::memos::FlowStep {
+                group: None,
                 layout: None,
                 id: "a".into(),
                 title: "发货".into(),

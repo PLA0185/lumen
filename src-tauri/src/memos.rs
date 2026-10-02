@@ -16,6 +16,17 @@ pub struct FlowStep {
     pub detail: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<FlowStepLayout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<FlowGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FlowGroup {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub path: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +99,7 @@ pub(crate) fn validate(input: &SaveMemoInput) -> AppResult<()> {
         ));
     }
     let mut ids = std::collections::HashSet::new();
+    let mut groups = std::collections::HashMap::new();
     for step in &input.steps {
         if step.id.is_empty() || !ids.insert(&step.id) {
             return Err(AppError::validation("步骤编号不能为空且必须唯一"));
@@ -96,6 +108,25 @@ pub(crate) fn validate(input: &SaveMemoInput) -> AppResult<()> {
         validate_text(&step.title, "步骤标题", 300)?;
         validate_text(&step.owner, "负责人", 100)?;
         validate_text(&step.detail, "步骤说明", 5_000)?;
+        if let Some(group) = &step.group {
+            validate_text(&group.id, "章节编号", 100)?;
+            validate_text(&group.title, "章节标题", 300)?;
+            if group.id.trim().is_empty() || group.title.trim().is_empty() || group.path.len() > 3 {
+                return Err(AppError::validation("章节分组无效"));
+            }
+            for title in &group.path {
+                validate_text(title, "阶段标题", 300)?;
+                if title.trim().is_empty() {
+                    return Err(AppError::validation("阶段标题不能为空"));
+                }
+            }
+            if groups
+                .insert(&group.id, &group.title)
+                .is_some_and(|old| old != &group.title)
+            {
+                return Err(AppError::validation("同一章节编号的标题不一致"));
+            }
+        }
         if let Some(layout) = &step.layout {
             if !layout.width.is_finite()
                 || !(280.0..=2400.0).contains(&layout.width)
@@ -301,6 +332,7 @@ mod tests {
             kind: "flow".into(),
             body_md: "注意核对".into(),
             steps: vec![FlowStep {
+                group: None,
                 layout: None,
                 id: "a".into(),
                 title: "收集资料".into(),

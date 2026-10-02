@@ -440,6 +440,19 @@ async fn real_http_two_databases_preserve_concurrent_memos_assets_and_restore_hi
         .unwrap();
     let mut create = input("流程");
     create.body_md = format!("[附件](lumen-asset:{})", asset.id);
+    create.kind = "flow".into();
+    create.steps = vec![crate::memos::FlowStep {
+        id: "original-small-step".into(),
+        title: "原文小操作".into(),
+        owner: String::new(),
+        detail: create.body_md.clone(),
+        layout: None,
+        group: Some(crate::memos::FlowGroup {
+            id: "source-1".into(),
+            title: "原文章节".into(),
+            path: vec!["原文阶段".into()],
+        }),
+    }];
     let first = memos::save_impl(&a, create).await.unwrap();
     push(&a, &dav, &c, &key).await;
     assert!(download(&b, &dav, &c, &key).await.unwrap());
@@ -454,6 +467,10 @@ async fn real_http_two_databases_preserve_concurrent_memos_assets_and_restore_hi
         content_assets::decode_asset(&content_assets::get_asset(&b, &asset.id).await.unwrap())
             .unwrap(),
         b"actual attached text"
+    );
+    assert_eq!(
+        memos::get_impl(&b, &first.summary.id).await.unwrap().steps[0].group,
+        first.steps[0].group
     );
     let initial_id: String =
         sqlx::query_scalar("SELECT sync_event_id FROM memo_documents WHERE id=?")
@@ -503,6 +520,8 @@ async fn real_http_two_databases_preserve_concurrent_memos_assets_and_restore_hi
         .await
         .unwrap();
     assert_eq!(restored.summary.title, "流程");
+    assert_eq!(restored.steps[0].group, first.steps[0].group);
+    assert_eq!(restored.steps[0].detail, first.steps[0].detail);
     assert_eq!(
         memos::list_impl(&a, "冲突副本", false).await.unwrap().len(),
         2

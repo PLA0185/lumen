@@ -1440,6 +1440,80 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     #[tokio::test]
+    async fn grouped_flow_backup_keeps_original_image_bytes_context_and_history() {
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT INTO task_series_template (series_id,title) VALUES ('s1','template')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let png = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jB9kAAAAASUVORK5CYII=").unwrap();
+        let asset = crate::content_assets::store_bytes(&db, "original.png", png.clone())
+            .await
+            .unwrap();
+        let group = crate::memos::FlowGroup {
+            id: "source-1".into(),
+            title: "原章节".into(),
+            path: vec!["原阶段".into()],
+        };
+        let saved = crate::memos::save_impl(
+            &db,
+            crate::memos::SaveMemoInput {
+                id: None,
+                expected_revision: None,
+                title: "原流程".into(),
+                category: String::new(),
+                kind: "flow".into(),
+                body_md: "原说明".into(),
+                steps: vec![crate::memos::FlowStep {
+                    id: "small-step".into(),
+                    title: "原操作".into(),
+                    owner: String::new(),
+                    detail: format!("说明在图前。\n![原图](lumen-asset:{})\n图1 原注", asset.id),
+                    layout: None,
+                    group: Some(group.clone()),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        let data = build_backup_data(&db).await.unwrap();
+        let file = BackupFile {
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            created_at: now_stamp(),
+            checksum: checksum_of(&data).unwrap(),
+            stats: data.stats(),
+            note: None,
+            data,
+        };
+        let path = dir.join("grouped.lumen-backup.json");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        sqlx::query("DELETE FROM memo_documents")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        let restored = crate::memos::get_impl(&db, &saved.summary.id)
+            .await
+            .unwrap();
+        assert_eq!(restored.steps[0].group, Some(group));
+        assert_eq!(restored.steps[0].detail, saved.steps[0].detail);
+        let image = crate::content_assets::get_asset(&db, &asset.id)
+            .await
+            .unwrap();
+        assert_eq!(image.sha256, asset.sha256);
+        assert_eq!(crate::content_assets::decode_asset(&image).unwrap(), png);
+        let events: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM memo_sync_events WHERE memo_id=?")
+                .bind(&saved.summary.id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert!(events > 0);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
     async fn content_resource_backup_roundtrip_includes_bytes_and_refuses_corruption() {
         let (db, dir) = make_db_with_data().await;
         sqlx::query("INSERT INTO task_series_template (series_id,title) VALUES ('s1','template')")

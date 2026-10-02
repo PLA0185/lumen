@@ -37,6 +37,7 @@ pub mod db;
 pub mod document_import;
 pub mod error;
 pub mod flow_qa;
+mod flow_structure;
 pub mod focus;
 pub mod holiday_calendar;
 pub mod memo_ai;
