@@ -144,6 +144,24 @@ it('原文带章节号时只显示当前序号一次，交换后更新序号但�
   await edit(1)
   expect(document.querySelector<HTMLInputElement>('[aria-label="第 2 步标题"]')?.value).toBe('6. 发票')
 })
+it('章节和阶段作为分组标题，小步骤独立成卡，新增沿用相邻组', async () => {
+  const group = { id: 'shipment', title: '2. 亚马逊发货', path: ['2.2 输入数量'] }
+  await controlled([
+    { ...steps[0]!, group, title: '记录产品型号', detail: '原文操作甲' },
+    { ...steps[1]!, group, title: '核对数量', detail: '原文操作乙' },
+    { ...steps[1]!, id: 'invoice', title: '美国发票', detail: '原文发票', group: { id: 'invoice', title: '6. 发票', path: [] } },
+  ])
+  const headers = [...document.querySelectorAll('.flow-canvas__group')]
+  expect(headers).toHaveLength(2)
+  expect(headers[0]!.textContent).toContain('2. 亚马逊发货')
+  expect(headers[0]!.textContent).toContain('2.2 输入数量')
+  expect(document.querySelectorAll('.flow-canvas__node')).toHaveLength(3)
+  expect(Number.parseFloat((document.querySelector('.flow-canvas__node') as HTMLElement).style.top)).toBeGreaterThanOrEqual(64)
+  await click('第 2 步操作')
+  await click('在后面添加')
+  await click('完成编辑')
+  expect(document.querySelectorAll('.flow-canvas__group')).toHaveLength(2)
+})
 it('卡片直接显示完整 Markdown 和原图，不靠打开详情才能查看', async () => {
   const image: assets.ContentAsset = { id: '00000000-0000-7000-8000-000000000001', name: '操作.png', mime: 'image/png', byteSize: 3, dataBase64: 'YWJj', sha256: '', createdAt: '' }
   vi.spyOn(assets, 'assetGet').mockResolvedValue(image)

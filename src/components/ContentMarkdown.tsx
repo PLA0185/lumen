@@ -5,6 +5,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import { save } from '@tauri-apps/plugin-dialog'
 import { assetId, assetGet, assetExport, contentError, type ContentAsset } from '../lib/content-assets'
 import { ImageViewer } from './ImageViewer'
+import { remarkSourceLines } from '../lib/remark-source-lines'
 import { rehypeNoOrphans } from '../lib/no-orphan'
 import { SafeText } from './SafeText'
 
@@ -72,7 +73,7 @@ const components: Components = {
   img: ({ src, alt, title }) => assetId(src) ? <Asset key={assetId(src)} id={assetId(src)!} image caption={title ?? ''} /> : <span>{alt || '外部图片'}（请粘贴图片本身或拖入文件）</span>,
   a: ({ href, children: label }) => assetId(href) ? <Asset key={assetId(href)} id={assetId(href)!} image={false} /> : <a href={href} target="_blank" rel="noreferrer">{label}</a>,
 }
-export function ContentMarkdown({ children, onRemoveAsset, onExtractAsset, onUpdateImage, onSelectImage, selectedImageId }: { children: string } & AssetActions) {
+export function ContentMarkdown({ children, onRemoveAsset, onExtractAsset, onUpdateImage, onSelectImage, selectedImageId, preserveLines = false }: { children: string; preserveLines?: boolean } & AssetActions) {
   const cache = useRef(new Map<string, CachedAsset>()).current
   useEffect(() => {
     const referenced = new Set([...children.matchAll(/lumen-asset:([0-9a-f-]{36})/gi)].map(match => match[1]))
@@ -85,7 +86,7 @@ export function ContentMarkdown({ children, onRemoveAsset, onExtractAsset, onUpd
     for (const entry of cache.values()) if (entry.loaded?.url) URL.revokeObjectURL(entry.loaded.url)
     cache.clear()
   }, [cache])
-  return <AssetCacheContext.Provider value={cache}><AssetActionsContext.Provider value={{ onRemoveAsset, onExtractAsset, onUpdateImage, onSelectImage, selectedImageId }}><Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeSanitize, schema], rehypeNoOrphans]}
+  return <AssetCacheContext.Provider value={cache}><AssetActionsContext.Provider value={{ onRemoveAsset, onExtractAsset, onUpdateImage, onSelectImage, selectedImageId }}><Markdown remarkPlugins={preserveLines ? [remarkGfm, remarkSourceLines] : [remarkGfm]} rehypePlugins={[[rehypeSanitize, schema], rehypeNoOrphans]}
     urlTransform={(url) => assetId(url) ? url : defaultUrlTransform(url)}
     components={components}>{children}</Markdown></AssetActionsContext.Provider></AssetCacheContext.Provider>
 }

@@ -8,6 +8,7 @@ export interface FlowStep {
   owner: string
   detail: string
   layout?: { width: number; minHeight: number; x?: number; y?: number }
+  group?: { id: string; title: string; path: string[] }
 }
 export interface MemoSummary {
   id: string
@@ -74,11 +75,13 @@ export function flowStepDisplayTitle(title: string): string {
   return title.replace(/^\s*\d+[.、．]\s*(?=[^\d\s])/, '').trim() || '未命名步骤'
 }
 export function memoMarkdown(doc: SaveMemoInput): string {
-  const steps = doc.steps
-    .map(
-      (step, i) =>
-        `### ${i + 1}. ${flowStepDisplayTitle(step.title)}\n\n${step.owner ? `负责人：${step.owner}\n\n` : ''}${step.detail}`,
-    )
-    .join('\n\n↓\n\n')
+  const steps = doc.steps.map((step, i) => {
+    const group = step.group, previous = doc.steps[i - 1]?.group
+    const rootChanged = !!group && group.id !== previous?.id
+    const pathChanged = !!group && (rootChanged || JSON.stringify(group.path) !== JSON.stringify(previous?.path))
+    const headings = [rootChanged ? `### ${group.title}\n\n` : '', pathChanged ? group.path.map((title, level) => `${'#'.repeat(4 + level)} ${title}\n\n`).join('') : ''].join('')
+    const level = group ? Math.min(6, 4 + group.path.length) : 3
+    return `${headings}${'#'.repeat(level)} ${i + 1}. ${flowStepDisplayTitle(step.title)}\n\n${step.owner ? `负责人：${step.owner}\n\n` : ''}${step.detail}`
+  }).join('\n\n↓\n\n')
   return `# ${doc.title}\n\n${doc.category ? `分类：${doc.category}\n\n` : ''}${doc.bodyMd}${steps ? `\n\n## 流程步骤\n\n${steps}` : ''}`
 }

@@ -11,7 +11,7 @@ import { flowLayout, autoArrange, edgePath, NODE_HEIGHT as HEIGHT, MIN_WIDTH, MA
 
 function plain(text: string) { return text.replace(/!?\[([^\]]*)\]\(lumen-asset:[^)]+\)/g, '$1').replace(/[#*_`]/g, '') }
 function match(step: FlowStep, query: string, exact: boolean) {
-  const text = `${step.title}\n${step.owner}\n${plain(step.detail)}`.toLocaleLowerCase()
+  const text = `${step.group?.title ?? ''}\n${step.group?.path.join('\n') ?? ''}\n${step.title}\n${step.owner}\n${plain(step.detail)}`.toLocaleLowerCase()
   const needle = query.trim().toLocaleLowerCase()
   if (exact) return text.includes(needle)
   return needle.split(/\s+/).every(token => {
@@ -203,7 +203,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
   function add(index = steps.length) {
     if (disabled || readOnly || steps.length >= 100) return
     const id = crypto.randomUUID(), next = [...steps]
-    next.splice(index, 0, { id, title: '', owner: '', detail: '' })
+    next.splice(index, 0, { id, title: '', owner: '', detail: '', ...(steps[index - 1]?.group ?? steps[index]?.group ? { group: steps[index - 1]?.group ?? steps[index]?.group } : {}) })
     pendingFocus.current = id; onChange(autoArrange(next)); setSelectedId(id); setEditingId(id); setInfoOpen(false); closeMenu()
   }
   function reorder(target: number, swap = false) {
@@ -267,7 +267,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
       </div>
       {!readOnly && <button className="btn btn--primary btn--sm" disabled={disabled || steps.length >= 100} onClick={() => add()}>添加步骤</button>}
     </div>
-    <p className="setgroup__hint flow-canvas__hint">中键拖动平移 · 滚轮缩放 · 双击卡片编辑 · 点击序号调整顺序</p>
+    <p className="setgroup__hint flow-canvas__hint">{readOnly ? '中键拖动平移 · 滚轮缩放 · 顶部导航定位步骤' : '中键拖动平移 · 滚轮缩放 · 双击卡片编辑 · 点击序号调整顺序'}</p>
     <div ref={viewport} className={`flow-canvas__viewport${space || panning ? ' flow-canvas__viewport--pan' : ''}`} aria-label="流程画布" tabIndex={0}
       onPointerEnter={e => { pointerInside.current = !isInput(e.target); syncNative() }} onPointerLeave={() => { pointerInside.current = false; syncNative() }}
       onPointerDown={e => {
@@ -282,6 +282,9 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
         setView(v => ({ ...v, x: start.originX + e.clientX - start.x, y: start.originY + e.clientY - start.y }))
       }} onPointerUp={e => { if (drag.current?.id === e.pointerId) { drag.current = null; setPanning(false); viewport.current?.releasePointerCapture(e.pointerId) } }} onPointerCancel={() => { drag.current = null; setSpace(false); setPanning(false) }} onLostPointerCapture={() => { drag.current = null; setPanning(false) }} onAuxClick={e => { if (e.button === 1) e.preventDefault() }}>
       <div className="flow-canvas__scene" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
+        {scene.headers.map(header => <header key={`${header.group.id}-${header.index}`} className="flow-canvas__group" aria-label={`章节分组：${header.group.title}`} style={{ left: header.x, top: header.y, width: header.width, height: header.height }}>
+          <strong><SafeText>{header.group.title}</SafeText></strong>{header.group.path.length > 0 && <span><SafeText>{header.group.path.join(' › ')}</SafeText></span>}
+        </header>)}
         <svg className="flow-canvas__edges" aria-hidden="true" style={{ left: scene.bounds.left, top: scene.bounds.top }} width={scene.bounds.width} height={scene.bounds.height} viewBox={`${scene.bounds.left} ${scene.bounds.top} ${scene.bounds.width} ${scene.bounds.height}`}>
           <defs><marker id={marker} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
           {steps.slice(1).map((s, i) => {
@@ -305,7 +308,7 @@ export function FlowCanvas({ steps, source, onChange, disabled = false, readOnly
             <label>负责人（可留空）<input className="input selectable" aria-label={`第 ${i + 1} 步负责人`} maxLength={100} value={s.owner} onChange={e => patch(s.id, { owner: e.target.value })} /></label>
             <label>操作说明<ContentEditor key={s.id} extractFiles className="input selectable" aria-label={`第 ${i + 1} 步说明`} maxLength={5000} value={s.detail} disabled={disabled} onChange={e => patch(s.id, { detail: e.target.value })} /></label>
             <FlowImagePicker source={source} detail={s.detail} step={i + 1} onChange={detail => patch(s.id, { detail })} />
-          </fieldset> : <><h3 className="flow-canvas__title"><SafeText>{flowStepDisplayTitle(s.title)}</SafeText></h3>{s.owner && <p className="memos__owner"><SafeText>{`负责人：${s.owner}`}</SafeText></p>}{s.detail ? <div className="flow-canvas__body"><ContentMarkdown onUpdateImage={readOnly || disabled ? undefined : (id, replacement) => updateImage(s.id, id, replacement)}>{s.detail}</ContentMarkdown></div> : <p className="flow-canvas__summary">双击补充操作说明</p>}</>}
+          </fieldset> : <><h3 className="flow-canvas__title"><SafeText>{flowStepDisplayTitle(s.title)}</SafeText></h3>{s.owner && <p className="memos__owner"><SafeText>{`负责人：${s.owner}`}</SafeText></p>}{s.detail ? <div className="flow-canvas__body"><ContentMarkdown preserveLines onUpdateImage={readOnly || disabled ? undefined : (id, replacement) => updateImage(s.id, id, replacement)}>{s.detail}</ContentMarkdown></div> : <p className="flow-canvas__summary">双击补充操作说明</p>}</>}
           </div>{!readOnly && <button type="button" className="flow-canvas__resize-handle" aria-label={`调整第 ${i + 1} 步卡片大小`} title="拖动调整卡片大小" disabled={disabled} onPointerDown={e => startManipulation(e, s.id, 'resize')} onPointerMove={changeManipulation} onPointerUp={e => finishManipulation(e)} onPointerCancel={e => finishManipulation(e, true)} onLostPointerCapture={e => finishManipulation(e, true)}>⌟</button>}</article> })}
         {!steps.length && <p className="flow-canvas__empty">还没有步骤，点击「添加步骤」开始。</p>}
       </div>

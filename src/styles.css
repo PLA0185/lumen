@@ -4597,6 +4597,9 @@ body {
 .flow-canvas .flow-canvas__node { position: absolute; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-content: start; gap: 10px; margin: 0; padding: 16px; border: 1px solid var(--c-border); border-left: 3px solid var(--c-accent); text-align: left; color: var(--c-text); cursor: pointer; box-shadow: 0 3px 10px #0002; }
 .flow-canvas .flow-canvas__node::after { display: none; }
 .flow-canvas__node > div { min-width: 0; }
+.flow-canvas__group { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 4px; color: var(--c-text); padding: 0 8px; border-bottom: 2px solid var(--c-accent); box-sizing: border-box; }
+.flow-canvas__group > strong, .flow-canvas__group > span { white-space: nowrap; overflow-x: auto; scrollbar-width: thin; line-height: 1.4; }
+.flow-canvas__group > span { color: var(--c-text-2); font-size: .85em; }
 .flow-canvas__move-handle { position: absolute; right: 6px; top: 4px; border: none; background: transparent; color: var(--c-text-3); font-size: 22px; cursor: grab; touch-action: none; }
 .flow-canvas__resize-handle { position: absolute; bottom: 0; right: 0; width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: var(--c-text-3); font-size: 22px; cursor: nwse-resize; touch-action: none; }
 .flow-canvas__move-handle:hover, .flow-canvas__resize-handle:hover { color: var(--c-accent); background: var(--c-surface); }
@@ -4707,3 +4710,10 @@ body {
 .sync-dialog::backdrop { background: #0008; }
 .sync-dialog fieldset { border: 0; padding: 0; margin: 18px 0; min-width: 0; }
 .sync-dialog__actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+
+.flow-restructure-dialog { width: min(96vw, 1500px); max-width: 96vw; background: var(--c-surface); color: var(--c-text); border: 1px solid var(--c-border); border-radius: 12px; }
+.flow-restructure-dialog .flow-canvas { height: auto; }
+.flow-restructure-dialog .flow-canvas__viewport { height: clamp(260px, 45vh, 650px); }
+.flow-restructure-dialog footer { display: flex; justify-content: flex-end; gap: 12px; padding-top: 12px; }
+
+.flow-restructure-dialog::backdrop { background: #0008; }

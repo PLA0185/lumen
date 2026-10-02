@@ -103,3 +103,16 @@ it('箭头真实记录位置，撤销重做及收起后草稿保留；保存失�
   expect(document.querySelector('.image-viewer__overlay polyline')).not.toBeNull()
   expect(document.querySelector('[aria-label="图片查看与批注"]')).not.toBeNull()
 })
+
+it('流程原文换行让图片及图注按上下顺序显示，代码和表格不改写', async () => {
+  vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  const source = '点击原入口。\n![原图](lumen-asset:' + asset.id + ')\n图1 原入口\n\n```text\n甲\n乙\n```\n\n| A | B |\n| - | - |\n| 甲 | 乙 |'
+  await act(async () => root!.render(<ContentMarkdown preserveLines>{source}</ContentMarkdown>))
+  const p = host.querySelector('p')!
+  expect(p.querySelectorAll('br')).toHaveLength(2)
+  expect(p.textContent).toContain('点击原入口。')
+  expect(p.textContent).toContain('图1 原入口')
+  expect(host.querySelector('pre code')!.textContent).toBe('甲\n乙\n')
+  expect(host.querySelector('table')).not.toBeNull()
+})

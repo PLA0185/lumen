@@ -9,6 +9,7 @@ import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import { Icon } from './Icons'
 import { CloudHistory } from './CloudHistory'
 import { AiFlowDialog } from './AiFlowDialog'
+import { FlowRestructureDialog } from './FlowRestructureDialog'
 import { FlowImagePicker } from './FlowImagePicker'
 import { contentImages } from '../lib/content-assets'
 import { FlowCanvas } from './FlowCanvas'
@@ -48,6 +49,7 @@ export function MemosView({
   const [autoSaving, setAutoSaving] = useState(false)
   const [historyId, setHistoryId] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
+  const [restructuring, setRestructuring] = useState<memo.SaveMemoInput | null>(null)
   const [aiDraft, setAiDraft] = useState(false)
   const [flowView, setFlowView] = useState<'canvas' | 'list'>('canvas')
   const [canvasSession, setCanvasSession] = useState(0)
@@ -88,7 +90,7 @@ export function MemosView({
     const timer = setTimeout(() => void reload(), 250)
     const off = onDataChanged(['memos'], () => {
       void reload()
-      if (selected && !editing && !busy) {
+      if (selected && !editing && !busy && !restructuring) {
         void runLatestRequest(detailGate, () => memo.memoGet(selected.id), {
           apply: doc => { setSelected(doc); setDraft(draftOf(doc)) },
           reject: e => setError(errorText(e)),
@@ -100,7 +102,7 @@ export function MemosView({
       listGate.invalidate()
       off()
     }
-  }, [reload, listGate, selected, editing, busy, detailGate])
+  }, [reload, listGate, selected, editing, busy, detailGate, restructuring])
   useEffect(() => {
     onDirtyChange?.(dirty || busy || autoSaving)
   }, [dirty, busy, autoSaving, onDirtyChange])
@@ -205,10 +207,23 @@ export function MemosView({
     }
   }, [draft, busy, reload, aiDraft])
   useEffect(() => {
-    if (!editing || !dirty || busy || autoSaving || error || aiOpen || aiDraft || !draft?.title.trim()) return
+    if (!editing || !dirty || busy || autoSaving || error || aiOpen || restructuring || aiDraft || !draft?.title.trim()) return
     const timer = setTimeout(() => void save(true), 1000)
     return () => clearTimeout(timer)
-  }, [editing, dirty, busy, autoSaving, error, draft, save, aiOpen, aiDraft])
+  }, [editing, dirty, busy, autoSaving, error, draft, save, aiOpen, aiDraft, restructuring])
+  const applyRestructure = async (steps: memo.FlowStep[]) => {
+    if (!restructuring || saving.current) throw new Error('当前流程正在保存，请稍后重试')
+    if (JSON.stringify(latestDraft.current) !== JSON.stringify(restructuring)) throw new Error('当前流程内容已变化，请取消后重新生成细分预览，当前输入已保留')
+    const token = detailGate.begin()
+    saving.current = true; setBusy(true)
+    try {
+      const doc = await memo.memoSave({ ...restructuring, steps })
+      if (!detailGate.isCurrent(token)) throw new Error('流程已切换，请重新打开查看保存结果')
+      setSelected(doc); setDraft(draftOf(doc)); setRestructuring(null); setEditing(false); setAiDraft(false)
+      setCanvasSession(n => n + 1); setNotice('细分已保存为新版本，可从历史版本恢复'); setError(null)
+      await reload()
+    } finally { saving.current = false; setBusy(false) }
+  }
   const removeOrRestore = async () => {
     if (!selected || !canLeave()) return
     const deleted = !selected.deletedAt
@@ -425,6 +440,7 @@ export function MemosView({
                 {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
                 {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
                 {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
+                {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
                   (editing ? (
@@ -638,6 +654,7 @@ export function MemosView({
         </article>
       </div>
       {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
+      {restructuring && <FlowRestructureDialog original={restructuring} onClose={() => setRestructuring(null)} onApply={applyRestructure} />}
       {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setCanvasSession(n => n + 1); setFlowView('canvas'); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}
     </section>
   )
