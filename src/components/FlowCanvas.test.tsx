@@ -23,6 +23,87 @@ async function input(label: string, text: string) {
   const el = document.querySelector(`[aria-label="${label}"]`) as HTMLInputElement
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, text); el.dispatchEvent(new Event('input', { bubbles: true })) })
 }
+it('超过三步仍从左到右排列，打开时保持可阅读的原始比例', async () => {
+  await mount()
+  await act(async () => root!.render(<FlowCanvas steps={Array.from({ length: 5 }, (_, i) => ({ ...steps[0]!, id: String(i) }))} source="" onChange={() => {}} />))
+  const nodes = [...document.querySelectorAll<HTMLElement>('.flow-canvas__node')]
+  expect(nodes.every(node => node.style.top === nodes[0]!.style.top)).toBe(true)
+  expect(nodes.every((node, i) => i === 0 || Number.parseFloat(node.style.left) > Number.parseFloat(nodes[i - 1]!.style.left))).toBe(true)
+  expect(document.querySelector('[aria-label="画布缩放比例"]')!.textContent).toBe('100%')
+})
+it('顶部导航显示节点标题，点击直接定位且不强制展开编辑面板', async () => {
+  await mount()
+  const navigation = document.querySelector('[aria-label="流程节点导航"]')!
+  const destination = navigation?.querySelector<HTMLButtonElement>('[aria-label="定位第 2 步：通知仓库"]')
+  expect(destination).toBeTruthy()
+  await act(async () => destination!.click())
+  expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.textContent).toContain('通知仓库')
+  expect(destination!.getAttribute('aria-current')).toBe('step')
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+})
+it('卡片直接显示完整 Markdown 和原图，不靠打开详情才能查看', async () => {
+  const image: assets.ContentAsset = { id: '00000000-0000-7000-8000-000000000001', name: '操作.png', mime: 'image/png', byteSize: 3, dataBase64: 'YWJj', sha256: '', createdAt: '' }
+  vi.spyOn(assets, 'assetGet').mockResolvedValue(image)
+  await mount()
+  await act(async () => root!.render(<FlowCanvas steps={[{ ...steps[0]!, detail: `第一段完整说明\n\n**最后一段不能省略**\n\n${assets.assetMarkdown(image)}` }]} source="" onChange={() => {}} />))
+  const node = document.querySelector<HTMLElement>('.flow-canvas__node')!
+  expect(node.querySelector('strong')?.textContent).toBe('最后一段不能省略')
+  expect(node.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
+  expect(node.querySelector('img')?.getAttribute('alt')).toBe('操作.png')
+  expect(node.style.height).toBe('')
+  expect(node.querySelector('button button')).toBeNull()
+  expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
+})
+it('纵向顺排在同一列从上往下，卡片之间留间隔，不左右折返', async () => {
+  await mount()
+  await act(async () => root!.render(<FlowCanvas steps={Array.from({ length: 5 }, (_, i) => ({ ...steps[0]!, id: String(i) }))} source="" onChange={() => {}} />))
+  const direction = document.querySelector<HTMLSelectElement>('[aria-label="流程排列方向"]')!
+  await act(async () => { direction.value = 'vertical'; direction.dispatchEvent(new Event('change', { bubbles: true })) })
+  const nodes = [...document.querySelectorAll<HTMLElement>('.flow-canvas__node')]
+  expect(nodes.every(node => node.style.left === '0px')).toBe(true)
+  expect(nodes.every((node, i) => i === 0 || Number.parseFloat(node.style.top) - Number.parseFloat(nodes[i - 1]!.style.top) >= 148 + 96)).toBe(true)
+  await act(async () => (document.querySelector('.flow-canvas__nav-step:nth-child(4)') as HTMLButtonElement).click())
+  const [, , y, scale] = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec((document.querySelector('.flow-canvas__scene') as HTMLElement).style.transform)!
+  const top = Number(y) + Number.parseFloat(nodes[3]!.style.top) * Number(scale)
+  expect(top).toBeGreaterThanOrEqual(32)
+  expect(top + 148 * Number(scale)).toBeLessThanOrEqual(488)
+})
+it('鼠标中键直接拖动画布，释放和失焦后停止', async () => {
+  const viewport = await mount()
+  viewport.setPointerCapture = vi.fn()
+  viewport.releasePointerCapture = vi.fn()
+  const scene = document.querySelector<HTMLElement>('.flow-canvas__scene')!
+  const before = scene.style.transform
+  await act(async () => viewport.dispatchEvent(new PointerEvent('pointerdown', { button: 1, pointerId: 7, clientX: 100, clientY: 100, bubbles: true, cancelable: true })))
+  await act(async () => viewport.dispatchEvent(new PointerEvent('pointermove', { button: 1, buttons: 4, pointerId: 7, clientX: 180, clientY: 150, bubbles: true })))
+  expect(scene.style.transform).not.toBe(before)
+  await act(async () => viewport.dispatchEvent(new PointerEvent('pointerup', { button: 1, pointerId: 7, bubbles: true })))
+  const released = scene.style.transform
+  await act(async () => viewport.dispatchEvent(new PointerEvent('pointermove', { pointerId: 7, clientX: 220, clientY: 170, bubbles: true })))
+  expect(scene.style.transform).toBe(released)
+  expect(viewport.classList.contains('flow-canvas__viewport--pan')).toBe(false)
+})
+it('查看步骤只显示所选步骤，不重复整份流程的背景与材料', async () => {
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<FlowCanvas steps={steps} source="" metadata={<h2>整份流程背景与材料</h2>} onChange={() => {}} />))
+  await act(async () => (document.querySelectorAll('.flow-canvas__node')[1] as HTMLButtonElement).click())
+  const inspector = document.querySelector('[aria-label="第 2 步详情"]')!
+  expect(inspector.textContent).not.toContain('整份流程背景与材料')
+  expect(inspector.querySelector('[aria-label="第 2 步标题"]')).not.toBeNull()
+  expect(inspector.querySelector('[aria-label="第 1 步标题"]')).toBeNull()
+})
+it('流程信息入口单独展示整体说明，切回步骤后整体说明隐藏', async () => {
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<FlowCanvas steps={steps} source="" metadata={<h2>整份流程背景与材料</h2>} onChange={() => {}} />))
+  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLButtonElement).click())
+  const info = Array.from(document.querySelectorAll('button')).find(button => button.textContent === '流程信息')!
+  await act(async () => info.click())
+  expect(document.querySelector('[aria-label="流程信息"]')?.textContent).toContain('整份流程背景与材料')
+  expect(document.querySelector('.flow-canvas__inspector [aria-label="第 1 步标题"]')).toBeNull()
+  await act(async () => (document.querySelectorAll('.flow-canvas__node')[1] as HTMLButtonElement).click())
+  expect(document.querySelector('.flow-canvas__inspector')?.textContent).not.toContain('整份流程背景与材料')
+  expect(document.querySelector('[aria-label="第 2 步标题"]')).not.toBeNull()
+})
 it('精准搜索保持连续文本匹配，模糊搜索允许分散关键词，结果定位步骤', async () => {
   await mount(); await input('搜索流程步骤', 'ERP 数量')
   expect(document.querySelectorAll('.flow-canvas__node--match')).toHaveLength(1)
@@ -33,19 +114,20 @@ it('精准搜索保持连续文本匹配，模糊搜索允许分散关键词，�
   await act(async () => (document.querySelector('[aria-label="下一个搜索结果"]') as HTMLButtonElement).click())
   expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.textContent).toContain('通知仓库')
 })
-it('普通滚轮不缩放，Alt 滚轮缩放并保持鼠标指向的位置', async () => {
+it('普通滚轮直接缩放并保持鼠标指向的位置，详情输入滚轮不缩放画布', async () => {
   const viewport = await mount()
   vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON() {} })
   const scene = () => document.querySelector('.flow-canvas__scene') as HTMLElement
   const before = scene().style.transform
-  await act(async () => viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, clientX: 200, clientY: 150, bubbles: true, cancelable: true })))
-  expect(scene().style.transform).toBe(before)
-  const event = new WheelEvent('wheel', { deltaY: -120, clientX: 200, clientY: 150, altKey: true, bubbles: true, cancelable: true })
-  Object.defineProperties(event, { altKey: { value: true }, clientX: { value: 200 }, clientY: { value: 150 } })
+  const event = new WheelEvent('wheel', { deltaY: -120, clientX: 200, clientY: 150, bubbles: true, cancelable: true })
   await act(async () => viewport.dispatchEvent(event))
   expect(scene().style.transform).not.toBe(before)
   expect(event.defaultPrevented).toBe(true)
   expect(document.querySelector('[aria-label="画布缩放比例"]')?.textContent).not.toBe('100%')
+  await act(async () => (document.querySelector('.flow-canvas__node') as HTMLElement).click())
+  const edited = scene().style.transform
+  await act(async () => document.querySelector('[aria-label="第 1 步说明"]')!.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, bubbles: true, cancelable: true })))
+  expect(scene().style.transform).toBe(edited)
 })
 it('空格在编辑输入中正常打字，画布拖动模式在松键与失焦后停止', async () => {
   const viewport = await mount()
@@ -86,9 +168,11 @@ it('一百步的查看全图包含首尾卡片', async () => {
   await act(async () => root!.render(<FlowCanvas steps={Array.from({ length: 100 }, (_, i) => ({ ...steps[0]!, id: String(i) }))} source="" onChange={() => {}} />))
   await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent === '查看全图')!.click())
   const transform = (document.querySelector('.flow-canvas__scene') as HTMLElement).style.transform
-  const [, , y, scale] = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(transform)!
+  const [, x, y, scale] = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(transform)!
   expect(Number(y)).toBeGreaterThanOrEqual(0)
-  expect(Number(y) + (33 * 212 + 148) * Number(scale)).toBeLessThanOrEqual(500)
+  expect(Number(y) + 148 * Number(scale)).toBeLessThanOrEqual(500)
+  const last = document.querySelectorAll<HTMLElement>('.flow-canvas__node')[99]!
+  expect(Number(x) + (Number.parseFloat(last.style.left) + Number.parseFloat(last.style.width)) * Number(scale)).toBeLessThanOrEqual(768)
 })
 it('全屏查看全图避开顶栏、底栏和打开但未选步骤的信息面板', async () => {
   const viewport = await mount()
@@ -107,8 +191,9 @@ it('全屏查看全图避开顶栏、底栏和打开但未选步骤的信息面�
   const transform = (document.querySelector('.flow-canvas__scene') as HTMLElement).style.transform
   const [, x, y, scale] = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(transform)!
   expect(Number(y)).toBeGreaterThanOrEqual(112)
-  expect(Number(y) + (33 * 212 + 148) * Number(scale)).toBeLessThanOrEqual(364)
-  expect(Number(x) + 884 * Number(scale)).toBeLessThanOrEqual(420)
+  expect(Number(y) + 148 * Number(scale)).toBeLessThanOrEqual(364)
+  const last = document.querySelectorAll<HTMLElement>('.flow-canvas__node')[99]!
+  expect(Number(x) + (Number.parseFloat(last.style.left) + Number.parseFloat(last.style.width)) * Number(scale)).toBeLessThanOrEqual(420)
 })
 it('鼠标回到画布后，空格不激活仍有焦点的工具栏按钮', async () => {
   const viewport = await mount()
