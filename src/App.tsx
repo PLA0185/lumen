@@ -480,37 +480,7 @@ export default function App() {
           </div>
 
           <div className="topbar__actions">
-            <div className="search">
-              <span className="search__icon" aria-hidden="true">
-                <Icon name="search" size={15} />
-              </span>
-              <input
-                className="search__input selectable"
-                type="search"
-                value={view === 'memos' ? memoSearch : search}
-                placeholder={view === 'memos' ? '搜索备忘、分类、流程步骤和负责人' : '搜索标题、描述、备注、项目、标签'}
-                aria-label={view === 'memos' ? '搜索备忘与流程' : '搜索任务'}
-                onChange={(e) => view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && view !== 'memos') void reload()
-                }}
-              />
-              {(view === 'memos' ? memoSearch : search) && (
-                <button
-                  type="button"
-                  className="search__clear"
-                  aria-label="清除搜索"
-                  onClick={() => {
-                    if (view === 'memos') { setMemoSearch(''); return }
-                    setSearch('')
-                    void reload()
-                  }}
-                >
-                  <Icon name="close" size={14} />
-                </button>
-              )}
-            </div>
-
+            <div className="topbar__controls">
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>
             <CloudSyncButton />
@@ -560,6 +530,66 @@ export default function App() {
               <option value="title:asc">按标题</option>
             </select>
 
+            {/*
+              「取消导出」必须是**兄弟节点**而不是套在导出按钮里：
+              button 里再放 button 是非法 HTML，浏览器会把它拆出来。
+              点了只置标志位，真正的停下发生在下一行/下一页之前（收口任务书 §20）。
+            */}
+            {exporting && (
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => {
+                  cancelExportRef.current = true
+                }}
+                title="停止继续读取数据；已经生成的部分会被丢弃，不会写出文件"
+              >
+                取消导出
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn--primary btn--sm"
+              onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
+              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant'}
+              title="新建任务（Ctrl+N）"
+            >
+              <Icon name="plus" size={15} /> 新建
+            </button>
+            </>}
+            </div>
+            <div className="topbar__end">
+            <div className="search">
+              <span className="search__icon" aria-hidden="true">
+                <Icon name="search" size={15} />
+              </span>
+              <input
+                className="search__input selectable"
+                type="search"
+                value={view === 'memos' ? memoSearch : search}
+                placeholder={view === 'memos' ? '搜索备忘、分类、流程步骤和负责人' : '搜索标题、描述、备注、项目、标签'}
+                aria-label={view === 'memos' ? '搜索备忘与流程' : '搜索任务'}
+                onChange={(e) => view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && view !== 'memos') void reload()
+                }}
+              />
+              {(view === 'memos' ? memoSearch : search) && (
+                <button
+                  type="button"
+                  className="search__clear"
+                  aria-label="清除搜索"
+                  onClick={() => {
+                    if (view === 'memos') { setMemoSearch(''); return }
+                    setSearch('')
+                    void reload()
+                  }}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              )}
+            </div>
+            {view !== 'memos' && <>
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -578,34 +608,8 @@ export default function App() {
               )}
             </button>
 
-            {/*
-              「取消导出」必须是**兄弟节点**而不是套在上面的按钮里：
-              button 里再放 button 是非法 HTML，浏览器会把它拆出来。
-              点了只置标志位，真正的停下发生在下一行/下一页之前（收口任务书 §20）。
-            */}
-            {exporting && (
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => {
-                  cancelExportRef.current = true
-                }}
-                title="停止继续读取数据；已经生成的部分会被丢弃，不会写出文件"
-              >
-                取消导出
-              </button>
-            )}
-
-            <button
-              type="button"
-              className="btn btn--primary btn--sm"
-              onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
-              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant'}
-              title="新建任务（Ctrl+N）"
-            >
-              <Icon name="plus" size={15} /> 新建
-            </button>
             </>}
+            </div>
           </div>
         </header>
 

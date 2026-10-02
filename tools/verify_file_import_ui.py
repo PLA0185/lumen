@@ -116,7 +116,10 @@ try:
     click('AI 生成流程')
     import_file('.ai-flow-dialog .content-editor', 'orders.docx', '先核对订单', recognize=False)
     click('生成流程草稿')
+    assert t.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0', timeout=30)
+    click('流程信息')
     assert t.wait_for('document.querySelector(`[aria-label="备忘标题"]`)?.value==="隔离验收：文件生成流程"', timeout=30)
+    ui.real_click(t, '.flow-canvas__node .flow-canvas__title')
     assert t.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0')
     parts = requests[0]['messages'][-1]['content']
     assert len(requests) == 1
