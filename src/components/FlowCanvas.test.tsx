@@ -127,6 +127,23 @@ it('顶部导航显示节点标题，点击直接定位且不强制展开编辑�
   expect(destination!.getAttribute('aria-current')).toBe('step')
   expect(document.querySelector('.flow-canvas__inspector')).toBeNull()
 })
+it('原文带章节号时只显示当前序号一次，交换后更新序号但不改原文标题', async () => {
+  await controlled([
+    { ...steps[0]!, title: '6. 发票' },
+    { ...steps[1]!, title: '2、通知仓库' },
+  ])
+  const labels = () => [...document.querySelectorAll('.flow-canvas__nav-label')].map(n => n.textContent)
+  expect(labels()).toEqual(['1 · 发票', '2 · 通知仓库'])
+  expect(document.querySelector('.flow-canvas__title')?.textContent).toBe('发票')
+  expect(document.querySelector('[aria-label="定位第 1 步：发票"]')).not.toBeNull()
+  await click('第 1 步操作')
+  expect([...document.querySelectorAll('[aria-label="移动目标位置"] option')].map(n => n.textContent)).toEqual(['第 1 步 · 发票', '第 2 步 · 通知仓库'])
+  expect(document.querySelector('[aria-label="交换目标步骤"] option')?.textContent).toBe('第 2 步 · 通知仓库')
+  await click('交换位置')
+  expect(labels()).toEqual(['1 · 通知仓库', '2 · 发票'])
+  await edit(1)
+  expect(document.querySelector<HTMLInputElement>('[aria-label="第 2 步标题"]')?.value).toBe('6. 发票')
+})
 it('卡片直接显示完整 Markdown 和原图，不靠打开详情才能查看', async () => {
   const image: assets.ContentAsset = { id: '00000000-0000-7000-8000-000000000001', name: '操作.png', mime: 'image/png', byteSize: 3, dataBase64: 'YWJj', sha256: '', createdAt: '' }
   vi.spyOn(assets, 'assetGet').mockResolvedValue(image)

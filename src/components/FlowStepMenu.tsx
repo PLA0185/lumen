@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { FlowStep } from '../lib/memos-ipc'
+import { flowStepDisplayTitle, type FlowStep } from '../lib/memos-ipc'
 
 export function FlowStepMenu({ steps, id, anchor, disabled, onClose, onMove, onSwap, onAdd, onDelete }: {
   steps: FlowStep[]; id: string; anchor: HTMLButtonElement; disabled: boolean
@@ -37,9 +37,9 @@ export function FlowStepMenu({ steps, id, anchor, disabled, onClose, onMove, onS
     <div className="flow-canvas__inspector-head"><strong>第 {index + 1} 步</strong><button type="button" className="btn btn--quiet btn--sm" aria-label="关闭步骤菜单" onClick={onClose}>关闭</button></div>
     <fieldset disabled={disabled}>
       <div className="memos__step-actions"><button className="btn btn--ghost btn--sm" disabled={index === 0} onClick={() => onMove(index - 1)}>上移</button><button className="btn btn--ghost btn--sm" disabled={index === steps.length - 1} onClick={() => onMove(index + 1)}>下移</button></div>
-      <label>移动到<select className="input" aria-label="移动目标位置" value={destination} onChange={e => setDestination(Number(e.target.value))}>{steps.map((s, i) => <option key={s.id} value={i}>第 {i + 1} 步 · {s.title || '未命名步骤'}</option>)}</select></label>
+      <label>移动到<select className="input" aria-label="移动目标位置" value={destination} onChange={e => setDestination(Number(e.target.value))}>{steps.map((s, i) => <option key={s.id} value={i}>第 {i + 1} 步 · {flowStepDisplayTitle(s.title)}</option>)}</select></label>
       <button className="btn btn--ghost btn--sm" disabled={destination === index || destination >= steps.length} onClick={() => onMove(destination)}>移动到此位置</button>
-      <label>与另一节点交换<select className="input" aria-label="交换目标步骤" value={swapId} onChange={e => setSwapId(e.target.value)}>{steps.filter(s => s.id !== id).map(s => <option key={s.id} value={s.id}>第 {steps.indexOf(s) + 1} 步 · {s.title || '未命名步骤'}</option>)}</select></label>
+      <label>与另一节点交换<select className="input" aria-label="交换目标步骤" value={swapId} onChange={e => setSwapId(e.target.value)}>{steps.filter(s => s.id !== id).map(s => <option key={s.id} value={s.id}>第 {steps.indexOf(s) + 1} 步 · {flowStepDisplayTitle(s.title)}</option>)}</select></label>
       <button className="btn btn--ghost btn--sm" disabled={!swapId || !steps.some(s => s.id === swapId && s.id !== id)} onClick={() => onSwap(swapId)}>交换位置</button>
       <div className="memos__step-actions"><button className="btn btn--ghost btn--sm" disabled={steps.length >= 100} onClick={() => onAdd(index)}>在前面添加</button><button className="btn btn--ghost btn--sm" disabled={steps.length >= 100} onClick={() => onAdd(index + 1)}>在后面添加</button></div>
       {deleting ? <div className="flow-step-menu__delete"><p>删除此步骤？原图片文件会保留。</p><button className="btn btn--ghost btn--sm" onClick={onDelete}>确认删除此步骤</button><button className="btn btn--quiet btn--sm" onClick={() => setDeleting(false)}>取消删除</button></div> : <button className="btn btn--ghost btn--sm" onClick={() => setDeleting(true)}>删除步骤</button>}

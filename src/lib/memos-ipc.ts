@@ -68,11 +68,16 @@ export const memoSetDeleted = (
   revision: number,
   deleted: boolean,
 ) => call<MemoDocument>('memo_set_deleted', { id, revision, deleted })
+// UI/order numbering is separate from the immutable source heading. Leave
+// decimal/version prefixes (e.g. 6.2) and numbers in the body untouched.
+export function flowStepDisplayTitle(title: string): string {
+  return title.replace(/^\s*\d+[.、．]\s*(?=[^\d\s])/, '').trim() || '未命名步骤'
+}
 export function memoMarkdown(doc: SaveMemoInput): string {
   const steps = doc.steps
     .map(
       (step, i) =>
-        `### ${i + 1}. ${step.title}\n\n${step.owner ? `负责人：${step.owner}\n\n` : ''}${step.detail}`,
+        `### ${i + 1}. ${flowStepDisplayTitle(step.title)}\n\n${step.owner ? `负责人：${step.owner}\n\n` : ''}${step.detail}`,
     )
     .join('\n\n↓\n\n')
   return `# ${doc.title}\n\n${doc.category ? `分类：${doc.category}\n\n` : ''}${doc.bodyMd}${steps ? `\n\n## 流程步骤\n\n${steps}` : ''}`
