@@ -123,7 +123,7 @@ try:
     assert t.wait_for('document.querySelector(".memos__step-fields img")?.naturalWidth>0')
     parts = requests[0]['messages'][-1]['content']
     assert len(requests) == 1
-    assert any(p.get('type') == 'text' and '.extracted.txt' in p['text'] and '先核对订单' in p['text'] for p in parts)
+    assert sum(p.get('text', '').count('先核对订单') for p in parts) == 1, 'Extracted document text must be sent once'
     assert any(p.get('type') == 'image_url' for p in parts)
     assert not any(p.get('type') == 'file' for p in parts)
     assert len(invoke('memo_list', {'query': '', 'deletedOnly': False})) == len(rows)
