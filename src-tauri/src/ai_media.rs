@@ -15,6 +15,7 @@ pub struct FlowMedia {
     pub references: Vec<ContentAsset>,
     pub warnings: Vec<String>,
     pub derived: Vec<ContentAsset>,
+    pub source_documents: Vec<(String, String)>,
 }
 
 /// Explicit flow generation may derive images; importing and generic chat do not.
@@ -27,6 +28,7 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
         references: Vec::new(),
         warnings: Vec::new(),
         derived: Vec::new(),
+        source_documents: Vec::new(),
     };
     let mut budget = Vec::new();
     for id in ids {
@@ -45,6 +47,14 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
         ) || (original.mime == "application/pdf" && provider == Provider::DeepSeek);
         if extract {
             let extracted = crate::document_import::prepare_extraction(original.clone()).await?;
+            result.source_documents.push((
+                original.id.clone(),
+                format!(
+                    "# 文件正文：{}\n\n{}\n\n# 文件正文结束",
+                    original.name.replace(['\r', '\n'], "_"),
+                    extracted.text
+                ),
+            ));
             result.warnings.extend(
                 extracted
                     .warnings

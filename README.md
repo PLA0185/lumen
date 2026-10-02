@@ -444,6 +444,7 @@ pnpm typecheck                # 类型检查
 
 | 文档 | 内容 |
 | --- | --- |
+| [Word 流程与 AI 忠实性修复](docs/word-flow-fidelity-2026-10-02.md) | 原文章节、图片位置、重复引用和模型补写的原因与程序校验 |
 | [DeepSeek Harness 接入调研](docs/deepseek-harness-research-2026-10-02.md) | 官方 SDK、文件技能、流程知识库接入方式、发行与验证边界 |
 | [流程问答接入设计](docs/design-flow-qa-harness-2026-10-02.md) | 用户已确认：悬浮聊天、知识范围、引用、缓存及可选 Harness 引擎 |
 | [快捷键盘点](docs/shortcut-inventory-2026-10-02.md) | 全局、应用、上下文和画布操作清单，以及配置与真实冲突边界 |

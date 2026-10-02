@@ -22,6 +22,14 @@ pub struct Extraction {
     pub text: String,
     pub images: Vec<ContentAsset>,
     pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<DocumentSection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentSection {
+    pub title: String,
+    pub detail: String,
 }
 
 #[derive(Default)]
@@ -29,6 +37,159 @@ struct Parsed {
     text: String,
     images: Vec<(String, Vec<u8>)>,
     warnings: Vec<String>,
+    image_parts: Vec<String>,
+    image_positions: Vec<(usize, String)>,
+}
+
+/// Only explicit, consecutively numbered top-level chapters are authoritative.
+/// Plain overview lists and subheadings do not create a second copy of the flow.
+pub(crate) fn source_sections(text: &str) -> AppResult<Vec<DocumentSection>> {
+    let heading = regex::Regex::new(r"^#{1,2}\s+(\d+)[.、．]\s*([^\d].*)$")
+        .expect("constant chapter heading regex");
+    let mut sections: Vec<DocumentSection> = Vec::new();
+    let mut active = false;
+    for line in text.lines() {
+        if let Some(capture) = heading.captures(line) {
+            let number = capture[1].parse::<usize>().unwrap_or(0);
+            if number != sections.len() + 1 {
+                return Err(AppError::validation(
+                    "原文章节编号不连续或重复，未改写步骤；请核对原文编号",
+                ));
+            }
+            sections.push(DocumentSection {
+                title: line.trim_start_matches('#').trim().into(),
+                detail: String::new(),
+            });
+            active = true;
+        } else if line.starts_with("# ") || line.starts_with("## ") {
+            active = false;
+        } else if active {
+            let detail = &mut sections.last_mut().expect("active chapter").detail;
+            append(detail, line)?;
+            append(detail, "\n")?;
+        }
+    }
+    if sections.len() < 2 {
+        return Ok(Vec::new());
+    }
+    for section in &mut sections {
+        section.detail = section.detail.trim().into();
+    }
+    Ok(sections)
+}
+
+fn xml_attribute(
+    element: &quick_xml::events::BytesStart<'_>,
+    name: &str,
+) -> AppResult<Option<String>> {
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|e| parser_error("DOCX 属性", e))?;
+        if attribute.key.local_name().as_ref() == name {
+            let value = attribute.value.as_ref();
+            return Ok(Some(
+                quick_xml::escape::unescape(value)
+                    .map_err(|e| parser_error("DOCX 属性", e))?
+                    .into_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+fn word_headings(
+    entries: &[(String, Vec<u8>)],
+) -> AppResult<std::collections::HashMap<String, usize>> {
+    let mut headings = std::collections::HashMap::new();
+    let Some((_, xml)) = entries.iter().find(|(name, _)| name == "word/styles.xml") else {
+        return Ok(headings);
+    };
+    let mut reader = Reader::from_reader(xml.as_slice());
+    let mut style = None;
+    loop {
+        match reader
+            .read_event()
+            .map_err(|e| parser_error("DOCX 样式", e))?
+        {
+            Event::Start(e) if e.local_name().as_ref() == "style" => {
+                style = xml_attribute(&e, "styleId")?
+            }
+            Event::Empty(e) | Event::Start(e) if e.local_name().as_ref() == "outlineLvl" => {
+                if let (Some(id), Some(level)) = (
+                    &style,
+                    xml_attribute(&e, "val")?
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|v| *v < 9),
+                ) {
+                    headings.insert(id.clone(), level);
+                }
+            }
+            Event::End(e) if e.local_name().as_ref() == "style" => style = None,
+            Event::DocType(_) => return Err(AppError::validation("DOCX 不允许 XML DTD")),
+            Event::Eof => break,
+            _ => (),
+        }
+    }
+    Ok(headings)
+}
+
+fn word_relationships(
+    entries: &[(String, Vec<u8>)],
+) -> AppResult<std::collections::HashMap<String, String>> {
+    let mut images = std::collections::HashMap::new();
+    let Some((_, xml)) = entries
+        .iter()
+        .find(|(name, _)| name == "word/_rels/document.xml.rels")
+    else {
+        return Ok(images);
+    };
+    let mut reader = Reader::from_reader(xml.as_slice());
+    loop {
+        match reader
+            .read_event()
+            .map_err(|e| parser_error("DOCX 图片关系", e))?
+        {
+            Event::Empty(e) | Event::Start(e) if e.local_name().as_ref() == "Relationship" => {
+                if xml_attribute(&e, "TargetMode")?.as_deref() == Some("External") {
+                    continue;
+                }
+                if !xml_attribute(&e, "Type")?.is_some_and(|t| t.ends_with("/image")) {
+                    continue;
+                }
+                if let (Some(id), Some(target)) =
+                    (xml_attribute(&e, "Id")?, xml_attribute(&e, "Target")?)
+                {
+                    let rooted = if target.starts_with('/') {
+                        target.trim_start_matches('/').into()
+                    } else {
+                        format!("word/{target}")
+                    };
+                    let mut parts = Vec::new();
+                    for part in rooted.split('/') {
+                        match part {
+                            "" | "." => (),
+                            ".." => {
+                                if parts.pop().is_none() {
+                                    return Err(AppError::validation("DOCX 图片路径无效"));
+                                }
+                            }
+                            p => parts.push(p),
+                        }
+                    }
+                    let part = parts.join("/");
+                    if !part.starts_with("word/media/") {
+                        return Err(AppError::validation("DOCX 图片资源位置无效"));
+                    }
+                    if images.insert(id, part).is_some() {
+                        return Err(AppError::validation("DOCX 图片关系编号重复"));
+                    }
+                }
+            }
+            Event::DocType(_) => return Err(AppError::validation("DOCX 不允许 XML DTD")),
+            Event::Eof => break,
+            _ => (),
+        }
+    }
+    Ok(images)
 }
 
 fn parser_error(what: &str, error: impl std::fmt::Display) -> AppError {
@@ -108,6 +269,7 @@ fn office_images(
             name.rsplit('/').next().unwrap_or(name).into(),
             bytes.clone(),
         ));
+        parsed.image_parts.push(name.clone());
     }
     Ok(())
 }
@@ -119,15 +281,33 @@ fn word(bytes: &[u8]) -> AppResult<Parsed> {
         .find(|(name, _)| name == "word/document.xml")
         .ok_or_else(|| AppError::validation("DOCX 缺少 word/document.xml"))?;
     let mut reader = Reader::from_reader(xml.1.as_slice());
+    let headings = word_headings(&entries)?;
+    let relationships = word_relationships(&entries)?;
     let mut parsed = Parsed::default();
     let mut in_text = false;
     let mut depth = 0usize;
+    let mut paragraph_start = 0;
+    let mut paragraph_level = None;
     loop {
         match reader.read_event().map_err(|e| parser_error("DOCX", e))? {
             Event::Start(e) => {
                 depth += 1;
+                if e.local_name().as_ref() == "p" {
+                    paragraph_start = parsed.text.len();
+                    paragraph_level = None;
+                }
                 if e.local_name().as_ref() == "t" {
                     in_text = true;
+                }
+                if matches!(e.local_name().as_ref(), "blip" | "imagedata") {
+                    if let Some(id) = xml_attribute(&e, "embed")?.or(xml_attribute(&e, "id")?) {
+                        let part = relationships.get(&id).ok_or_else(|| {
+                            AppError::validation("DOCX 图片引用缺少内部关系，未猜测图片归属")
+                        })?;
+                        parsed
+                            .image_positions
+                            .push((parsed.text.len(), part.clone()));
+                    }
                 }
             }
             Event::Text(e) if in_text => append(&mut parsed.text, e.as_ref())?,
@@ -139,6 +319,25 @@ fn word(bytes: &[u8]) -> AppResult<Parsed> {
                 )?;
             }
             Event::Empty(e) => match e.local_name().as_ref() {
+                "pStyle" => {
+                    paragraph_level =
+                        xml_attribute(&e, "val")?.and_then(|s| headings.get(&s).copied())
+                }
+                "outlineLvl" => {
+                    paragraph_level = xml_attribute(&e, "val")?
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .filter(|n| *n < 9)
+                }
+                "blip" | "imagedata" => {
+                    if let Some(id) = xml_attribute(&e, "embed")?.or(xml_attribute(&e, "id")?) {
+                        let part = relationships.get(&id).ok_or_else(|| {
+                            AppError::validation("DOCX 图片引用缺少内部关系，未猜测图片归属")
+                        })?;
+                        parsed
+                            .image_positions
+                            .push((parsed.text.len(), part.clone()));
+                    }
+                }
                 "tab" => append(&mut parsed.text, "\t")?,
                 "br" | "cr" => append(&mut parsed.text, "\n")?,
                 _ => (),
@@ -149,16 +348,33 @@ fn word(bytes: &[u8]) -> AppResult<Parsed> {
                     .ok_or_else(|| AppError::validation("DOCX XML 结构损坏"))?;
                 match e.local_name().as_ref() {
                     "t" => in_text = false,
-                    "p" => append(&mut parsed.text, "\n")?,
+                    "p" => {
+                        if let Some(level) = paragraph_level {
+                            let prefix = format!("{} ", "#".repeat((level + 2).min(6)));
+                            parsed.text.insert_str(paragraph_start, &prefix);
+                            for (offset, _) in &mut parsed.image_positions {
+                                if *offset >= paragraph_start {
+                                    *offset += prefix.len();
+                                }
+                            }
+                        }
+                        append(&mut parsed.text, "\n")?;
+                    }
                     "tc" => {
                         while parsed.text.ends_with('\n') {
                             parsed.text.pop();
+                        }
+                        for (offset, _) in &mut parsed.image_positions {
+                            *offset = (*offset).min(parsed.text.len());
                         }
                         append(&mut parsed.text, "\t")?;
                     }
                     "tr" => {
                         while parsed.text.ends_with('\t') {
                             parsed.text.pop();
+                        }
+                        for (offset, _) in &mut parsed.image_positions {
+                            *offset = (*offset).min(parsed.text.len());
                         }
                         append(&mut parsed.text, "\n")?;
                     }
@@ -600,20 +816,38 @@ pub async fn extract_asset_read_only(asset: ContentAsset) -> AppResult<Extractio
         text: parsed.text,
         images: Vec::new(),
         warnings: parsed.warnings,
+        sections: Vec::new(),
     })
 }
 pub async fn prepare_extraction(asset: ContentAsset) -> AppResult<Extraction> {
-    let parsed = tokio::task::spawn_blocking(move || parse(&asset))
+    let mut parsed = tokio::task::spawn_blocking(move || parse(&asset))
         .await
         .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
     let mut images = Vec::new();
     for (name, bytes) in parsed.images {
         images.push(crate::content_assets::prepare_bytes(&name, bytes)?);
     }
+    for (offset, part) in parsed.image_positions.into_iter().rev() {
+        let index = parsed
+            .image_parts
+            .iter()
+            .position(|name| name == &part)
+            .ok_or_else(|| {
+                AppError::validation("DOCX 引用的图片资源不存在或无法识别，未猜测图片归属")
+            })?;
+        let image = &images[index];
+        let name = image.name.replace(['[', ']', '\\', '\r', '\n'], "_");
+        parsed
+            .text
+            .insert_str(offset, &format!("\n![{name}](lumen-asset:{})\n", image.id));
+    }
+    check_text(&parsed.text)?;
+    let sections = source_sections(&parsed.text)?;
     Ok(Extraction {
         text: parsed.text,
         images,
         warnings: parsed.warnings,
+        sections,
     })
 }
 
@@ -757,6 +991,177 @@ pub(crate) mod tests {
             "word/document.xml",
             r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>订单核对 &amp; 发货</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>SKU</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>数量</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
         )])
+    }
+
+    pub(crate) fn ordered_sop() -> Vec<u8> {
+        let bytes = package(&[
+            (
+                "word/styles.xml",
+                r#"<w:styles xmlns:w="urn:w"><w:style w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>"#,
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                r#"<Relationships><Relationship Id="rFirst" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/first.png"/><Relationship Id="rSecond" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/second.png"/></Relationships>"#,
+            ),
+            (
+                "word/document.xml",
+                r#"<w:document xmlns:w="urn:w" xmlns:r="urn:r" xmlns:a="urn:a"><w:body><w:p><w:r><w:t>出货SOP</w:t></w:r></w:p><w:p><w:r><w:t>1. 下载表格；2. 创建单据（概览）</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="1"/></w:pPr><w:r><w:t>1. 下载表格</w:t></w:r></w:p><w:p><w:r><w:t>取得本周表格。</w:t></w:r></w:p><w:p><w:r><a:blip r:embed="rFirst"/></w:r></w:p><w:p><w:pPr><w:pStyle w:val="1"/></w:pPr><w:r><w:t>2. 创建单据</w:t></w:r></w:p><w:p><w:r><w:t>按表格生成单据 &amp; 核对。</w:t></w:r></w:p><w:p><w:r><a:blip r:embed="rSecond"/></w:r></w:p></w:body></w:document>"#,
+            ),
+        ]);
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(bytes)).unwrap();
+        // Intentionally reverse archive order: placement must come from relationships and paragraphs.
+        for (name, bytes) in [
+            (
+                "word/media/second.png",
+                b"\x89PNG\r\n\x1a\nsecond".as_slice(),
+            ),
+            ("word/media/first.png", b"\x89PNG\r\n\x1a\nfirst".as_slice()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[tokio::test]
+    async fn word_chapters_and_images_follow_document_not_zip_or_overview_order() {
+        let extracted = prepare_extraction(asset("SOP.docx", &ordered_sop()))
+            .await
+            .unwrap();
+        let first = extracted
+            .images
+            .iter()
+            .find(|i| i.name == "first.png")
+            .unwrap();
+        let second = extracted
+            .images
+            .iter()
+            .find(|i| i.name == "second.png")
+            .unwrap();
+        let first_pos = extracted
+            .text
+            .find(&format!("lumen-asset:{}", first.id))
+            .expect("first picture must be anchored in original paragraph");
+        let second_pos = extracted
+            .text
+            .find(&format!("lumen-asset:{}", second.id))
+            .expect("second picture must be anchored in original paragraph");
+        assert!(first_pos < extracted.text.find("2. 创建单据\n").unwrap());
+        assert!(second_pos > first_pos);
+        let json = serde_json::to_value(&extracted).unwrap();
+        let chapters = json["sections"]
+            .as_array()
+            .expect("Word chapter boundaries retained");
+        assert_eq!(
+            chapters.len(),
+            2,
+            "overview must not become duplicate steps"
+        );
+        assert_eq!(chapters[0]["title"], "1. 下载表格");
+        assert_eq!(chapters[1]["title"], "2. 创建单据");
+        let detail = chapters[0]["detail"].as_str().unwrap();
+        assert!(detail.starts_with("取得本周表格。"));
+        assert!(detail.contains(&first.id));
+        assert!(!detail.contains(&second.id));
+        assert!(chapters[1]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("按表格生成单据 & 核对。"));
+    }
+
+    #[tokio::test]
+    async fn word_images_in_empty_table_paragraphs_keep_valid_offsets() {
+        let bytes = package(&[
+            (
+                "word/document.xml",
+                r#"<w:document xmlns:w="urn:w" xmlns:a="urn:a" xmlns:r="urn:r"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>表格图片</w:t></w:r></w:p><w:p></w:p><w:p></w:p><w:p><w:r><a:blip r:embed="rImage"><a:extLst/></a:blip></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                r#"<Relationships><Relationship Id="rImage" Type="urn:image/image" Target="media/image.png"/></Relationships>"#,
+            ),
+        ]);
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(bytes)).unwrap();
+        zip.start_file(
+            "word/media/image.png",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(b"\x89PNG\r\n\x1a\nimage").unwrap();
+        let extracted =
+            prepare_extraction(asset("table.docx", &zip.finish().unwrap().into_inner()))
+                .await
+                .unwrap();
+        assert!(extracted.text.contains("表格图片"));
+        assert!(extracted
+            .text
+            .contains(&format!("lumen-asset:{}", extracted.images[0].id)));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an external DOCX and independently extracted chapter manifest; no user document in Git"]
+    async fn external_word_matches_independent_chapter_manifest() {
+        let directory = std::path::PathBuf::from(
+            std::env::var("LUMEN_VERIFY_WORD_DIRECTORY").expect("verification directory"),
+        );
+        let original = std::fs::read(directory.join("original.docx")).unwrap();
+        let expected: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.join("expected-chapters.json")).unwrap(),
+        )
+        .unwrap();
+        let extracted = prepare_extraction(asset("SOP.docx", &original))
+            .await
+            .unwrap();
+        assert_eq!(extracted.sections.len(), expected.as_array().unwrap().len());
+        let references =
+            regex::Regex::new(r"!\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})\)").unwrap();
+        for (section, expected) in extracted.sections.iter().zip(expected.as_array().unwrap()) {
+            assert_eq!(section.title, expected["title"].as_str().unwrap());
+            let images: Vec<_> = references
+                .captures_iter(&section.detail)
+                .map(|c| {
+                    extracted
+                        .images
+                        .iter()
+                        .find(|a| a.id == c[1])
+                        .unwrap()
+                        .name
+                        .clone()
+                })
+                .collect();
+            assert_eq!(
+                serde_json::to_value(&images).unwrap(),
+                expected["images"],
+                "{} 图片位置/顺序",
+                section.title
+            );
+            for paragraph in expected["paragraphs"].as_array().unwrap() {
+                assert!(
+                    section.detail.contains(paragraph.as_str().unwrap()),
+                    "{} 原文段落遗漏：{}",
+                    section.title,
+                    paragraph
+                );
+            }
+        }
+        std::fs::write(
+            directory.join("actual-extraction.json"),
+            serde_json::to_vec_pretty(&extracted).unwrap(),
+        )
+        .unwrap();
+        let raw = serde_json::json!({"title":"出货SOP","steps":[{"title":"故意错误拆分","detail":"完成标准：自行补充。"}]}).to_string();
+        let draft = crate::memo_ai::parse_flow(&raw, &extracted.text, &extracted.images).unwrap();
+        assert_eq!(draft.steps.len(), extracted.sections.len());
+        for (step, section) in draft.steps.iter().zip(&extracted.sections) {
+            assert_eq!(step.title, section.title);
+            assert_eq!(step.detail, section.detail);
+        }
+        std::fs::write(
+            directory.join("corrected-draft.json"),
+            serde_json::to_vec_pretty(&draft).unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]

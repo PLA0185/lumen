@@ -148,6 +148,17 @@ it('识别导入文件后把正文和内嵌原图放入编辑器，保留原文�
   expect(field.value).toContain('先核对发货表，再通知仓库。')
   expect(field.value).toContain(assets.assetMarkdown(image))
 })
+it('Word 识别正文已有原位置图片时不再次堆到正文末尾', async () => {
+  const original = { ...asset, name: 'SOP.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }
+  const image = { ...asset, id: '00000000-0000-7000-8000-000000000002' }
+  vi.spyOn(assets, 'assetGet').mockResolvedValue(original)
+  const text = `## 1. 下载\n取得表格。\n${assets.assetMarkdown(image)}\n\n## 2. 创建\n生成单据。`
+  vi.mocked(invoke).mockResolvedValue({ text, images: [image], warnings: [] })
+  const field = await mount(assets.assetMarkdown(original), false, true)
+  await recognizeAsset(original.name)
+  expect(field.value.split(assets.assetMarkdown(image))).toHaveLength(2)
+  expect(field.value.indexOf(assets.assetMarkdown(image))).toBeLessThan(field.value.indexOf('## 2. 创建'))
+})
 it('识别失败明确提示并保留已导入文件链接，不伪装成识别成功', async () => {
   vi.spyOn(assets, 'assetImportFile').mockResolvedValue(asset)
   vi.spyOn(assets, 'assetGet').mockResolvedValue(asset)
