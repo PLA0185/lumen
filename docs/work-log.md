@@ -2722,3 +2722,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)、[工作记录](work-log.md)。原生脚本：`tools/verify_ai_sync_ui.py`；本机证据在仓库外 `D:/Codex/lumen-verification-20261002/native-ai-sync2/`。传输矩阵在 `src-tauri/src/cloud_sync/tests.rs`。
+
+## 第 41 轮 · 2026-10-02 · 0.4.10 集成门禁与发布准备
+
+### 做了
+
+- 将附件、流程画布、Word 内嵌图、知识层、AI 状态与模型选择、同步范围及方向整合到主分支；应用三处版本统一为 0.4.10，发布说明逐项列明交付和仍未实现的功能。
+- 安装前用 SQLite backup API 保存正常 Home 的一致性快照，另存原正式程序，记录 19 个业务表和本机 AI/同步/窗口配置的指纹。验证数据库完整性与外键，无删库、清配置或覆盖凭据。
+
+### 没做到
+
+- 本节提交时 GitHub 最新源码 CI、签名发布和正式安装尚未完成；本地签名构建正在进行，安装验收完成后另行追加记录。
+- 新同步范围/方向未在真实坚果云空间验证；AI 模型列表与请求为本机 HTTP 服务验收，未验证真实模型质量。
+- 统一快捷键设置、直接滚轮可选模式、多格式导出、悬浮流程聊天及 Harness 产品引擎仍未交付。独立子代理因账户额度限制无法复核，不能称为独立验收。
+
+### 怎么验证的
+
+- 主分支实际重新执行：冻结依赖安装、typecheck、前端全量 265 项、build、lint、cargo fmt --check、Rust 全量 464 项、cargo clippy --all-targets --all-features -- -D warnings，全部退出 0；三处版本与 v0.4.10 校验通过。已有 Vite 动态导入提示和 Windows 链接器信息仍存在，未豁免 clippy。
+- 源码复核确认仅下载不调用上传/发布路径；业务应用在事务中先捕获本地改动，保持并发版本。实际 HTTP 九种范围×方向测试包含于 464 项全量结果。
+- 提交前检查 Git 跟踪列表无密钥、数据库、日志和构建产物；minisign 私钥短语命中仅为约定/报告说明。Home 快照实际 integrity_check 为 ok、foreign_key_check 为空；生产正文未发送外部模型。
+
+### 相关文档
+
+- [0.4.10 发布说明](../RELEASE_NOTES.md)、[实施计划](superpowers/plans/2026-10-02-flow-qa-harness.md)、[前两轮 AI 与同步验收](work-log.md)。安装前证据保存于仓库外 `D:/Codex/lumen-verification-20261002/release-0.4.10/`。
