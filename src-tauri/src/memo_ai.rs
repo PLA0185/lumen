@@ -243,6 +243,7 @@ pub async fn ai_generate_flow(
     crate::ai_media::validate_material_text(&input.text)?;
     let loaded =
         crate::ai_media::load_flow_media(&state.db, config.provider, &input.asset_ids).await?;
+    let source = flow_source(&input.text, &loaded);
     // Extracted document text is already in source with original image anchors.
     // Do not send a second copy as a file/text part for the model to split again.
     let media: Vec<_> = loaded
@@ -255,23 +256,6 @@ pub async fn ai_generate_flow(
                 .any(|(id, _)| id == &asset.id)
         })
         .collect();
-    let mut source = input.text.clone();
-    for (_, document) in &loaded.source_documents {
-        source.push_str(&format!("\n\n{document}\n"));
-    }
-    for asset in &loaded.references {
-        if !source.contains(&format!("lumen-asset:{}", asset.id)) {
-            source.push_str(&format!(
-                "\n{}[原始材料](lumen-asset:{})\n",
-                if asset.mime.starts_with("image/") {
-                    "!"
-                } else {
-                    ""
-                },
-                asset.id
-            ));
-        }
-    }
     let manifest = media.iter().enumerate().map(|(index, asset)| serde_json::json!({"order":index+1,"id":asset.id,"name":asset.name,"mime":asset.mime})).collect::<Vec<_>>();
     let request = ChatRequest {
             config: config.clone(),
@@ -296,6 +280,52 @@ pub async fn ai_generate_flow(
     .await
 }
 
+fn flow_source(text: &str, loaded: &crate::ai_media::FlowMedia) -> String {
+    let tokens = regex::Regex::new(
+        r#"!?\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})(?: "(?:\\.|[^"\\\n])*")?\)"#,
+    )
+    .expect("asset token regex");
+    let mut expanded = std::collections::HashSet::new();
+    // Expand at the selected file's original position. File transport labels are
+    // retained in the archive, not promoted to business steps or fake headings.
+    let mut source = tokens
+        .replace_all(text, |c: &regex::Captures<'_>| {
+            if let Some((id, document)) = loaded
+                .source_documents
+                .iter()
+                .find(|(id, _)| id.eq_ignore_ascii_case(&c[1]))
+            {
+                if expanded.insert(id.clone()) {
+                    format!("\n\n{document}\n\n")
+                } else {
+                    String::new()
+                }
+            } else {
+                c[0].to_owned()
+            }
+        })
+        .into_owned();
+    for (id, document) in &loaded.source_documents {
+        if expanded.insert(id.clone()) {
+            source.push_str(&format!("\n\n{document}\n"));
+        }
+    }
+    for asset in &loaded.references {
+        if !expanded.contains(&asset.id) && !source.contains(&format!("lumen-asset:{}", asset.id)) {
+            source.push_str(&format!(
+                "\n{}[原始材料](lumen-asset:{})\n",
+                if asset.mime.starts_with("image/") {
+                    "!"
+                } else {
+                    ""
+                },
+                asset.id
+            ));
+        }
+    }
+    source
+}
+
 async fn finish_flow(
     db: &crate::db::Db,
     raw: &str,
@@ -303,7 +333,23 @@ async fn finish_flow(
     references: &[ContentAsset],
     derived: &[ContentAsset],
 ) -> AppResult<SaveMemoInput> {
-    let draft = parse_flow(raw, source, references)?;
+    let mut draft = parse_flow(raw, source, references)?;
+    let originals: Vec<_> = references
+        .iter()
+        .filter(|a| {
+            !a.mime.starts_with("image/") && !source.contains(&format!("lumen-asset:{}", a.id))
+        })
+        .collect();
+    if !originals.is_empty() {
+        draft.body_md.push_str("\n\n## 原文件\n\n");
+        for original in originals {
+            let name = original.name.replace(['[', ']', '\\', '\r', '\n'], "_");
+            draft
+                .body_md
+                .push_str(&format!("[{name}](lumen-asset:{})\n", original.id));
+        }
+        crate::memos::validate(&draft)?;
+    }
     crate::content_assets::persist_assets(db, derived).await?;
     Ok(draft)
 }
@@ -311,6 +357,170 @@ async fn finish_flow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "explicit opt-in with an external selected DOCX, configured real model and isolated database"]
+    async fn real_selected_word_generates_source_only_draft() {
+        assert_eq!(
+            std::env::var("LUMEN_RUN_REAL_WORD_FLOW").as_deref(),
+            Ok("1")
+        );
+        let evidence =
+            std::path::PathBuf::from(std::env::var("LUMEN_REAL_WORD_FLOW_DIRECTORY").unwrap());
+        let config: ProviderConfig = serde_json::from_slice(
+            &std::fs::read(evidence.join("real-model-config.json")).unwrap(),
+        )
+        .unwrap();
+        let db = crate::db::Db::init(&evidence.join("real-word-test-data"))
+            .await
+            .unwrap();
+        let original = crate::content_assets::store_bytes(
+            &db,
+            "selected.docx",
+            std::fs::read(evidence.join("original.docx")).unwrap(),
+        )
+        .await
+        .unwrap();
+        let loaded = crate::ai_media::load_flow_media(
+            &db,
+            config.provider,
+            std::slice::from_ref(&original.id),
+        )
+        .await
+        .unwrap();
+        let source = flow_source(
+            &format!("[selected.docx](lumen-asset:{})", original.id),
+            &loaded,
+        );
+        std::fs::write(evidence.join("word-source.md"), &source).unwrap();
+        std::fs::write(
+            evidence.join("word-packets.json"),
+            crate::flow_structure::prompt(&source).unwrap(),
+        )
+        .unwrap();
+        let manifest: Vec<_> = loaded
+            .media
+            .iter()
+            .filter(|a| !loaded.source_documents.iter().any(|(id, _)| id == &a.id))
+            .enumerate()
+            .map(|(i, a)| serde_json::json!({"order":i+1,"id":a.id,"name":a.name,"mime":a.mime}))
+            .collect();
+        let request = ChatRequest { config: config.clone(), system: Some(crate::flow_structure::SYSTEM.into()), messages: vec![ChatMessage { role: "user".into(), content: format!("编号原文块（只能引用这些块进行分层）：\n{}\n\n随后提供的图片、文件按以下资源顺序表排列：\n{}", crate::flow_structure::prompt(&source).unwrap(), serde_json::to_string(&manifest).unwrap()) }], json_output: true, max_output_tokens: None, media: loaded.media.iter().filter(|a| !loaded.source_documents.iter().any(|(id, _)| id == &a.id)).cloned().collect() };
+        let response = ai::chat(&config, &request).await.unwrap();
+        std::fs::write(evidence.join("word-response.json"), &response.text).unwrap();
+        crate::flow_structure::validate_protocol(&response.text).unwrap();
+        let draft = finish_flow(
+            &db,
+            &response.text,
+            &source,
+            &loaded.references,
+            &loaded.derived,
+        )
+        .await;
+        std::fs::write(
+            evidence.join("word-result.json"),
+            serde_json::to_vec_pretty(&draft).unwrap(),
+        )
+        .unwrap();
+        let draft = draft.unwrap();
+        assert!(
+            draft
+                .body_md
+                .contains(&format!("lumen-asset:{}", original.id)),
+            "原文件保留在归档"
+        );
+        assert!(draft.steps.iter().all(|s| !s.title.contains("文件正文")));
+        let memo_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memo_documents")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(memo_count, 0, "生成草稿不能直接保存记录");
+        println!(
+            "verified source-only draft: {} steps, {} original embedded images",
+            draft.steps.len(),
+            loaded.derived.len()
+        );
+        db.pool().close().await;
+    }
+
+    #[tokio::test]
+    async fn document_expands_at_its_anchor_and_original_file_stays_in_archive() {
+        let original = crate::content_assets::prepare_bytes(
+            "原文件.docx",
+            crate::document_import::tests::docx(),
+        )
+        .unwrap();
+        let image = test_image(&uuid::Uuid::now_v7().to_string());
+        let document = format!("## 1. 下载\n\n原文操作。\n![原图](lumen-asset:{})\n图1 原图\n\n## 2. 保存\n\n保存原单号。", image.id);
+        let loaded = crate::ai_media::FlowMedia {
+            media: vec![],
+            references: vec![original.clone(), image.clone()],
+            warnings: vec![],
+            derived: vec![],
+            source_documents: vec![(original.id.clone(), document.clone())],
+        };
+        let text = format!("用户前言。\n\n[原文件.docx](lumen-asset:{})", original.id);
+        let source = flow_source(&text, &loaded);
+        assert!(source.starts_with("用户前言。"));
+        assert_eq!(source.matches("## 1. 下载").count(), 1);
+        assert!(!source.contains("文件正文结束"));
+        assert!(source.contains(&document));
+        let source = flow_source(
+            &format!("[原文件.docx](lumen-asset:{})", original.id),
+            &loaded,
+        );
+        let blocks: serde_json::Value =
+            serde_json::from_str(&crate::flow_structure::prompt(&source).unwrap()).unwrap();
+        let chapters: Vec<_> = blocks
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|p| p["text"].as_str().unwrap().trim_start().starts_with("## "))
+            .map(|p| p["id"].as_u64().unwrap())
+            .collect();
+        let count = blocks.as_array().unwrap().len() as u64;
+        let plan = serde_json::json!({"schemaVersion":2,"steps":[{"begin":1,"end":chapters[1]-1,"titleBlock":chapters[0],"groupPath":[chapters[0]]},{"begin":chapters[1],"end":count,"titleBlock":chapters[1],"groupPath":[chapters[1]]}]}).to_string();
+        let dir = std::env::temp_dir().join(format!("lumen-word-archive-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let draft = finish_flow(&db, &plan, &source, &loaded.references, &[])
+            .await
+            .unwrap();
+        assert_eq!(draft.steps.len(), 2);
+        assert!(draft.steps[0].detail.contains(&image.id));
+        assert!(!draft.steps[1].detail.contains(&image.id));
+        assert!(draft
+            .body_md
+            .contains(&format!("[原文件.docx](lumen-asset:{})", original.id)));
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn extracted_word_source_does_not_invent_wrapper_headings() {
+        let dir = std::env::temp_dir().join(format!("lumen-word-source-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(
+            &db,
+            "中文SOP.docx",
+            crate::document_import::tests::docx(),
+        )
+        .await
+        .unwrap();
+        let expected = crate::document_import::extract_local(&original).unwrap();
+        let loaded = crate::ai_media::load_flow_media(
+            &db,
+            crate::ai::Provider::DeepSeek,
+            std::slice::from_ref(&original.id),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            loaded.source_documents[0].1, expected,
+            "文件名和正文结束标记不是用户流程标题"
+        );
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn indexed_structure_uses_original_content_and_keeps_images_with_their_text() {

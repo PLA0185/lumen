@@ -115,7 +115,10 @@ pub(crate) fn packets(source: &str) -> Vec<Packet> {
                 (table_line(line) && table_line(previous))
                     || (!table_line(line) && line.starts_with("  ") && !table_line(previous))
             });
-        if result.is_empty()
+        if result.len() == 1 && result[0].text.trim().is_empty() {
+            result[0].text.push_str(line);
+            result[0].heading = heading;
+        } else if result.is_empty()
             || heading.is_some()
             || opener.is_some()
             || result.last().is_some_and(|p| p.heading.is_some())
@@ -163,9 +166,10 @@ fn title(packet: &Packet) -> String {
     if let Some((_, title)) = &packet.heading {
         return title.clone();
     }
-    packet
-        .text
-        .lines()
+    text_title(&packet.text)
+}
+fn text_title(text: &str) -> String {
+    text.lines()
         .map(str::trim)
         .find(|line| {
             !line.is_empty()
@@ -181,6 +185,30 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
     let packets = packets(source);
     if packets.is_empty() {
         return Err(AppError::validation("原始材料为空，无法分层"));
+    }
+    // Missing grouping metadata can be recovered from explicit source headings.
+    // A supplied wrong group or a range crossing chapters is never repaired.
+    for placement in &mut plan.steps {
+        if placement.group_path.is_empty()
+            && placement.begin > 0
+            && placement.end >= placement.begin
+            && placement.end <= packets.len()
+        {
+            let selected = &packets[placement.begin - 1..placement.end];
+            let last = selected.last().expect("nonempty range");
+            if let Some(chapter) = last.chapter {
+                if selected.iter().all(|p| p.chapter == Some(chapter)) {
+                    placement.group_path = last
+                        .outline
+                        .iter()
+                        .copied()
+                        .filter(|id| {
+                            *id >= chapter && (*id == chapter || Some(*id) != placement.title_block)
+                        })
+                        .collect();
+                }
+            }
+        }
     }
     // A standalone group heading has no operation. Join only an adjacent range
     // that already references every heading as its group; never relocate prose.
@@ -278,7 +306,10 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
                 "AI跨章节配图或合并了独立小标题，未保存流程",
             ));
         }
+        let mut chunks = Vec::new();
         let mut detail = String::new();
+        let mut count = 0;
+        let mut image_count = 0;
         for packet in selected {
             if packet.heading.is_some()
                 && (Some(packet.id) == placement.title_block
@@ -286,20 +317,21 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
             {
                 continue;
             }
+            let image = usize::from(packet.text.contains("!["));
+            if count > 0
+                && (count == 3
+                    || detail.chars().count() + packet.text.chars().count() > 1200
+                    || image_count + image > 2)
+            {
+                chunks.push(std::mem::take(&mut detail));
+                count = 0;
+                image_count = 0;
+            }
             detail.push_str(&packet.text);
+            count += usize::from(!packet.text.trim().is_empty());
+            image_count += image;
         }
-        let operations: Vec<_> = selected
-            .iter()
-            .filter(|p| p.heading.is_none() && !p.text.trim().is_empty())
-            .collect();
-        if operations.len() > 3
-            || (operations.len() > 1 && detail.chars().count() > 1200)
-            || operations.iter().filter(|p| p.text.contains("![")).count() > 2
-        {
-            return Err(AppError::validation(
-                "AI将过多原文操作合并为一张卡片，请重新细分；未保存流程",
-            ));
-        }
+        chunks.push(detail);
         let step_title = placement
             .title_block
             .map(|id| title(&packets[id - 1]))
@@ -321,17 +353,23 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
                 .map(|id| title(&packets[*id - 1]))
                 .collect(),
         });
-        steps.push(FlowStep {
-            id: uuid::Uuid::now_v7().to_string(),
-            title: step_title,
-            owner: owner
-                .captures(&detail)
-                .map(|c| c[1].trim().to_owned())
-                .unwrap_or_default(),
-            detail: detail.trim().into(),
-            layout: None,
-            group,
-        });
+        for (index, detail) in chunks.into_iter().enumerate() {
+            steps.push(FlowStep {
+                id: uuid::Uuid::now_v7().to_string(),
+                title: if index == 0 {
+                    step_title.clone()
+                } else {
+                    text_title(&detail)
+                },
+                owner: owner
+                    .captures(&detail)
+                    .map(|c| c[1].trim().to_owned())
+                    .unwrap_or_default(),
+                detail: detail.trim().into(),
+                layout: None,
+                group: group.clone(),
+            });
+        }
         next = placement.end + 1;
     }
     if next != packets.len() + 1 {
@@ -376,6 +414,46 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
 mod tests {
     use super::*;
     #[test]
+    fn oversized_model_range_is_split_at_original_operation_blocks() {
+        let source = "操作一。\n\n操作二。\n\n操作三。\n\n操作四。";
+        let plan = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":4}]}"#;
+        let draft = parse(plan, source, &[]).unwrap();
+        assert_eq!(draft.steps.len(), 2);
+        assert_eq!(draft.steps[0].detail, "操作一。\n\n操作二。\n\n操作三。");
+        assert_eq!(draft.steps[1].detail, "操作四。");
+    }
+    #[test]
+    fn missing_model_group_uses_explicit_source_ancestors_without_moving_content() {
+        let source = "## 1. 原章节\n\n### 1.1 原小标题\n\n原文操作。";
+        let plan =
+            r#"{"schemaVersion":2,"steps":[{"begin":1,"end":3,"titleBlock":2,"groupPath":[]}]}"#;
+        let draft = parse(plan, source, &[]).unwrap();
+        assert_eq!(draft.steps[0].title, "1.1 原小标题");
+        assert_eq!(draft.steps[0].detail, "原文操作。");
+        assert_eq!(draft.steps[0].group.as_ref().unwrap().title, "1. 原章节");
+        let wrong =
+            r#"{"schemaVersion":2,"steps":[{"begin":1,"end":3,"titleBlock":2,"groupPath":[2]}]}"#;
+        assert!(
+            parse(wrong, source, &[]).is_err(),
+            "明确错误的章节引用仍应拒绝"
+        );
+    }
+    #[test]
+    fn leading_blank_lines_stay_with_first_original_heading_not_a_phantom_step() {
+        let source = "\n\n## 1. 原章节\n\n原文操作。\n";
+        let blocks = packets(source);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            blocks.iter().map(|p| p.text.as_str()).collect::<String>(),
+            source
+        );
+        let plan =
+            r#"{"schemaVersion":2,"steps":[{"begin":1,"end":2,"titleBlock":1,"groupPath":[1]}]}"#;
+        let draft = parse(plan, source, &[]).unwrap();
+        assert_eq!(draft.steps.len(), 1);
+        assert_eq!(draft.steps[0].detail, "原文操作。");
+    }
+    #[test]
     fn heading_only_placements_join_only_their_following_original_group() {
         let source = "## 1. 章\n\n### 1.1 小步骤\n\n原操作正文。";
         let plan = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":1,"titleBlock":1,"groupPath":[]},{"begin":2,"end":3,"titleBlock":2,"groupPath":[1]}]}"#;
@@ -385,13 +463,13 @@ mod tests {
         assert_eq!(draft.steps[0].detail, "原操作正文。");
         assert_eq!(draft.steps[0].group.as_ref().unwrap().title, "1. 章");
         let missing = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":1,"titleBlock":1,"groupPath":[]},{"begin":2,"end":3,"titleBlock":2,"groupPath":[]}]}"#;
-        assert!(parse(missing, source, &[]).is_err());
+        assert_eq!(parse(missing, source, &[]).unwrap().steps.len(), 1);
         let source = "## 1. 章\n\n必须保留章说明。\n\n### 1.1 小步骤\n\n原操作正文。";
         let plan = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":2,"titleBlock":1,"groupPath":[]},{"begin":3,"end":4,"titleBlock":3,"groupPath":[1]}]}"#;
-        assert!(
-            parse(plan, source, &[]).is_err(),
-            "不能借处理纯标题挪动父章正文"
-        );
+        let draft = parse(plan, source, &[]).unwrap();
+        assert_eq!(draft.steps.len(), 2, "父章正文不能当成纯标题挪到小步骤");
+        assert_eq!(draft.steps[0].detail, "必须保留章说明。");
+        assert_eq!(draft.steps[1].detail, "原操作正文。");
     }
     #[test]
     fn chapter_chosen_as_title_uses_unique_original_leaf_without_changing_range() {
@@ -476,7 +554,7 @@ mod tests {
     fn rejects_recombining_many_independent_operations_into_one_giant_card() {
         let source = "操作一。\n\n操作二。\n\n操作三。\n\n操作四。";
         let plan = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":4}]}"#;
-        assert!(parse(plan, source, &[]).is_err());
+        assert_eq!(parse(plan, source, &[]).unwrap().steps.len(), 2);
         let valid = r#"{"schemaVersion":2,"steps":[{"begin":1,"end":2},{"begin":3,"end":4}]}"#;
         assert!(parse(valid, source, &[]).is_ok());
     }

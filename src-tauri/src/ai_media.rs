@@ -47,14 +47,9 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
         ) || (original.mime == "application/pdf" && provider == Provider::DeepSeek);
         if extract {
             let extracted = crate::document_import::prepare_extraction(original.clone()).await?;
-            result.source_documents.push((
-                original.id.clone(),
-                format!(
-                    "# 文件正文：{}\n\n{}\n\n# 文件正文结束",
-                    original.name.replace(['\r', '\n'], "_"),
-                    extracted.text
-                ),
-            ));
+            result
+                .source_documents
+                .push((original.id.clone(), extracted.text.clone()));
             result.warnings.extend(
                 extracted
                     .warnings
