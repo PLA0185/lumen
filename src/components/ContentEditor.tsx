@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentImages, contentInsertionRange, contentAssetPattern, replaceImageReference, contentError, type ContentAsset } from '../lib/content-assets'
@@ -20,6 +20,12 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   }, [busy, onBusyChange])
   const latest = useRef(props)
   latest.current = props
+  useLayoutEffect(() => {
+    const field = ref.current
+    if (!field || props.readOnly || resize.current) return
+    const needed = field.scrollHeight + Math.max(0, field.offsetHeight - field.clientHeight)
+    if (needed > field.offsetHeight) field.style.height = `${Math.min(10000, Math.max(80, needed))}px`
+  }, [props.value, props.readOnly])
   const references = String(props.value ?? '').match(contentAssetPattern()) ?? []
   const removeAsset = (id: string) => {
     const field = ref.current
