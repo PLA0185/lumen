@@ -378,7 +378,22 @@ fn cfg() -> Config {
         workspace_id: uuid::Uuid::now_v7().to_string(),
         enabled: true,
         inherit_all: true,
+        default_sync: None,
     }
+}
+#[test]
+fn sync_selection_is_serializable_and_old_connection_fields_survive() {
+    let original = cfg();
+    let mut json = serde_json::to_value(&original).unwrap();
+    json["defaultSync"] = serde_json::json!({"scope":"tasks","direction":"download"});
+    let configured: Config =
+        serde_json::from_value(json).expect("new sync selection must be accepted");
+    assert_eq!(configured.connection_id, original.connection_id);
+    assert_eq!(configured.workspace_id, original.workspace_id);
+    assert_eq!(
+        serde_json::to_value(configured).unwrap()["defaultSync"]["direction"],
+        "download"
+    );
 }
 async fn close(db: Db) {
     let dir = db.data_dir().to_owned();
@@ -861,4 +876,195 @@ async fn initial_400_tasks_use_batches_and_missing_old_attachment_does_not_destr
     );
     close(a).await;
     close(b).await;
+}
+
+fn selection(c: &Config, scope: SyncScope, direction: SyncDirection) -> Config {
+    let mut c = c.clone();
+    c.default_sync = Some(SyncOptions { scope, direction });
+    c
+}
+#[tokio::test]
+async fn selected_download_never_writes_cloud_and_keeps_local_pending_memos() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let remote = db().await;
+    let local = db().await;
+    let c = cfg();
+    let key = [8; 32];
+    let from_cloud = memos::save_impl(&remote, input("云端流程")).await.unwrap();
+    push_all(&remote, &dav, &c, &key).await;
+    let mine = memos::save_impl(&local, input("本地未上传流程"))
+        .await
+        .unwrap();
+    let before = mock.files.lock().unwrap().clone();
+    let selected = selection(&c, SyncScope::Memos, SyncDirection::Download);
+    let device = runtime(&local).await.unwrap();
+    assert!(sync_exchange(&local, &dav, &selected, &key, &device, true)
+        .await
+        .unwrap());
+    assert_eq!(
+        *mock.files.lock().unwrap(),
+        before,
+        "download-only must not write any remote file"
+    );
+    assert!(memos::get_impl(&local, &from_cloud.summary.id)
+        .await
+        .is_ok());
+    assert!(memos::get_impl(&local, &mine.summary.id).await.is_ok());
+    let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memo_sync_events WHERE uploaded=0")
+        .fetch_one(local.pool())
+        .await
+        .unwrap();
+    assert_eq!(pending, 1);
+    close(remote).await;
+    close(local).await;
+}
+#[tokio::test]
+async fn selected_task_upload_leaves_memo_pending_and_does_not_download() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let remote = db().await;
+    let local = db().await;
+    let c = cfg();
+    let key = [7; 32];
+    let from_cloud = memos::save_impl(&remote, input("不该下载的流程"))
+        .await
+        .unwrap();
+    push_all(&remote, &dav, &c, &key).await;
+    memos::save_impl(&local, input("不该上传的流程"))
+        .await
+        .unwrap();
+    add_task(&local, "selected-task", "应上传的任务").await;
+    let selected = selection(&c, SyncScope::Tasks, SyncDirection::Upload);
+    let device = runtime(&local).await.unwrap();
+    assert!(!sync_exchange(&local, &dav, &selected, &key, &device, true)
+        .await
+        .unwrap());
+    assert!(memos::get_impl(&local, &from_cloud.summary.id)
+        .await
+        .is_err());
+    let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memo_sync_events WHERE uploaded=0")
+        .fetch_one(local.pool())
+        .await
+        .unwrap();
+    assert_eq!(pending, 1);
+    download(&remote, &dav, &c, &key).await.unwrap();
+    let title: String = sqlx::query_scalar("SELECT title FROM tasks WHERE id='selected-task'")
+        .fetch_one(remote.pool())
+        .await
+        .unwrap();
+    assert_eq!(title, "应上传的任务");
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM memo_documents")
+        .fetch_one(remote.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    close(remote).await;
+    close(local).await;
+}
+#[tokio::test]
+async fn selected_task_download_ignores_memos_and_preserves_local_task_changes() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let remote = db().await;
+    let local = db().await;
+    let c = cfg();
+    let key = [6; 32];
+    let memo = memos::save_impl(&remote, input("不下载的云端流程"))
+        .await
+        .unwrap();
+    add_task(&remote, "cloud-task", "云端任务").await;
+    push_all(&remote, &dav, &c, &key).await;
+    add_task(&local, "local-task", "保留本地任务").await;
+    let selected = selection(&c, SyncScope::Tasks, SyncDirection::Download);
+    let device = runtime(&local).await.unwrap();
+    let before = mock.files.lock().unwrap().clone();
+    assert!(sync_exchange(&local, &dav, &selected, &key, &device, true)
+        .await
+        .unwrap());
+    assert_eq!(*mock.files.lock().unwrap(), before);
+    assert!(memos::get_impl(&local, &memo.summary.id).await.is_err());
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+        .fetch_one(local.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+    close(remote).await;
+    close(local).await;
+}
+
+#[tokio::test]
+async fn all_nine_scope_direction_combinations_only_exchange_selected_content() {
+    for scope in [SyncScope::All, SyncScope::Tasks, SyncScope::Memos] {
+        for direction in [
+            SyncDirection::Both,
+            SyncDirection::Upload,
+            SyncDirection::Download,
+        ] {
+            let mock = Mock::new();
+            let dav = mock.dav();
+            let remote = db().await;
+            let local = db().await;
+            let c = cfg();
+            let key = [3; 32];
+            let remote_memo = memos::save_impl(&remote, input("远端备忘")).await.unwrap();
+            add_task(&remote, "remote-task", "远端任务").await;
+            push_all(&remote, &dav, &c, &key).await;
+            let local_memo = memos::save_impl(&local, input("本地备忘")).await.unwrap();
+            add_task(&local, "local-task", "本地任务").await;
+            let before = mock.files.lock().unwrap().clone();
+            let device = runtime(&local).await.unwrap();
+            let selected = selection(&c, scope, direction);
+            sync_exchange(&local, &dav, &selected, &key, &device, true)
+                .await
+                .unwrap();
+            let downloads = direction != SyncDirection::Upload;
+            let uploads = direction != SyncDirection::Download;
+            let memos = scope != SyncScope::Tasks;
+            let tasks = scope != SyncScope::Memos;
+            assert_eq!(
+                memos::get_impl(&local, &remote_memo.summary.id)
+                    .await
+                    .is_ok(),
+                downloads && memos,
+                "{scope:?}/{direction:?}: memo download"
+            );
+            let downloaded_task: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks WHERE id='remote-task')")
+                    .fetch_one(local.pool())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                downloaded_task,
+                downloads && tasks,
+                "{scope:?}/{direction:?}: task download"
+            );
+            if !uploads {
+                assert!(
+                    *mock.files.lock().unwrap() == before,
+                    "download-only cannot change remote files"
+                );
+            }
+            download(&remote, &dav, &c, &key).await.unwrap();
+            assert_eq!(
+                memos::get_impl(&remote, &local_memo.summary.id)
+                    .await
+                    .is_ok(),
+                uploads && memos,
+                "{scope:?}/{direction:?}: memo upload"
+            );
+            let uploaded_task: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tasks WHERE id='local-task')")
+                    .fetch_one(remote.pool())
+                    .await
+                    .unwrap();
+            assert_eq!(
+                uploaded_task,
+                uploads && tasks,
+                "{scope:?}/{direction:?}: task upload"
+            );
+            close(remote).await;
+            close(local).await;
+        }
+    }
 }

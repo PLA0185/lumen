@@ -353,6 +353,30 @@ pub struct Config {
     pub workspace_id: String,
     pub enabled: bool,
     pub inherit_all: bool,
+    #[serde(default)]
+    pub default_sync: Option<SyncOptions>,
+}
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SyncOptions {
+    pub scope: SyncScope,
+    pub direction: SyncDirection,
+}
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncScope {
+    #[default]
+    All,
+    Tasks,
+    Memos,
+}
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncDirection {
+    #[default]
+    Both,
+    Upload,
+    Download,
 }
 async fn config(db: &Db) -> AppResult<Option<Config>> {
     sqlx::query_scalar::<_, String>("SELECT value_json FROM settings WHERE key=?")
@@ -993,6 +1017,7 @@ pub async fn cloud_sync_connect(
         workspace_id: workspace.id.clone(),
         enabled: false,
         inherit_all: input.inherit_all,
+        default_sync: previous.as_ref().and_then(|p| p.default_sync),
     };
     // Save a recoverable key before creating anything remotely. A network/disk error cannot
     // leave an encrypted workspace whose only recovery code was lost from process memory.
@@ -1330,6 +1355,14 @@ async fn apply_heads(db: &Db) -> AppResult<bool> {
     Ok(changed)
 }
 async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<bool> {
+    // Legacy inheritance applied only to downloading; preserve it until defaults are saved.
+    let scope = c.default_sync.map(|o| o.scope).unwrap_or(if c.inherit_all {
+        SyncScope::All
+    } else {
+        SyncScope::Memos
+    });
+    let include_memos = scope != SyncScope::Tasks;
+    let include_tasks = scope != SyncScope::Memos;
     let devices = dav.devices(db).await?;
     sqlx::query("UPDATE memo_sync_runtime SET device_count=? WHERE singleton=1")
         .bind(devices.len().max(1) as i64)
@@ -1346,18 +1379,24 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
             {
                 return Err(AppError::validation("云端设备头不兼容"));
             }
-            for root in head.heads {
-                fetch_branch(db, dav, c, key, &root).await?;
+            if include_memos {
+                for root in head.heads {
+                    fetch_branch(db, dav, c, key, &root).await?;
+                }
             }
-            if c.inherit_all {
+            if include_tasks {
                 for root in head.business_heads {
                     business::fetch(db, dav, c, key, &root).await?;
                 }
             }
         }
     }
-    let memo_changed = apply_heads(db).await?;
-    let changed = if c.inherit_all {
+    let memo_changed = if include_memos {
+        apply_heads(db).await?
+    } else {
+        false
+    };
+    let changed = if include_tasks {
         business::apply(db).await? || memo_changed
     } else {
         memo_changed
@@ -1372,6 +1411,9 @@ async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
     let c = config(db)
         .await?
         .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接 WebDAV 同步空间"))?;
+    sync_with_config(db, scan, &c).await
+}
+async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
     if !c.enabled {
         return Ok(false);
     }
@@ -1379,10 +1421,10 @@ async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
     let key = key_bytes(&cred.key)?;
     let dav = Dav::new(&c.server, &c.folder, &c.account, &cred.password)?;
     if scan {
-        verify_space(db, &dav, &c, &key).await?;
+        verify_space(db, &dav, c, &key).await?;
     }
     let device = runtime(db).await?;
-    sync_exchange(db, &dav, &c, &key, &device, scan).await
+    sync_exchange(db, &dav, c, &key, &device, scan).await
 }
 async fn sync_exchange(
     db: &Db,
@@ -1393,49 +1435,66 @@ async fn sync_exchange(
     scan: bool,
 ) -> AppResult<bool> {
     rebase_restore(db).await?;
-    upload(db, dav, c, key, device).await?;
-    // Publish memos immediately; a large first task upload must not hold them back.
-    let dirty: bool = sqlx::query_scalar(
-        "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
-    )
-    .fetch_one(db.pool())
-    .await?;
-    if dirty {
-        publish_head(db, dav, c, key, device).await?;
+    let options = c.default_sync.unwrap_or_default();
+    let can_download = scan && options.direction != SyncDirection::Upload;
+    if options.direction == SyncDirection::Download {
+        return if can_download {
+            download(db, dav, c, key).await
+        } else {
+            Ok(false)
+        };
     }
-    let business_result: AppResult<()> = async {
-        business::capture(db).await?;
-        business::upload(db, dav, c, key).await?;
-        Ok(())
+    if options.scope != SyncScope::Tasks {
+        upload(db, dav, c, key, device).await?;
+        // Publish memos before potentially large task uploads.
+        publish_if_dirty(db, dav, c, key, device).await?;
     }
-    .await;
-    if let Err(error) = business_result {
-        // Uncaptured local task changes must not be overwritten. Memo history is
-        // independent and can still arrive when an old attachment is missing.
-        if scan {
-            let mut memos_only = c.clone();
-            memos_only.inherit_all = false;
-            download(db, dav, &memos_only, key).await?;
+    if options.scope != SyncScope::Memos {
+        let business_result: AppResult<()> = async {
+            business::capture(db).await?;
+            business::upload(db, dav, c, key).await?;
+            Ok(())
         }
-        return Err(AppError {
-            message: format!("备忘和流程仍会同步；其它业务同步失败：{}", error.message),
-            ..error
-        });
+        .await;
+        if let Err(error) = business_result {
+            // Do not download uncaptured tasks. Only the requested memo scope can continue.
+            if can_download && options.scope == SyncScope::All {
+                let mut memos_only = c.clone();
+                memos_only.default_sync = Some(SyncOptions {
+                    scope: SyncScope::Memos,
+                    direction: SyncDirection::Download,
+                });
+                memos_only.inherit_all = false;
+                download(db, dav, &memos_only, key).await?;
+            }
+            return Err(error);
+        }
     }
-    let dirty: bool = sqlx::query_scalar(
-        "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
-    )
-    .fetch_one(db.pool())
-    .await?;
-    if dirty {
-        publish_head(db, dav, c, key, device).await?;
-    }
-    if scan {
+    publish_if_dirty(db, dav, c, key, device).await?;
+    if can_download {
         download(db, dav, c, key).await
     } else {
         Ok(false)
     }
 }
+async fn publish_if_dirty(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    device: &str,
+) -> AppResult<()> {
+    let dirty: bool = sqlx::query_scalar(
+        "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
+    )
+    .fetch_one(db.pool())
+    .await?;
+    if dirty {
+        publish_head(db, dav, c, key, device).await?;
+    }
+    Ok(())
+}
+
 fn notify(app: &tauri::AppHandle) {
     let _ = app.emit(
         "lumen-data-changed",
@@ -1451,9 +1510,17 @@ async fn save_error(db: &Db, error: &AppError) {
 pub async fn cloud_sync_now(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    options: Option<SyncOptions>,
 ) -> AppResult<Status> {
     let _guard = ENGINE.lock().await;
-    match sync(&state.db, true).await {
+    let mut c = config(&state.db)
+        .await?
+        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接 WebDAV 同步空间"))?;
+    c.enabled = true; // Manual action works while automatic sync is paused; do not persist this.
+    if let Some(options) = options {
+        c.default_sync = Some(options);
+    }
+    match sync_with_config(&state.db, true, &c).await {
         Ok(changed) => {
             if changed {
                 notify(&app);
@@ -1598,6 +1665,22 @@ pub async fn cloud_sync_restore(
     resolve(&state.db, &id, &event_id, expected_heads, keep_both).await
 }
 #[tauri::command]
+pub async fn cloud_sync_set_defaults(
+    state: State<'_, AppState>,
+    options: SyncOptions,
+) -> AppResult<Status> {
+    let _guard = ENGINE.lock().await;
+    let mut c = config(&state.db).await?.ok_or_else(|| {
+        AppError::new(
+            ErrorCode::NotConfigured,
+            "请先连接同步空间，再保存默认同步设置",
+        )
+    })?;
+    c.default_sync = Some(options);
+    store_config(&state.db, &c).await?;
+    status(&state.db).await
+}
+#[tauri::command]
 pub async fn cloud_sync_set_inheritance(
     state: State<'_, AppState>,
     inherit_all: bool,
@@ -1607,6 +1690,7 @@ pub async fn cloud_sync_set_inheritance(
         .await?
         .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先配置同步"))?;
     c.inherit_all = inherit_all;
+    c.default_sync = None; // Explicit use of the legacy inheritance command restores its old semantics.
     store_config(&state.db, &c).await?;
     status(&state.db).await
 }

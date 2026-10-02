@@ -21,6 +21,7 @@ import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
+import { CloudSyncButton } from './components/CloudSyncButton'
 import { AiAssistant } from './components/AiAssistant'
 import { MemosView } from './components/MemosView'
 import { CalendarView } from './components/CalendarView'
@@ -512,6 +513,7 @@ export default function App() {
 
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>
+            <CloudSyncButton />
             <button
               type="button"
               className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}

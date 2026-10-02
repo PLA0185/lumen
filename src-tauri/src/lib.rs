@@ -382,6 +382,7 @@ pub fn run() {
             cloud_sync::cloud_sync_set_enabled,
             cloud_sync::cloud_sync_recovery_code,
             cloud_sync::cloud_sync_now,
+            cloud_sync::cloud_sync_set_defaults,
             cloud_sync::cloud_sync_history,
             cloud_sync::cloud_sync_restore,
             cloud_sync::cloud_sync_set_inheritance,
