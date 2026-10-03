@@ -33,6 +33,12 @@ export interface SaveMemoInput {
   bodyMd: string
   steps: FlowStep[]
 }
+// Object field order may change over IPC; array order remains meaningful.
+export function sameMemoDraft(a: SaveMemoInput, b: SaveMemoInput): boolean {
+  const ordered = (_key: string, value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value
+  return JSON.stringify(a, ordered) === JSON.stringify(b, ordered)
+}
 async function call<T>(
   command: string,
   args: Record<string, unknown>,

@@ -53,6 +53,24 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('自动保存后的字段顺序变化不算新编辑，不会每秒重复写入或切换保存按钮文案', async () => {
+    const doc: memo.MemoDocument = { id: 'order', title: '发票流程', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{ id: 'one', title: '填写发票', owner: '', detail: '原说明', group: { id: 'invoice', title: '6. 发票', path: [] }, layout: { width: 605, minHeight: 289 } }] }
+    vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
+    let resolve!: (doc: memo.MemoDocument) => void
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(input => new Promise(r => { resolve = () => r({ ...doc, revision: 2, steps: input.steps.map(s => ({ id: s.id, title: s.title, owner: s.owner, detail: s.detail, layout: s.layout, group: s.group })) }) }))
+    await mount('', [doc])
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    await act(async () => document.querySelector('.flow-canvas__node')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
+    await fill('第 1 步负责人', '运营')
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(save).toHaveBeenCalledOnce()
+    const stableLabel = [...document.querySelectorAll('.memos__toolbar button')].some(b => b.textContent === '保存并查看')
+    await act(async () => resolve(doc))
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(save).toHaveBeenCalledOnce()
+    expect(stableLabel).toBe(true)
+    expect(document.querySelector('.memos__toolbar')?.textContent).not.toContain('编辑停顿后自动保存')
+  })
   it('打开记录及后台刷新不重复安排列表读取，不插入挤动卡片的加载提示', async () => {
     const doc: memo.MemoDocument = { id: 'stable', title: '稳定列表', category: '', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '已保存正文', steps: [] }
     vi.spyOn(memo, 'memoGet').mockImplementation(async () => structuredClone(doc))
@@ -311,6 +329,17 @@ describe('独立备忘与业务流程', () => {
     expect((document.querySelector('[aria-label="备忘内容"]') as HTMLTextAreaElement).value).toBe('第二版，不应丢失')
     await act(async () => vi.advanceTimersByTimeAsync(1000))
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'saved-id', expectedRevision: 1, bodyMd: '第二版，不应丢失' }))
+  })
+  it('自动保存接受后端去除标题首尾空白的结果，正文不丢失也不重复保存', async () => {
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, title: input.title.trim(), category: input.category.trim(), id: 'trimmed', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount()
+    await click('新建备忘')
+    await fill('备忘标题', '  原标题  ')
+    await fill('备忘内容', '原始正文')
+    await act(async () => vi.advanceTimersByTimeAsync(4000))
+    expect(save).toHaveBeenCalledOnce()
+    expect((document.querySelector('[aria-label="备忘标题"]') as HTMLInputElement).value).toBe('原标题')
+    expect((document.querySelector('[aria-label="备忘内容"]') as HTMLTextAreaElement).value).toBe('原始正文')
   })
   const row: memo.MemoSummary = {
     id: 'audit-own',

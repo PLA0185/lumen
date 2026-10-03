@@ -14,6 +14,7 @@ import { FlowImagePicker } from './FlowImagePicker'
 import { contentImages } from '../lib/content-assets'
 import { FlowCanvas } from './FlowCanvas'
 import { FlowSwitcher } from './FlowSwitcher'
+import { FitToolbar } from './FitToolbar'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -67,7 +68,7 @@ export function MemosView({
   const detailGate = useRef(createRequestGate()).current
   const dirty =
     !!draft &&
-    (!selected || JSON.stringify(draft) !== JSON.stringify(draftOf(selected)))
+    (!selected || !memo.sameMemoDraft(draft, draftOf(selected)))
   const reload = useCallback(async () => {
     if (!listLoaded.current) setLoading(true)
     await runLatestRequest(listGate, () => memo.memoList(query, trash), {
@@ -194,12 +195,12 @@ export function MemosView({
     if (automatic) setAutoSaving(true)
     else setBusy(true)
     setError(null)
-    setNotice(null)
+    if (!automatic) setNotice(null)
     try {
       const doc = await memo.memoSave(draft)
       setSelected(doc)
-      // Keep text typed while the automatic write was pending; only rebase its version.
-      if (automatic) setDraft(current => current ? { ...current, id: doc.id, expectedRevision: doc.revision } : current)
+      // Accept persisted normalization, but keep newer input typed during the write.
+      if (automatic) setDraft(current => current ? memo.sameMemoDraft(current, draft) ? draftOf(doc) : { ...current, id: doc.id, expectedRevision: doc.revision } : current)
       else { setDraft(draftOf(doc)); setEditing(false); setAiDraft(false) }
       setNotice('已保存到本机')
       await reload()
@@ -327,8 +328,7 @@ export function MemosView({
               <div className="memos__document-actions memos__document-actions--merged">
                 {draft.kind === 'flow' && <div className="segmented">{fullCanvas ? <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost btn--sm" onClick={() => setFlowView('canvas')}>画布</button>}</div>}
                 {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
-                {fullCanvas && notice && <span className="setgroup__hint" role="status">{notice}</span>}
-                {dirty && <span className="setgroup__hint">{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving ? '保存到本机中…' : '编辑停顿后自动保存'}</span>}
+                {(fullCanvas || dirty) && <span className="setgroup__hint memos__save-status" role="status" title={notice ?? undefined}>{aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving || busy ? '保存到本机中…' : dirty ? '编辑停顿后自动保存' : notice ?? ''}</span>}
                 {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
@@ -342,7 +342,7 @@ export function MemosView({
                         }
                         onClick={() => void save(false)}
                       >
-                        {busy || autoSaving ? '保存中…' : aiDraft ? '确认保存流程' : '保存并查看'}
+                        {aiDraft ? '确认保存流程' : '保存并查看'}
                       </button>
                       <button
                         className="btn btn--ghost"
@@ -396,7 +396,7 @@ export function MemosView({
 
   return (
     <section className={`memos${fullCanvas ? ' memos--canvas' : ''}`}>
-      <div className="memos__toolbar">
+      <FitToolbar>
         {documentActions}
         {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
         <button
@@ -459,7 +459,7 @@ export function MemosView({
         >
           刷新列表
         </button>
-      </div>
+      </FitToolbar>
       {(error || listError) && (
         <p className="alert alert--error selectable" role="alert">
           {error || listError}
