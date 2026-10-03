@@ -285,7 +285,7 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
       {steps.map((s, i) => {
         const previous = steps[i - 1]?.group, group = s.group
         const level = group && previous?.title !== group.title ? 'chapter' : group && JSON.stringify(previous?.path) !== JSON.stringify(group.path) ? 'stage' : 'step'
-        return <button key={s.id} type="button" data-level={level} data-chapter={group ? chapterTitles.indexOf(group.title) % 4 : undefined} className={`flow-canvas__nav-step${matches.includes(i) ? ' flow-canvas__nav-step--match' : ''}`} aria-label={`定位第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-current={selectedId === s.id ? 'step' : undefined} onClick={() => {
+        return <button key={s.id} type="button" data-level={level} data-chapter={group ? chapterTitles.indexOf(group.title) : undefined} style={group ? { '--flow-chapter-hue': (260 + chapterTitles.indexOf(group.title) * 137.507764) % 360 } as import('react').CSSProperties : undefined} className={`flow-canvas__nav-step${matches.includes(i) ? ' flow-canvas__nav-step--match' : ''}`} aria-label={`定位第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-current={selectedId === s.id ? 'step' : undefined} onClick={() => {
         pendingFocus.current = s.id
         setSelectedId(s.id); setInfoOpen(false); setEditingId(null); closeMenu()
         if (selectedId === s.id && !infoOpen) center(i)

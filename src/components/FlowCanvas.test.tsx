@@ -225,6 +225,15 @@ it('导航区分章节、阶段和步骤，悬停只显示当前节点的章节�
   await act(async () => marks[2]!.click())
   expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.getAttribute('data-step-id')).toBe('germany')
 })
+it('超过四个章节仍使用独立柔和色相，组内步骤保持同色', async () => {
+  const chapters = Array.from({ length: 9 }, (_, i) => ({ ...steps[0]!, id: `chapter-${i}`, group: { id: `chapter-${i}`, title: `${i + 1}. 原章节`, path: [] } }))
+  await controlled([...chapters, { ...chapters[8]!, id: 'same-chapter', title: '下一操作' }])
+  const marks = [...document.querySelectorAll<HTMLElement>('.flow-canvas__nav-step')]
+  const hues = marks.map(mark => mark.style.getPropertyValue('--flow-chapter-hue'))
+  expect(hues.slice(0, 9).every(Boolean)).toBe(true)
+  expect(new Set(hues.slice(0, 9)).size).toBe(9)
+  expect(hues[8]).toBe(hues[9])
+})
 it('卡片直接显示完整 Markdown 和原图，不靠打开详情才能查看', async () => {
   const image: assets.ContentAsset = { id: '00000000-0000-7000-8000-000000000001', name: '操作.png', mime: 'image/png', byteSize: 3, dataBase64: 'YWJj', sha256: '', createdAt: '' }
   vi.spyOn(assets, 'assetGet').mockResolvedValue(image)

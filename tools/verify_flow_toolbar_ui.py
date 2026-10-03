@@ -56,6 +56,7 @@ try:
     encoded = t.eval('(()=>{const c=document.createElement("canvas");c.width=320;c.height=100;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,320,100);x.fillStyle="#4f46e5";x.fillText("Original image",20,40);return c.toDataURL("image/png").split(",")[1]})()')
     asset = invoke('content_asset_import', {'name': '原图.png', 'dataBase64': encoded})
     groups = [('6. 发票', ['6.1 美国发票']), ('6. 发票', ['6.1 美国发票']), ('6. 发票', ['6.2 英国发票']), ('7. 追踪编码', []), ('7. 追踪编码', [])]
+    groups.extend((f'{i}. 验收章节', []) for i in range(8, 15))
     doc = invoke('memo_save', {'input': {'id': None, 'expectedRevision': None, 'title': 'Amazon出货SOP-工具栏验收-' + str(uuid.uuid4())[:8], 'category': '', 'kind': 'flow', 'bodyMd': '', 'steps': [
         {'id': str(uuid.uuid4()), 'title': '原操作' + str(i + 1), 'owner': '', 'detail': '原文说明。' + ('\n\n![原图](lumen-asset:' + asset['id'] + ')' if i == 0 else ''), 'group': {'id': title, 'title': title, 'path': path}}
         for i, (title, path) in enumerate(groups)]}})
@@ -63,9 +64,14 @@ try:
     if t.eval('!!document.querySelector(".flow-canvas")'):
         click('返回列表')
     click('刷新列表'); click(doc['title'])
-    assert t.wait_for('document.querySelectorAll(".flow-canvas__nav-step").length===5')
+    assert t.wait_for('document.querySelectorAll(".flow-canvas__nav-step").length===' + str(len(groups)))
+    check('顶部按钮固定8px间距靠拢，搜索相邻且顶栏高度不超过60px', t.eval('(()=>{const controls=document.querySelector(".topbar__controls"),end=document.querySelector(".topbar__end"),style=getComputedStyle(controls);return style.justifyContent==="flex-start"&&parseFloat(style.gap)===8&&end.getBoundingClientRect().left-controls.getBoundingClientRect().right<=13&&document.querySelector(".topbar").getBoundingClientRect().height<=60})()'))
     check('流程切换按钮使用与主要操作相同的紫色底', t.eval('getComputedStyle(document.querySelector(".flow-switcher__title")).backgroundColor===getComputedStyle(document.querySelector(".memos__toolbar .btn--primary:not(.flow-switcher__title)")).backgroundColor&&document.querySelector(".flow-switcher__title").classList.contains("btn--primary")'))
-    check('章节、阶段、步骤导航层级正确', t.eval('[...document.querySelectorAll(".flow-canvas__nav-step")].map(e=>e.dataset.level)') == ['chapter', 'step', 'stage', 'chapter', 'step'])
+    check('普通操作按钮均有可见底色', t.eval('[...document.querySelectorAll(".memos__toolbar .btn:not(.btn--primary)")].every(e=>{const bg=getComputedStyle(e).backgroundColor;return bg!=="transparent"&&bg!=="rgba(0, 0, 0, 0)"&&bg!==getComputedStyle(document.querySelector(".memos__toolbar")).backgroundColor})'))
+    check('返回列表与同行普通按钮高度、字号和内边距一致', t.eval('(()=>{const buttons=[...document.querySelectorAll(".memos__toolbar .btn--ghost")],back=buttons.find(b=>b.textContent.trim()==="返回列表"),other=buttons.find(b=>b.textContent.trim()==="细分流程"),a=getComputedStyle(back),b=getComputedStyle(other);return a.height===b.height&&a.fontSize===b.fontSize&&a.padding===b.padding})()'))
+    check('名称与细分流程之间仅保留简短保存状态，无大片空位', t.eval('(()=>{const status=document.querySelector(".memos__save-status"),style=getComputedStyle(status);return status.querySelector("[aria-hidden]").textContent==="已保存"&&parseFloat(style.width)<=3.1*parseFloat(style.fontSize)&&status.title.length>0})()'))
+    check('章节、阶段、步骤导航层级正确', t.eval('[...document.querySelectorAll(".flow-canvas__nav-step")].slice(0,5).map(e=>e.dataset.level)') == ['chapter', 'step', 'stage', 'chapter', 'step'])
+    check('九个章节采用九种不同柔和色相，同章节不变色', t.eval('(()=>{const marks=[...document.querySelectorAll(".flow-canvas__nav-step")],roots=marks.filter(e=>e.dataset.level==="chapter"),hue=e=>e.style.getPropertyValue("--flow-chapter-hue");return roots.length===9&&new Set(roots.map(hue)).size===9&&hue(marks[0])===hue(marks[1])&&hue(marks[1])===hue(marks[2])})()'))
     sizes = t.eval('[...document.querySelectorAll(".flow-canvas__nav-mark")].map(e=>parseFloat(getComputedStyle(e).height))')
     check('章节刻度大于阶段、阶段大于普通步骤', sizes[0] > sizes[2] > sizes[4])
     time.sleep(.2)
@@ -73,8 +79,10 @@ try:
     hover = rect('.flow-canvas__nav-step')
     t.call('Input.dispatchMouseEvent', {'type': 'mouseMoved', **hover})
     assert t.wait_for('getComputedStyle(document.querySelector(".flow-canvas__nav-label")).visibility==="visible"')
+    time.sleep(.2)
     tooltip = t.eval('(()=>{const e=document.querySelector(".flow-canvas__nav-label");return {text:e.textContent,visible:getComputedStyle(e).visibility}})()')
     check('真实悬停只显示当前章节路径、不展开其他小章节', tooltip['visible'] == 'visible' and all(s in tooltip['text'] for s in ['6. 发票', '6.1 美国发票']) and '6.2 英国发票' not in tooltip['text'])
+    check('导航提示框与刻度保留20px间距', t.eval('document.querySelector(".flow-canvas__nav-label").getBoundingClientRect().top-document.querySelector(".flow-canvas__nav-step").getBoundingClientRect().bottom>=19.5'))
     ui.real_click(t, '.flow-canvas__nav-step', index=2)
     check('阶段导航真实点击定位对应步骤', t.wait_for('document.querySelectorAll(".flow-canvas__nav-step")[2].getAttribute("aria-current")==="step"'))
     ui.real_click(t, '.flow-canvas__nav-step', index=0)
