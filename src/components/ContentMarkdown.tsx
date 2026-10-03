@@ -53,12 +53,12 @@ function Asset({ id, image, caption = '' }: { id: string; image: boolean; captio
     {error ? <span className="formerr" role="alert">{error}</span> : !asset ? <span>正在读取本地内容…</span> : url && <img src={url} alt={onSelectImage ? '原图缩略图' : asset.name} className="content-asset__image" role="button" tabIndex={0} aria-pressed={onSelectImage ? selectedImageId === id : undefined} aria-label={onSelectImage ? '选择原图' : caption ? `查看图片：${caption}` : '查看图片'} onClick={e => { e.stopPropagation(); if (onSelectImage) onSelectImage(id); else setViewer(true) }} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); if (onSelectImage) onSelectImage(id); else setViewer(true) } }} onError={() => setError('图片无法解码，请检查原文件')} />}
     {image && caption && !onSelectImage && <span className="content-asset__caption"><SafeText>{caption}</SafeText></span>}
     {!onSelectImage && <span className="content-asset__actions">
-    {asset && <button type="button" className="btn btn--quiet btn--sm" onClick={() => {
+    {asset && !image && <button type="button" className="btn btn--quiet btn--sm" onClick={() => {
       void (async () => {
         try { const path = await save({ defaultPath: asset.name }); if (path) await assetExport(id, path) }
         catch (e) { setError(contentError(e)) }
       })()
-    }}>{image ? '另存为' : `${asset.name} · ${(asset.byteSize / 1024).toFixed(1)} KB · 另存为`}</button>}
+    }}>{`${asset.name} · ${(asset.byteSize / 1024).toFixed(1)} KB · 另存为`}</button>}
     {asset && onExtract && <button type="button" className="btn btn--quiet btn--sm" aria-label={`识别内容：${asset.name}`} onClick={() => onExtract(asset)}>识别内容</button>}
     {onRemove && <button type="button" className="btn btn--ghost btn--sm" aria-label={`移除${image ? '图片' : '文件'}：${asset?.name ?? id}`} title="仅从当前内容移除，保留本地资源及其它记录" onClick={() => onRemove(id)}>移除{image ? '图片' : '文件'}</button>}
     </span>}

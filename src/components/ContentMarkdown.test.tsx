@@ -39,6 +39,7 @@ it('图片不显示文件名或大小，备注显示，单击打开大图，关�
   expect(document.body.textContent).not.toContain('image1.png')
   expect(document.body.textContent).not.toContain('KB')
   expect(document.body.textContent).toContain('发货单位置')
+  expect(document.body.textContent).not.toContain('另存为')
   await act(async () => document.querySelector('img')!.click())
   expect(document.querySelector('[aria-label="图片查看与批注"]')).not.toBeNull()
   for (const label of ['手绘', '箭头', '文字', '另存为', '保存到流程', '移除图片']) expect(document.body.textContent).toContain(label)
