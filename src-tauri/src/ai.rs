@@ -807,9 +807,14 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
         "stream": false,
     });
     if req.config.provider == Provider::DeepSeek {
-        // Tasks and connection probes need a visible answer, not a hidden chain
-        // consuming the entire output budget (DeepSeek defaults to thinking).
-        body["thinking"] = serde_json::json!({ "type": "disabled" });
+        // Only the explicit 32-token connection probe skips reasoning. Normal
+        // analysis keeps DeepSeek's documented default thinking and effort.
+        let probe = req.max_output_tokens == Some(32);
+        body["thinking"] =
+            serde_json::json!({ "type": if probe { "disabled" } else { "enabled" } });
+        if !probe {
+            body["reasoning_effort"] = "high".into();
+        }
     }
 
     if req.json_output {
@@ -1658,6 +1663,16 @@ mod tests {
     }
 
     /// Anthropic 的 system 必须是**顶层字段**，messages 里不能有 system
+    #[test]
+    fn normal_deepseek_analysis_keeps_thinking_enabled_and_default_effort() {
+        let req = sample_req(Provider::DeepSeek);
+        let body = build_openai_body(&req);
+        assert_eq!(
+            body["thinking"]["type"], "enabled",
+            "不能为避免连接测试耗尽小预算而关闭普通文档分析的思考"
+        );
+        assert_eq!(body["reasoning_effort"], "high");
+    }
     #[test]
     fn deepseek_small_budget_disables_reasoning_and_explains_exhaustion() {
         let mut req = sample_req(Provider::DeepSeek);
