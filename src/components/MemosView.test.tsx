@@ -84,6 +84,23 @@ describe('独立备忘与业务流程', () => {
     }
     expect(document.querySelector('.memos__document .memos__document-actions')).toBeNull()
   })
+  it('单行工具栏的流程菜单放在滚动区域外，菜单内真实按下不误关，外部按下关闭', async () => {
+    const first: memo.MemoDocument = {id:'first',title:'原流程',category:'',kind:'flow',revision:1,createdAt:'',updatedAt:'',deletedAt:null,bodyMd:'',steps:[{id:'one',title:'原步骤',owner:'',detail:'原文'}]}
+    const second: memo.MemoDocument = {...first,id:'second',title:'另一个流程'}
+    const get = vi.spyOn(memo,'memoGet').mockImplementation(async id => id===first.id?first:second)
+    await mount('',[first,second]);await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    await act(async () => (document.querySelector('.flow-switcher__title') as HTMLButtonElement).click())
+    const menu = document.querySelector('.flow-switcher__menu')!
+    expect(menu.parentElement).toBe(document.body)
+    const item = [...menu.querySelectorAll('button')].find(b=>b.textContent==='另一个流程')!
+    await act(async () => item.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})))
+    expect(document.querySelector('.flow-switcher__menu')).toBe(menu)
+    await act(async () => item.click())
+    expect(get).toHaveBeenCalledWith(second.id)
+    await act(async () => (document.querySelector('.flow-switcher__title') as HTMLButtonElement).click())
+    await act(async () => document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})))
+    expect(document.querySelector('.flow-switcher__menu')).toBeNull()
+  })
   it('流程名称下拉切换前保存当前卡片，读取失败或版本冲突保留草稿', async () => {
     const first: memo.MemoDocument = { id: 'first', title: '流程甲', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{ id: 'step-a', title: '操作甲', owner: '', detail: '原文甲' }] }
     const second: memo.MemoDocument = { ...first, id: 'second', title: '流程乙', steps: [{ id: 'step-b', title: '操作乙', owner: '', detail: '原文乙' }] }
