@@ -77,7 +77,7 @@ class Target:
 
     def wait_for(self, expression: str, timeout: float = 10.0, interval: float = 0.2):
         """轮询等待某个 JS 表达式返回真值。"""
-        probe = "(() => { try { return Boolean(" + expression + ") } catch (e) { return false } })()"
+        probe = "(async () => { try { return Boolean(await (" + expression + ")) } catch (e) { return false } })()"
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self.eval(probe):
