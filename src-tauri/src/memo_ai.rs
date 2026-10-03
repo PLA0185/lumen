@@ -244,16 +244,6 @@ pub async fn ai_generate_flow(
     let loaded =
         crate::ai_media::load_flow_media(&state.db, config.provider, &input.asset_ids).await?;
     let source = flow_source(&input.text, &loaded);
-    if let Some(plan) = crate::flow_structure::explicit_plan(&source)? {
-        return finish_flow(
-            &state.db,
-            &plan,
-            &source,
-            &loaded.references,
-            &loaded.derived,
-        )
-        .await;
-    }
     // Extracted document text is already in source with original image anchors.
     // Do not send a second copy as a file/text part for the model to split again.
     let media: Vec<_> = loaded
@@ -278,8 +268,7 @@ pub async fn ai_generate_flow(
             max_output_tokens: None,
             media,
         };
-    let response = ai::chat(&config, &request).await?;
-    crate::flow_structure::validate_protocol(&response.text)?;
+    let (response, _) = analyze_flow(&config, request, &source, &loaded.references).await?;
     finish_flow(
         &state.db,
         &response.text,
@@ -288,6 +277,47 @@ pub async fn ai_generate_flow(
         &loaded.derived,
     )
     .await
+}
+
+/// Let the model repair an invalid analysis once; never replace it with local splits.
+pub(crate) async fn analyze_flow(
+    config: &ProviderConfig,
+    mut request: ChatRequest,
+    source: &str,
+    references: &[ContentAsset],
+) -> AppResult<(ai::ChatResponse, usize)> {
+    for attempt in 1..=2 {
+        let response = ai::chat(config, &request).await?;
+        #[cfg(test)]
+        if let Ok(folder) = std::env::var("LUMEN_SEMANTIC_FLOW_EVIDENCE") {
+            std::fs::write(
+                std::path::Path::new(&folder).join(format!("attempt-{attempt}.json")),
+                &response.text,
+            )
+            .map_err(|e| AppError::internal(format!("显式验收证据写入失败：{e}")))?;
+        }
+        if response.truncated {
+            return Err(AppError::validation(
+                "AI分析因输出上限中断，未保存流程；请提高输出上限或分段分析",
+            ));
+        }
+        let validation = crate::flow_structure::validate_protocol(&response.text)
+            .and_then(|_| parse_flow(&response.text, source, references));
+        match validation {
+            Ok(_) => return Ok((response, attempt)),
+            Err(error)
+                if attempt == 1 && matches!(error.code, crate::error::ErrorCode::Validation) =>
+            {
+                request.messages.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: response.text,
+                });
+                request.messages.push(ChatMessage{role:"user".into(),content:format!("刚才结构未通过校验：{}。请重新检查全部范围、原标题祖先和配图，修正整个JSON。目录必须context；step中最多两个hasImage=true的原文块，超过时按实际动作分开并沿用阶段分组，不能改为context藏掉正文。每个step填写简短title，不要输出titleBlock；原章节和小标题用groupPath引用，优先沿用本范围末块的ancestorIds并从chapterId开始。全部原文块仍连续覆盖一次，不补写正文。",error.message)});
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded analysis returns on the second attempt")
 }
 
 fn flow_source(text: &str, loaded: &crate::ai_media::FlowMedia) -> String {
@@ -367,6 +397,30 @@ async fn finish_flow(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn heading_material_must_not_return_a_local_plan_before_ai_analysis() {
+        let source = include_str!("memo_ai.rs");
+        let route = source
+            .split("pub async fn ai_generate_flow(")
+            .nth(1)
+            .unwrap()
+            .split("fn flow_source(")
+            .next()
+            .unwrap();
+        assert!(route.contains("analyze_flow("));
+        assert!(source
+            .split("pub(crate) async fn analyze_flow(")
+            .nth(1)
+            .unwrap()
+            .split("fn flow_source(")
+            .next()
+            .unwrap()
+            .contains("ai::chat("));
+        assert!(
+            !route.contains("explicit_plan("),
+            "生成入口必须真的调用 AI 分析，不能遇到标题便提前返回本机计划"
+        );
+    }
 
     #[tokio::test]
     #[ignore = "explicit opt-in with an external selected DOCX, configured real model and isolated database"]
@@ -416,7 +470,9 @@ mod tests {
             .map(|(i, a)| serde_json::json!({"order":i+1,"id":a.id,"name":a.name,"mime":a.mime}))
             .collect();
         let request = ChatRequest { config: config.clone(), system: Some(crate::flow_structure::SYSTEM.into()), messages: vec![ChatMessage { role: "user".into(), content: format!("编号原文块（只能引用这些块进行分层）：\n{}\n\n随后提供的图片、文件按以下资源顺序表排列：\n{}", crate::flow_structure::prompt(&source).unwrap(), serde_json::to_string(&manifest).unwrap()) }], json_output: true, max_output_tokens: None, media: loaded.media.iter().filter(|a| !loaded.source_documents.iter().any(|(id, _)| id == &a.id)).cloned().collect() };
-        let response = ai::chat(&config, &request).await.unwrap();
+        let (response, _) = analyze_flow(&config, request, &source, &loaded.references)
+            .await
+            .unwrap();
         std::fs::write(evidence.join("word-response.json"), &response.text).unwrap();
         crate::flow_structure::validate_protocol(&response.text).unwrap();
         let draft = finish_flow(
@@ -433,6 +489,21 @@ mod tests {
         )
         .unwrap();
         let draft = draft.unwrap();
+        assert!(
+            !draft
+                .steps
+                .iter()
+                .any(|s| s.detail.trim() == "到这里亚马逊的操作流程基本上已经完成了。"),
+            "真实 Word 的阶段收尾不能冒充新操作"
+        );
+        assert!(
+            !draft.steps.iter().any(|s| s
+                .detail
+                .trim_start()
+                .starts_with("例如下图中取得的产品型号为")
+                && !s.detail.contains("这步之后根据")),
+            "型号示例必须附在对应操作中"
+        );
         assert!(
             draft
                 .body_md
