@@ -3190,7 +3190,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 原生真实鼠标验证宽窗口与 940px 窄窗口均一行、滚动点击最后动作、下拉菜单不被裁切、选择流程及外部关闭。隔离导入真实 Word，使用无密钥、不可连接模型配置生成 42 个步骤／30 张图片，未确认时没有备忘入库；原图引用同序，图片完整等比显示，最长卡片 674px。
 - 正式流程生成只读预览时仍是 revision 6；与外部完整原文校验草稿逐步比对后真实点击确认，再查库和历史；重启后逐字段一致。数据库 integrity_check ok、foreign_key_check 0。脚本曾因整数像素舍入、隐藏列表及 CRLF/LF 格式比对失败，核实后改用 CSS 精确尺寸、当前视图判断及仅换行格式归一，完整重跑成功，没有删正文／图片断言。
 - 签名构建退出 0，真实更新公钥验签通过，修改包字节后被拒绝。正式程序与构建程序仅 Tauri 的 3 字节安装包类型标记不同（UNK→NSS），其余字节一致；正式交互行为也实际验证。本地构建已有的信息型链接器警告与动态导入提示仍存在，严格 lint／clippy 检查通过。
-- 最新 GitHub CI 结果随本轮源码推送核对并补记；源码安全扫描未发现数据库、日志、构建包或真实签名私钥入库。真实 Word、快照、签名包、截图和 native-single-row-results.json／native-existing-subdivision.json 在 D:/Codex/lumen-verification-20261003/，不提交。
+- [本轮源码 CI 37082962344](https://github.com/PLA0185/lumen/actions/runs/37082962344) 的 frontend 与 rust 实际 success，包含所有测试及无豁免严格 Clippy。源码安全扫描未发现数据库、日志、构建包或真实签名私钥入库。真实 Word、快照、签名包、截图和 native-single-row-results.json／native-existing-subdivision.json 在 D:/Codex/lumen-verification-20261003/，不提交。
 
 ### 相关文档
 
