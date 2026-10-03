@@ -100,6 +100,7 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
   const selected = steps.findIndex(step => step.id === selectedId)
   const matches = query.trim() ? steps.flatMap((step, i) => match(step, query, mode === 'exact') ? [i] : []) : []
   const scene = flowLayout(steps.map(s => transient?.id === s.id ? { ...s, layout: transient.layout } : s), nodeHeights, layout)
+  const chapterTitles = [...new Set(steps.flatMap(step => step.group ? [step.group.title] : []))]
   function position(index: number) { return scene.nodes[index] ?? { id: '', x: 0, y: 0, width: 420, height: HEIGHT } }
   const ownsInput = useCallback(() => {
     return !isInput(document.activeElement) && (pointerInside.current || !!viewport.current?.contains(document.activeElement))
@@ -281,11 +282,16 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
   return <section className="flow-canvas" style={{ '--flow-nav-top': `${navTop}px` } as import('react').CSSProperties}>
     {inputError && <p className="alert alert--err" role="alert">{inputError}</p>}
     <nav className="flow-canvas__nav" aria-label="流程节点导航">
-      {steps.map((s, i) => <button key={s.id} type="button" className={`flow-canvas__nav-step${matches.includes(i) ? ' flow-canvas__nav-step--match' : ''}`} aria-label={`定位第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-current={selectedId === s.id ? 'step' : undefined} onClick={() => {
+      {steps.map((s, i) => {
+        const previous = steps[i - 1]?.group, group = s.group
+        const level = group && previous?.title !== group.title ? 'chapter' : group && JSON.stringify(previous?.path) !== JSON.stringify(group.path) ? 'stage' : 'step'
+        const stages = group && level === 'chapter' ? [...new Set(steps.filter(step => step.group?.title === group.title).flatMap(step => step.group!.path.length ? [step.group!.path.join(' › ')] : []))] : group?.path.length ? [group.path.join(' › ')] : []
+        return <button key={s.id} type="button" data-level={level} data-chapter={group ? chapterTitles.indexOf(group.title) % 4 : undefined} className={`flow-canvas__nav-step${matches.includes(i) ? ' flow-canvas__nav-step--match' : ''}`} aria-label={`定位第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-current={selectedId === s.id ? 'step' : undefined} onClick={() => {
         pendingFocus.current = s.id
         setSelectedId(s.id); setInfoOpen(false); setEditingId(null); closeMenu()
         if (selectedId === s.id && !infoOpen) center(i)
-      }}><span className="flow-canvas__nav-mark" /><span className="flow-canvas__nav-label">{i + 1} · <SafeText>{flowStepDisplayTitle(s.title)}</SafeText></span></button>)}
+      }}><span className="flow-canvas__nav-mark" /><span className="flow-canvas__nav-label">{group && <strong><SafeText>{group.title}</SafeText></strong>}{stages.map(stage => <span className="flow-canvas__nav-stage" key={stage}><SafeText>{stage}</SafeText></span>)}<span>{i + 1} · <SafeText>{flowStepDisplayTitle(s.title)}</SafeText></span></span></button>
+      })}
     </nav>
     <div className="flow-canvas__toolbar">
       <input className="input" aria-label="搜索流程步骤" placeholder="搜索标题、负责人、操作…" value={query} onChange={e => setQuery(e.target.value)} />
