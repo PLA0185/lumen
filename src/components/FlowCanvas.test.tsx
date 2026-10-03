@@ -207,7 +207,7 @@ it('章节和阶段作为分组标题，小步骤独立成卡，新增沿用相�
   await click('完成编辑')
   expect(document.querySelectorAll('.flow-canvas__group')).toHaveLength(2)
 })
-it('导航区分章节、阶段和步骤，章节悬停列出同组全部阶段且保留逐步定位', async () => {
+it('导航区分章节、阶段和步骤，悬停只显示当前节点的章节路径且保留逐步定位', async () => {
   await controlled([
     { ...steps[0]!, group: { id: 'invoice', title: '6. 发票', path: ['6.1 美国发票'] } },
     { ...steps[1]!, group: { id: 'invoice', title: '6. 发票', path: ['6.1 美国发票'] } },
@@ -218,8 +218,9 @@ it('导航区分章节、阶段和步骤，章节悬停列出同组全部阶段�
   expect(marks.map(n => n.dataset.level)).toEqual(['chapter', 'step', 'stage', 'chapter'])
   expect(marks[0]!.textContent).toContain('6. 发票')
   expect(marks[0]!.textContent).toContain('6.1 美国发票')
-  expect(marks[0]!.textContent).toContain('6.2 德国发票')
+  expect(marks[0]!.textContent).not.toContain('6.2 德国发票')
   expect(marks[2]!.textContent).toContain('6.2 德国发票')
+  expect(marks[2]!.textContent).not.toContain('6.1 美国发票')
   expect(marks[3]!.textContent).not.toContain('6.2 德国发票')
   await act(async () => marks[2]!.click())
   expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.getAttribute('data-step-id')).toBe('germany')

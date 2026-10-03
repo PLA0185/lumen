@@ -285,12 +285,11 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
       {steps.map((s, i) => {
         const previous = steps[i - 1]?.group, group = s.group
         const level = group && previous?.title !== group.title ? 'chapter' : group && JSON.stringify(previous?.path) !== JSON.stringify(group.path) ? 'stage' : 'step'
-        const stages = group && level === 'chapter' ? [...new Set(steps.filter(step => step.group?.title === group.title).flatMap(step => step.group!.path.length ? [step.group!.path.join(' › ')] : []))] : group?.path.length ? [group.path.join(' › ')] : []
         return <button key={s.id} type="button" data-level={level} data-chapter={group ? chapterTitles.indexOf(group.title) % 4 : undefined} className={`flow-canvas__nav-step${matches.includes(i) ? ' flow-canvas__nav-step--match' : ''}`} aria-label={`定位第 ${i + 1} 步：${flowStepDisplayTitle(s.title)}`} aria-current={selectedId === s.id ? 'step' : undefined} onClick={() => {
         pendingFocus.current = s.id
         setSelectedId(s.id); setInfoOpen(false); setEditingId(null); closeMenu()
         if (selectedId === s.id && !infoOpen) center(i)
-      }}><span className="flow-canvas__nav-mark" /><span className="flow-canvas__nav-label">{group && <strong><SafeText>{group.title}</SafeText></strong>}{stages.map(stage => <span className="flow-canvas__nav-stage" key={stage}><SafeText>{stage}</SafeText></span>)}<span>{i + 1} · <SafeText>{flowStepDisplayTitle(s.title)}</SafeText></span></span></button>
+      }}><span className="flow-canvas__nav-mark" /><span className="flow-canvas__nav-label">{group && <strong><SafeText>{group.title}</SafeText></strong>}{!!group?.path.length && <span className="flow-canvas__nav-stage"><SafeText>{group.path.join(' › ')}</SafeText></span>}<span>{i + 1} · <SafeText>{flowStepDisplayTitle(s.title)}</SafeText></span></span></button>
       })}
     </nav>
     <div className="flow-canvas__toolbar">
