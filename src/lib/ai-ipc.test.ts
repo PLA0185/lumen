@@ -15,6 +15,12 @@
 import { describe, it, expect } from 'vitest'
 import { inputAssetIds } from './ai-ipc'
 
+it('AI 材料包含带备注的图片，保留原序并按编号大小写去重', () => {
+  const first = '00000000-0000-7000-8000-00000000000a', second = '00000000-0000-7000-8000-00000000000b'
+  const caption = JSON.stringify('备注"原文')
+  expect(inputAssetIds(`![图](lumen-asset:${first} ${caption})\n![图](lumen-asset:${second})\n![图](lumen-asset:${first.toUpperCase()})`)).toEqual([first, second])
+})
+
 it('AI 只选择当前输入引用的有效资源，不发送其他备忘或重复引用', () => {
   const id = '00000000-0000-7000-8000-000000000001'
   expect(inputAssetIds(`![图片](lumen-asset:${id}) [重复](lumen-asset:${id}) [坏链接](lumen-asset:no-id)`)).toEqual([id])

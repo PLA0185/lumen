@@ -791,8 +791,9 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
     if let Some(sys) = req.system.as_ref().filter(|s| !s.trim().is_empty()) {
         messages.push(serde_json::json!({ "role": "system", "content": sys }));
     }
-    for m in &req.messages {
-        messages.push(serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }));
+    let first_user = req.messages.iter().position(|m| m.role == "user");
+    for (index, m) in req.messages.iter().enumerate() {
+        messages.push(serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req, Some(index) == first_user) }));
     }
 
     let max_tokens = req
@@ -839,11 +840,13 @@ fn build_openai_body(req: &ChatRequest) -> serde_json::Value {
 /// | 输出上限 | `max_tokens` | **`max_output_tokens`** |
 /// | JSON 输出 | `response_format.type` | **`text.format.type`** |
 fn build_openai_responses_body(req: &ChatRequest) -> serde_json::Value {
+    let first_user = req.messages.iter().position(|m| m.role == "user");
     let input: Vec<serde_json::Value> = req
         .messages
         .iter()
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }))
+        .enumerate()
+        .filter(|(_, m)| m.role == "user" || m.role == "assistant")
+        .map(|(index, m)| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req, Some(index) == first_user) }))
         .collect();
 
     let max_tokens = req
@@ -877,13 +880,15 @@ fn build_openai_responses_body(req: &ChatRequest) -> serde_json::Value {
 /// 3. 结构化输出用 `output_config.format`（官方已 GA），
 ///    但为了兼容尚未支持的部署，仍配合提示词约束。
 fn build_anthropic_body(req: &ChatRequest) -> serde_json::Value {
+    let first_user = req.messages.iter().position(|m| m.role == "user");
     let messages: Vec<serde_json::Value> = req
         .messages
         .iter()
+        .enumerate()
         // Anthropic 的 messages 只有 user/assistant 两种 role；
         // 历史里若混入 system 会被拒绝，这里统一跳过。
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req) }))
+        .filter(|(_, m)| m.role == "user" || m.role == "assistant")
+        .map(|(index, m)| serde_json::json!({ "role": m.role, "content": crate::ai_media::message_content(m, req, Some(index) == first_user) }))
         .collect();
 
     let max_tokens = req
@@ -1456,6 +1461,59 @@ pub async fn ai_status(state: State<'_, AppState>) -> AppResult<serde_json::Valu
 #[cfg(test)]
 mod provider_matrix_tests {
     use super::*;
+
+    #[test]
+    fn repair_requests_attach_material_only_once_in_all_builders() {
+        let images = [
+            b"\x89PNG\r\n\x1a\nfirst".as_slice(),
+            b"\x89PNG\r\n\x1a\nsecond".as_slice(),
+        ]
+        .into_iter()
+        .map(|bytes| crate::content_assets::prepare_bytes("image.png", bytes.to_vec()).unwrap())
+        .collect::<Vec<_>>();
+        for provider in Provider::ALL {
+            let request = ChatRequest {
+                config: ProviderConfig::with_defaults(provider),
+                system: None,
+                messages: vec![
+                    ChatMessage {
+                        role: "user".into(),
+                        content: "原始材料".into(),
+                    },
+                    ChatMessage {
+                        role: "assistant".into(),
+                        content: "错误结构".into(),
+                    },
+                    ChatMessage {
+                        role: "user".into(),
+                        content: "只修正结构".into(),
+                    },
+                ],
+                json_output: true,
+                max_output_tokens: None,
+                media: images.clone(),
+            };
+            let body = match provider {
+                Provider::OpenAI => build_openai_responses_body(&request),
+                Provider::Claude => build_anthropic_body(&request),
+                _ => build_openai_body(&request),
+            };
+            let messages = if provider == Provider::OpenAI {
+                &body["input"]
+            } else {
+                &body["messages"]
+            };
+            assert_eq!(
+                messages[2]["content"], "只修正结构",
+                "{provider:?} must not resend material on repair"
+            );
+            let first = messages[0]["content"].as_array().unwrap();
+            assert_eq!(first.len(), 3);
+            for (part, original) in first.iter().skip(1).zip(&images) {
+                assert!(part.to_string().contains(&original.data_base64));
+            }
+        }
+    }
 
     /// 三家协议差异的**汇总断言**。
     ///

@@ -10,6 +10,7 @@ import { invokeData as invoke } from './data-change'
 import { IpcError } from './ipc'
 import type { ErrorCode } from './types'
 import type { SaveMemoInput } from './memos-ipc'
+import { assetId, contentAssetPattern } from './content-assets'
 
 /** 提供商 */
 export type AiProvider = 'deep_seek' | 'open_ai' | 'claude' | 'custom'
@@ -240,7 +241,10 @@ export const aiStatus = (): Promise<AiStatus> => call(AI_CMD.status)
 // ------------------------- 四项能力（都只返回预览） -------------------------
 
 export function inputAssetIds(text: string): string[] {
-  return [...new Set([...text.matchAll(/lumen-asset:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\))/gi)].map((m) => m[1]!))]
+  return [...new Set([...text.matchAll(contentAssetPattern())].flatMap(match => {
+    const id = assetId(`lumen-asset:${match[1]}`)?.toLowerCase()
+    return id ? [id] : []
+  }))]
 }
 export const aiGenerateFlow = (config: ProviderConfig, text: string): Promise<SaveMemoInput> =>
   call(AI_CMD.generateFlow, { config, input: { text, assetIds: inputAssetIds(text) } })

@@ -184,6 +184,7 @@ it('识别导入文件后把正文和内嵌原图放入编辑器，保留原文�
   expect(field.value).toContain(assets.assetMarkdown(fileAsset))
   expect(field.value).toContain('先核对发货表，再通知仓库。')
   expect(field.value).toContain(assets.assetMarkdown(image))
+  expect(field.value).toContain(`<!-- lumen-extracted:${fileAsset.id} -->`)
 })
 it('Word 识别正文已有原位置图片时不再次堆到正文末尾', async () => {
   const original = { ...asset, name: 'SOP.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }

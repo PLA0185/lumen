@@ -171,8 +171,26 @@ pub(crate) fn packets(source: &str) -> Vec<Packet> {
     result
 }
 pub(crate) fn prompt(source: &str) -> AppResult<String> {
-    let blocks=packets(source).iter().map(|p|serde_json::json!({"id":p.id,"text":p.text,"ancestorIds":p.outline,"chapterId":p.chapter,"isHeading":p.heading.is_some(),"hasImage":p.text.contains("!["),"textLength":p.text.chars().count()})).collect::<Vec<_>>();
+    let packets = packets(source);
+    let flags = packet_assets(&packets, &crate::ai_media::resource_links(source));
+    let blocks=packets.iter().map(|p|serde_json::json!({"id":p.id,"text":p.text,"ancestorIds":p.outline,"chapterId":p.chapter,"isHeading":p.heading.is_some(),"hasImage":flags[p.id-1].1,"textLength":p.text.chars().count()})).collect::<Vec<_>>();
     serde_json::to_string(&blocks).map_err(|e| AppError::internal(format!("原文块编码失败：{e}")))
+}
+fn packet_assets(packets: &[Packet], links: &[crate::ai_media::ResourceLink]) -> Vec<(bool, bool)> {
+    let mut begin = 0;
+    packets
+        .iter()
+        .map(|packet| {
+            let end = begin + packet.text.len();
+            let in_packet = |link: &&crate::ai_media::ResourceLink| {
+                link.range.start >= begin && link.range.start < end
+            };
+            let assets = links.iter().filter(in_packet).collect::<Vec<_>>();
+            let flags = (!assets.is_empty(), assets.iter().any(|link| link.image));
+            begin = end;
+            flags
+        })
+        .collect()
 }
 fn title(packet: &Packet) -> String {
     if let Some((_, title)) = &packet.heading {
@@ -243,11 +261,12 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
             plan.steps.remove(index);
         }
     }
-    let refs = regex::Regex::new(r"lumen-asset:([0-9a-fA-F-]{36})").expect("asset regex");
-    for reference in refs.captures_iter(source) {
+    let source_links = crate::ai_media::resource_links(source);
+    let asset_flags = packet_assets(&packets, &source_links);
+    for reference in &source_links {
         if !media
             .iter()
-            .any(|a| a.id.eq_ignore_ascii_case(&reference[1]))
+            .any(|a| a.id.eq_ignore_ascii_case(&reference.id))
         {
             return Err(AppError::validation("原文包含未选择的资源，未保存流程"));
         }
@@ -272,7 +291,7 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
                 .filter(|b| b.heading.is_none() && !b.text.trim().is_empty())
                 .collect();
             let length: usize = body.iter().map(|b| b.text.chars().count()).sum();
-            let images = body.iter().filter(|b| b.text.contains("![")).count();
+            let images = body.iter().filter(|b| asset_flags[b.id - 1].1).count();
             (body.len() > 1 && (length > 1200 || images > 2)).then(|| {
                 format!(
                     "{}-{}（正文{}字，带图操作块{}个）",
@@ -289,7 +308,7 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
     }) {
         let assets: Vec<_> = packets[p.begin - 1..p.end]
             .iter()
-            .filter(|b| refs.is_match(&b.text))
+            .filter(|b| asset_flags[b.id - 1].0)
             .map(|b| b.id.to_string())
             .collect();
         if !assets.is_empty() {
@@ -334,7 +353,7 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
             if placement.title.is_some()
                 || placement.title_block.is_some()
                 || !placement.group_path.is_empty()
-                || selected.iter().any(|p| refs.is_match(&p.text))
+                || selected.iter().any(|p| asset_flags[p.id - 1].0)
             {
                 return Err(AppError::validation(
                     "目录／背景只能留在流程信息，不能附带操作标题或吞掉图片／文件",
@@ -452,18 +471,15 @@ pub(crate) fn parse(raw: &str, source: &str, media: &[ContentAsset]) -> AppResul
             "AI没有识别出实际操作，只返回目录或背景；未生成空流程",
         ));
     }
-    let original_refs: Vec<_> = refs
-        .captures_iter(source)
-        .map(|c| c[1].to_ascii_lowercase())
-        .collect();
+    let original_refs: Vec<_> = source_links.into_iter().map(|link| link.id).collect();
     let displayed = steps
         .iter()
         .map(|s| s.detail.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let visible_refs: Vec<_> = refs
-        .captures_iter(&displayed)
-        .map(|c| c[1].to_ascii_lowercase())
+    let visible_refs: Vec<_> = crate::ai_media::resource_links(&displayed)
+        .into_iter()
+        .map(|link| link.id)
         .collect();
     if original_refs != visible_refs {
         return Err(AppError::validation(

@@ -10,17 +10,120 @@ use serde_json::{json, Value};
 // Local request guard; DeepSeek's documented image-count ceiling is 600.
 const MAX_MEDIA_FILES: usize = 600;
 
+pub(crate) struct ResourceLink {
+    pub id: String,
+    pub range: std::ops::Range<usize>,
+    pub image: bool,
+    pub inline: bool,
+    pub label: String,
+    pub title: String,
+}
+
+/// CommonMark resolves reference definitions while excluding code and HTML
+/// examples. Offsets refer to the actual use, never the definition line.
+pub(crate) fn resource_links(text: &str) -> Vec<ResourceLink> {
+    use pulldown_cmark::{Event, LinkType, Parser, Tag, TagEnd};
+    let mut links: Vec<ResourceLink> = Vec::new();
+    let mut labels = Vec::new();
+    for (event, range) in Parser::new(text).into_offset_iter() {
+        match event {
+            Event::Start(tag @ (Tag::Link { .. } | Tag::Image { .. })) => {
+                let image = matches!(tag, Tag::Image { .. });
+                let (dest_url, title, link_type) = match tag {
+                    Tag::Link {
+                        dest_url,
+                        title,
+                        link_type,
+                        ..
+                    }
+                    | Tag::Image {
+                        dest_url,
+                        title,
+                        link_type,
+                        ..
+                    } => (dest_url, title, link_type),
+                    _ => unreachable!("link or image"),
+                };
+                let id = dest_url
+                    .split_once(':')
+                    .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("lumen-asset"))
+                    .map(|(_, id)| {
+                        uuid::Uuid::parse_str(id)
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|_| id.to_owned())
+                    });
+                labels.push(id.map(|id| {
+                    let index = links.len();
+                    links.push(ResourceLink {
+                        id,
+                        range,
+                        image,
+                        inline: link_type == LinkType::Inline,
+                        label: String::new(),
+                        title: title.to_string(),
+                    });
+                    index
+                }));
+            }
+            Event::Text(value) | Event::Code(value) => {
+                for index in labels.iter().flatten() {
+                    links[*index].label.push_str(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                for index in labels.iter().flatten() {
+                    links[*index].label.push('\n');
+                }
+            }
+            Event::End(TagEnd::Link | TagEnd::Image) => {
+                labels.pop();
+            }
+            _ => (),
+        }
+    }
+    links
+}
+
 pub struct FlowMedia {
     pub media: Vec<ContentAsset>,
     pub references: Vec<ContentAsset>,
     pub warnings: Vec<String>,
     pub derived: Vec<ContentAsset>,
     pub source_documents: Vec<(String, String)>,
+    pub archived_documents: Vec<ContentAsset>,
 }
 
 /// Explicit flow generation may derive images; importing and generic chat do not.
+#[cfg(test)]
 pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> AppResult<FlowMedia> {
-    if ids.len() > MAX_MEDIA_FILES {
+    load_flow_media_for_source(db, provider, ids, "").await
+}
+
+pub async fn load_flow_media_for_source(
+    db: &Db,
+    provider: Provider,
+    ids: &[String],
+    source: &str,
+) -> AppResult<FlowMedia> {
+    // Actual Markdown pointers are explicit selections too. Put them in source
+    // order, including reference links missed by the frontend's token scanner.
+    let mut selected_ids = document_asset_ids(source);
+    let raw_source = source.to_ascii_lowercase();
+    for id in ids {
+        let id = uuid::Uuid::parse_str(id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|_| id.to_ascii_lowercase());
+        if selected_ids.iter().any(|selected| selected == &id) {
+            continue;
+        }
+        // The scanner also sees code literals. They cannot authorize reading
+        // an asset; IDs absent from the text remain valid explicit attachments.
+        if raw_source.contains(&format!("lumen-asset:{id}")) {
+            continue;
+        }
+        selected_ids.push(id);
+    }
+    if selected_ids.len() > MAX_MEDIA_FILES {
         return Err(AppError::validation("一次最多分析 600 个文件"));
     }
     let mut result = FlowMedia {
@@ -29,24 +132,68 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
         warnings: Vec::new(),
         derived: Vec::new(),
         source_documents: Vec::new(),
+        archived_documents: Vec::new(),
     };
-    let mut budget = Vec::new();
-    for id in ids {
-        if result.references.iter().any(|a| &a.id == id) {
-            continue;
+    let mut originals = Vec::new();
+    let mut original_bytes = 0u64;
+    for id in &selected_ids {
+        if !originals
+            .iter()
+            .any(|a: &ContentAsset| a.id.eq_ignore_ascii_case(id))
+        {
+            let original = get_asset(db, &id.to_ascii_lowercase()).await?;
+            original_bytes += original.byte_size.max(0) as u64;
+            if original_bytes > MAX_ASSET_BYTES as u64 {
+                return Err(AppError::validation(
+                    "AI 材料总大小最多 20 MiB，请减少文件或缩小图片",
+                ));
+            }
+            originals.push(original);
         }
-        let original = get_asset(db, id).await?;
+    }
+    let archived = recognized_document_ids(source, &originals)?;
+    let mut queued = originals
+        .iter()
+        .map(|a| a.id.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let mut pending = std::collections::VecDeque::from(originals);
+    let mut budget = Vec::new();
+    while let Some(original) = pending.pop_front() {
         budget.push(original.clone());
         check_flow_budget(&budget)?;
         result.references.push(original.clone());
+        if archived.contains(&original.id) {
+            result.archived_documents.push(original);
+            continue;
+        }
         let extract = matches!(
             original.mime.as_str(),
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 | "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 | "application/vnd.ms-excel"
-        ) || (original.mime == "application/pdf" && provider == Provider::DeepSeek);
+        ) || original.mime == "text/plain"
+            || (original.mime == "application/pdf" && provider == Provider::DeepSeek);
         if extract {
             let extracted = crate::document_import::prepare_extraction(original.clone()).await?;
+            if original.mime == "text/plain" {
+                // A selected recognition file explicitly contains its local
+                // resource links. Load those links, never other memo content.
+                for id in document_asset_ids(&extracted.text) {
+                    if queued.insert(id.clone()) {
+                        if queued.len() > MAX_MEDIA_FILES {
+                            return Err(AppError::validation("一次最多分析 600 个文件"));
+                        }
+                        let linked = get_asset(db, &id).await?;
+                        original_bytes += linked.byte_size.max(0) as u64;
+                        if original_bytes > MAX_ASSET_BYTES as u64 {
+                            return Err(AppError::validation(
+                                "AI 材料总大小最多 20 MiB，请减少文件或缩小图片",
+                            ));
+                        }
+                        pending.push_back(linked);
+                    }
+                }
+            }
             result
                 .source_documents
                 .push((original.id.clone(), extracted.text.clone()));
@@ -64,7 +211,9 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
             text.byte_size = extracted.text.len() as i64;
             text.sha256 = hex::encode(Sha256::digest(extracted.text.as_bytes()));
             text.data_base64 = STANDARD.encode(extracted.text.as_bytes());
-            budget.push(text.clone());
+            if original.mime != "text/plain" {
+                budget.push(text.clone());
+            }
             budget.extend(extracted.images.iter().cloned());
             check_flow_budget(&budget)?;
             if provider == Provider::OpenAI {
@@ -79,13 +228,120 @@ pub async fn load_flow_media(db: &Db, provider: Provider, ids: &[String]) -> App
             result.media.push(original);
         }
     }
+    validate_document_cycles(&result.source_documents)?;
+    validate_media(Provider::OpenAI, &budget)?;
     validate_media(provider, &result.media)?;
     Ok(result)
 }
 
+fn document_asset_ids(text: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    for link in resource_links(text) {
+        if !ids.contains(&link.id) {
+            ids.push(link.id);
+        }
+    }
+    ids
+}
+
+fn validate_document_cycles(documents: &[(String, String)]) -> AppResult<()> {
+    let graph = documents
+        .iter()
+        .map(|(id, text)| (id.as_str(), document_asset_ids(text)))
+        .collect::<std::collections::HashMap<_, _>>();
+    fn visit<'a>(
+        id: &'a str,
+        graph: &'a std::collections::HashMap<&str, Vec<String>>,
+        active: &mut std::collections::HashSet<&'a str>,
+        done: &mut std::collections::HashSet<&'a str>,
+    ) -> AppResult<()> {
+        if done.contains(id) {
+            return Ok(());
+        }
+        if !active.insert(id) {
+            return Err(AppError::validation(
+                "所选材料文件存在循环引用，请移除循环链接后重新生成",
+            ));
+        }
+        if let Some(links) = graph.get(id) {
+            for linked in links
+                .iter()
+                .filter(|link| graph.contains_key(link.as_str()))
+            {
+                visit(linked, graph, active, done)?;
+            }
+        }
+        active.remove(id);
+        done.insert(id);
+        Ok(())
+    }
+    let mut active = std::collections::HashSet::new();
+    let mut done = std::collections::HashSet::new();
+    for id in graph.keys() {
+        visit(id, &graph, &mut active, &mut done)?;
+    }
+    Ok(())
+}
+
+/// The editor records an exact source ID; old editor output has an exact
+/// filename heading. Never infer recognition from similar business prose.
+fn recognized_document_ids(
+    source: &str,
+    originals: &[ContentAsset],
+) -> AppResult<std::collections::HashSet<String>> {
+    use pulldown_cmark::{Event, Parser, Tag};
+    let mut ids = std::collections::HashSet::new();
+    let marker = regex::Regex::new(r"^<!-- lumen-extracted:([0-9a-fA-F-]{36}) -->$")
+        .expect("source marker regex");
+    let events = Parser::new(source).into_offset_iter().collect::<Vec<_>>();
+    for (event, range) in &events {
+        if let Event::Html(html) = event {
+            if let Some(capture) = marker.captures(html.trim()) {
+                if source[range.end..].trim().is_empty() {
+                    return Err(AppError::validation(
+                        "已识别来源标记后没有正文，请重新识别或移除该标记",
+                    ));
+                }
+                if let Some(original) = originals.iter().find(|a| {
+                    a.id.eq_ignore_ascii_case(&capture[1]) && !a.mime.starts_with("image/")
+                }) {
+                    ids.insert(original.id.clone());
+                }
+            }
+        }
+    }
+    let explicit_names = originals
+        .iter()
+        .filter(|a| ids.contains(&a.id))
+        .map(|a| a.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    for original in originals {
+        if original.mime.starts_with("image/")
+            || ids.contains(&original.id)
+            || explicit_names.contains(original.name.as_str())
+        {
+            continue;
+        }
+        let heading = format!("### {} · 识别内容", original.name);
+        if events.iter().any(|(event, range)| {
+            matches!(event, Event::Start(Tag::Heading { .. }))
+                && source[range.clone()].trim() == heading
+                && !source[range.end..].trim().is_empty()
+        }) {
+            if originals.iter().filter(|a| a.name == original.name).count() > 1 {
+                return Err(AppError::validation(
+                    "旧识别内容对应多个同名原文件，无法确定来源；请保留需要的原文件并重新识别",
+                ));
+            }
+            ids.insert(original.id.clone());
+        }
+    }
+    Ok(ids)
+}
+
 fn check_flow_budget(assets: &[ContentAsset]) -> AppResult<()> {
     // Budget includes originals plus expanded text/images, even if a provider only receives derivatives.
-    validate_media(Provider::OpenAI, assets)
+    validate_media_limits(assets)
 }
 
 pub fn validate_material_text(text: &str) -> AppResult<()> {
@@ -152,7 +408,7 @@ pub async fn load_media(
     Ok(assets)
 }
 
-pub fn validate_media(provider: Provider, media: &[ContentAsset]) -> AppResult<()> {
+fn validate_media_limits(media: &[ContentAsset]) -> AppResult<()> {
     if media.len() > MAX_MEDIA_FILES {
         return Err(AppError::validation("一次最多分析 600 个文件"));
     }
@@ -161,6 +417,11 @@ pub fn validate_media(provider: Provider, media: &[ContentAsset]) -> AppResult<(
             "AI 材料总大小最多 20 MiB，请减少文件或缩小图片",
         ));
     }
+    Ok(())
+}
+
+pub fn validate_media(provider: Provider, media: &[ContentAsset]) -> AppResult<()> {
+    validate_media_limits(media)?;
     let mut text_chars = 0;
     for asset in media {
         let bytes = decode_asset(asset)?;
@@ -206,8 +467,8 @@ pub fn validate_media(provider: Provider, media: &[ContentAsset]) -> AppResult<(
     Ok(())
 }
 
-pub fn message_content(message: &ChatMessage, req: &ChatRequest) -> Value {
-    if message.role != "user" || req.media.is_empty() {
+pub fn message_content(message: &ChatMessage, req: &ChatRequest, include_media: bool) -> Value {
+    if !include_media || message.role != "user" || req.media.is_empty() {
         return json!(message.content);
     }
     let provider = req.config.provider;
@@ -242,6 +503,173 @@ pub fn message_content(message: &ChatMessage, req: &ChatRequest) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn flow_attachment_entry_ignores_code_asset_ids_before_database_lookup() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-code-attachments-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let known = crate::content_assets::store_bytes(
+            &db,
+            "example.md",
+            "示例不能补到正文。".as_bytes().to_vec(),
+        )
+        .await
+        .unwrap();
+        let unknown = uuid::Uuid::now_v7().to_string();
+        let source = format!(
+            "原操作。\n\n```md\n[示例](lumen-asset:{})\n```\n\n`![示例](lumen-asset:{unknown})`",
+            known.id
+        );
+        let loaded =
+            load_flow_media_for_source(&db, Provider::DeepSeek, &[known.id, unknown], &source)
+                .await
+                .expect("代码示例不能触发任何资源读取，包括不存在的资源");
+        assert!(loaded.references.is_empty());
+        assert!(loaded.media.is_empty());
+        assert!(
+            loaded.source_documents.is_empty(),
+            "已存示例不能兜底追加到正文"
+        );
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn flow_attachment_entry_keeps_explicit_files_without_source_uuid() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumen-explicit-attachments-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let db = Db::init(&dir).await.unwrap();
+        let explicit = crate::content_assets::store_bytes(
+            &db,
+            "selected.md",
+            "附件原操作。".as_bytes().to_vec(),
+        )
+        .await
+        .unwrap();
+        let loaded = load_flow_media_for_source(
+            &db,
+            Provider::DeepSeek,
+            std::slice::from_ref(&explicit.id),
+            "按附件生成操作流程。",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            loaded.references.len(),
+            1,
+            "API 明确选中的附件不能因正文没写 UUID 丢失"
+        );
+        assert_eq!(loaded.references[0].id, explicit.id);
+        assert_eq!(loaded.source_documents[0].1, "附件原操作。");
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn flow_attachment_entry_uses_real_reference_order_without_frontend_parser() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumen-reference-attachments-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let db = Db::init(&dir).await.unwrap();
+        let first = crate::content_assets::store_bytes(
+            &db,
+            "first.png",
+            b"\x89PNG\r\n\x1a\nfirst".to_vec(),
+        )
+        .await
+        .unwrap();
+        let second = crate::content_assets::store_bytes(
+            &db,
+            "second.png",
+            b"\x89PNG\r\n\x1a\nsecond".to_vec(),
+        )
+        .await
+        .unwrap();
+        let source = format!("`![示例](lumen-asset:{})`\n\n![第二图][second]\n\n![第一图][first]\n\n[first]: lumen-asset:{} \"原备注\"\n[second]: lumen-asset:{}", first.id, first.id, second.id);
+        for supplied in [vec![first.id.clone(), second.id.clone()], vec![]] {
+            let loaded = load_flow_media_for_source(&db, Provider::DeepSeek, &supplied, &source)
+                .await
+                .unwrap();
+            assert_eq!(
+                loaded.media.iter().map(|a| &a.id).collect::<Vec<_>>(),
+                vec![&second.id, &first.id],
+                "参考式原图必须按真实引用顺序加载，不能被代码示例或前端 regex 顺序改变"
+            );
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn selected_markdown_cycle_is_rejected_before_generation() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-material-cycle-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let id = uuid::Uuid::now_v7().to_string();
+        let mut original = crate::content_assets::prepare_bytes(
+            "cycle.md",
+            format!("原操作。\n[循环材料](lumen-asset:{id})").into_bytes(),
+        )
+        .unwrap();
+        original.id = id.clone();
+        crate::content_assets::persist_assets(&db, &[original])
+            .await
+            .unwrap();
+        let error = load_flow_media_for_source(
+            &db,
+            Provider::DeepSeek,
+            std::slice::from_ref(&id),
+            &format!("[材料](lumen-asset:{id})"),
+        )
+        .await
+        .err()
+        .expect("循环必须失败");
+        assert!(error.message.contains("循环引用"));
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn explicit_recognition_source_distinguishes_same_name_files() {
+        let first =
+            crate::content_assets::prepare_bytes("SOP.docx", crate::document_import::tests::docx())
+                .unwrap();
+        let second =
+            crate::content_assets::prepare_bytes("SOP.docx", crate::document_import::tests::docx())
+                .unwrap();
+        let source = format!("[原文件](lumen-asset:{})\n<!-- lumen-extracted:{} -->\n\n### SOP.docx · 识别内容\n\n已识别动作。\n\n[另一个原文件](lumen-asset:{})", first.id, first.id, second.id);
+        let ids = recognized_document_ids(&source, &[first.clone(), second])
+            .expect("明确来源ID不应被同名未识别文件阻断");
+        assert_eq!(ids, std::collections::HashSet::from([first.id]));
+    }
+
+    #[test]
+    fn legacy_recognition_never_guesses_ambiguous_names_or_code_examples() {
+        let first =
+            crate::content_assets::prepare_bytes("SOP.docx", crate::document_import::tests::docx())
+                .unwrap();
+        let second =
+            crate::content_assets::prepare_bytes("SOP.docx", crate::document_import::tests::docx())
+                .unwrap();
+        assert!(recognized_document_ids(
+            "### SOP.docx · 识别内容\n\n原操作。",
+            &[first.clone(), second]
+        )
+        .is_err());
+        assert!(recognized_document_ids(
+            "```md\n### SOP.docx · 识别内容\n\n原操作。\n```",
+            std::slice::from_ref(&first)
+        )
+        .unwrap()
+        .is_empty());
+        assert!(recognized_document_ids("原操作。", &[first])
+            .unwrap()
+            .is_empty());
+    }
 
     #[tokio::test]
     async fn unsupported_native_word_uses_local_text_without_mutating_original() {
@@ -330,7 +758,7 @@ mod tests {
             max_output_tokens: None,
             media,
         };
-        let parts = message_content(&message, &req);
+        let parts = message_content(&message, &req, true);
         assert_eq!(parts.as_array().unwrap().len(), 16);
         for part in parts.as_array().unwrap().iter().skip(1) {
             assert_eq!(
@@ -367,7 +795,7 @@ mod tests {
             .message
             .contains("600"));
         let text = asset("extracted.txt", "字".repeat(100_001).as_bytes());
-        assert!(check_flow_budget(&[original, text])
+        assert!(validate_media(Provider::OpenAI, &[original, text])
             .unwrap_err()
             .message
             .contains("100000"));
@@ -425,7 +853,7 @@ mod tests {
                 max_output_tokens: None,
                 media: vec![png.clone(), pdf.clone(), text.clone()],
             };
-            let parts = message_content(&message, &req);
+            let parts = message_content(&message, &req, true);
             assert_eq!(parts.as_array().unwrap().len(), 4);
             assert!(parts.to_string().contains(&png.data_base64));
             assert!(parts.to_string().contains(&pdf.data_base64));

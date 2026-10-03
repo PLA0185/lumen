@@ -52,9 +52,9 @@ pub(crate) fn source_sections(text: &str) -> AppResult<Vec<DocumentSection>> {
         if let Some(capture) = heading.captures(line) {
             let number = capture[1].parse::<usize>().unwrap_or(0);
             if number != sections.len() + 1 {
-                return Err(AppError::validation(
-                    "原文章节编号不连续或重复，未改写步骤；请核对原文编号",
-                ));
+                // Legacy section inference is optional. A chapter excerpt, gap,
+                // or repeated number is valid source for the schema-2 model.
+                return Ok(Vec::new());
             }
             sections.push(DocumentSection {
                 title: line.trim_start_matches('#').trim().into(),
@@ -247,10 +247,20 @@ fn office_images(
     parsed: &mut Parsed,
     entries: &[(String, Vec<u8>)],
     prefix: &str,
+    only_anchored: bool,
 ) -> AppResult<()> {
     let mut total = 0;
+    let anchored = parsed
+        .image_positions
+        .iter()
+        .map(|(_, part)| part.as_str())
+        .collect::<std::collections::HashSet<_>>();
     for (name, bytes) in entries.iter().filter(|(name, _)| name.starts_with(prefix)) {
         if bytes.is_empty() {
+            continue;
+        }
+        if only_anchored && !anchored.contains(name.as_str()) {
+            parsed.warnings.push(format!("内嵌资源 {name} 未在正文定位（可能来自页眉、页脚或遗留资源），保留在原文件，未放入操作步骤。"));
             continue;
         }
         if !mime_for(name, bytes).starts_with("image/") {
@@ -391,7 +401,7 @@ fn word(bytes: &[u8]) -> AppResult<Parsed> {
             _ => (),
         }
     }
-    office_images(&mut parsed, &entries, "word/media/")?;
+    office_images(&mut parsed, &entries, "word/media/", true)?;
     parsed
         .warnings
         .push("已提取正文、表格和内嵌图片；页眉、脚注未导入，文本框和原版式不保证还原。".into());
@@ -461,7 +471,7 @@ fn excel(bytes: &[u8], modern: bool) -> AppResult<Parsed> {
             }
             append(&mut parsed.text, "\n\n")?;
         }
-        office_images(&mut parsed, &entries, "xl/media/")?;
+        office_images(&mut parsed, &entries, "xl/media/", false)?;
     } else {
         bounded_xls(bytes)?;
         let mut workbook =
@@ -963,6 +973,77 @@ pub(crate) mod tests {
     use sha2::{Digest, Sha256};
     use std::io::{Cursor, Write};
 
+    #[tokio::test]
+    async fn extraction_accepts_numbered_chapter_excerpt_and_gaps() {
+        for text in [
+            "## 3. 核对\n核对数量。",
+            "## 1. 下载\n下载表格。\n## 3. 核对\n核对数量。",
+        ] {
+            let extracted = prepare_extraction(asset("excerpt.md", text.as_bytes()))
+                .await
+                .expect("合法节选与跳号不能被旧机械分章阻断");
+            assert_eq!(extracted.text, text);
+            assert!(extracted.sections.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn word_uses_only_body_anchored_images_and_preserves_repeat_positions() {
+        let bytes = package(&[
+            (
+                "word/document.xml",
+                r#"<w:document xmlns:w="urn:w" xmlns:a="urn:a" xmlns:r="urn:r"><w:body><w:p><w:r><w:t>动作前</w:t></w:r><w:r><a:blip r:embed="rBody"/></w:r><w:r><w:t>动作中</w:t></w:r><w:r><a:blip r:embed="rBody"/></w:r><w:r><w:t>动作后</w:t></w:r></w:p></w:body></w:document>"#,
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                r#"<Relationships><Relationship Id="rBody" Type="urn:image/image" Target="media/body.png"/></Relationships>"#,
+            ),
+            (
+                "word/header1.xml",
+                r#"<w:hdr xmlns:w="urn:w" xmlns:a="urn:a" xmlns:r="urn:r"><a:blip r:embed="rLogo"/></w:hdr>"#,
+            ),
+        ]);
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(bytes)).unwrap();
+        for name in [
+            "word/media/logo.png",
+            "word/media/body.png",
+            "word/media/unused.png",
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"\x89PNG\r\n\x1a\nfixture").unwrap();
+        }
+        let extracted =
+            prepare_extraction(asset("with-logo.docx", &zip.finish().unwrap().into_inner()))
+                .await
+                .unwrap();
+        assert_eq!(
+            extracted.images.len(),
+            1,
+            "页眉和未定位图不能进入业务图片清单"
+        );
+        assert_eq!(extracted.images[0].name, "body.png");
+        let token = format!("lumen-asset:{}", extracted.images[0].id);
+        let positions = extracted
+            .text
+            .match_indices(&token)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        assert_eq!(positions.len(), 2);
+        assert!(extracted.text.find("动作前").unwrap() < positions[0]);
+        assert!(positions[0] < extracted.text.find("动作中").unwrap());
+        assert!(extracted.text.find("动作中").unwrap() < positions[1]);
+        assert!(positions[1] < extracted.text.find("动作后").unwrap());
+        assert!(extracted
+            .warnings
+            .iter()
+            .any(|w| w.contains("logo.png") && w.contains("原文件")));
+        assert!(extracted
+            .warnings
+            .iter()
+            .any(|w| w.contains("unused.png") && w.contains("原文件")));
+    }
+
     pub(crate) fn asset(name: &str, bytes: &[u8]) -> ContentAsset {
         ContentAsset {
             id: uuid::Uuid::now_v7().to_string(),
@@ -991,6 +1072,33 @@ pub(crate) mod tests {
             "word/document.xml",
             r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>订单核对 &amp; 发货</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>SKU</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>数量</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#,
         )])
+    }
+
+    pub(crate) fn docx_image_source(names: &[&str]) -> Vec<u8> {
+        let relationships = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                format!(r#"<Relationship Id="r{i}" Type="urn:image/image" Target="media/{name}"/>"#)
+            })
+            .collect::<String>();
+        let images = names
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!(r#"<w:p><w:r><a:blip r:embed="r{i}"/></w:r></w:p>"#))
+            .collect::<String>();
+        package(&[
+            (
+                "word/document.xml",
+                &format!(
+                    r#"<w:document xmlns:w="urn:w" xmlns:a="urn:a" xmlns:r="urn:r"><w:body><w:p><w:r><w:t>订单核对</w:t></w:r></w:p>{images}</w:body></w:document>"#
+                ),
+            ),
+            (
+                "word/_rels/document.xml.rels",
+                &format!("<Relationships>{relationships}</Relationships>"),
+            ),
+        ])
     }
 
     pub(crate) fn ordered_sop() -> Vec<u8> {
@@ -1444,7 +1552,14 @@ pub(crate) mod tests {
                 zip::write::SimpleFileOptions::default(),
             )
             .unwrap();
-        archive.write_all(b"<w:document xmlns:w='urn:word'><w:p><w:r><w:t>Image example</w:t></w:r></w:p></w:document>").unwrap();
+        archive.write_all(b"<w:document xmlns:w='urn:word' xmlns:a='urn:a' xmlns:r='urn:r'><w:p><w:r><w:t>Image example</w:t></w:r><w:r><a:blip r:embed='rImage'/></w:r></w:p></w:document>").unwrap();
+        archive
+            .start_file(
+                "word/_rels/document.xml.rels",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(b"<Relationships><Relationship Id='rImage' Type='urn:image/image' Target='media/image1.png'/></Relationships>").unwrap();
         archive
             .start_file(
                 "word/media/image1.png",

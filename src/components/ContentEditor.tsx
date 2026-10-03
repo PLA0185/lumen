@@ -106,11 +106,12 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
       const anchored = new Set(contentImages(extracted.text).map(image => image.id))
       const recognized = [extracted.text.trim() ? `\n### ${asset.name.replace(/[\r\n]/g, '_')} · 识别内容\n\n${extracted.text}` : '', ...extracted.images.filter(image => !anchored.has(image.id.toLowerCase())).map(assetMarkdown)].filter(Boolean).join('\n')
       const remaining = ref.current && ref.current.maxLength >= 0 ? ref.current.maxLength - ref.current.value.length : Infinity
-      let text = recognized ? `\n${recognized}\n` : ''
+      const provenance = recognized && !asset.mime.startsWith('image/') ? `<!-- lumen-extracted:${asset.id} -->\n` : ''
+      let text = recognized ? `\n${provenance}${recognized}\n` : ''
       const warnings = [...extracted.warnings]
       if (text.length > remaining) {
         const complete = await assetImportFile(new File([recognized], `${asset.name.slice(0, 180)}-识别内容.md`, { type: 'text/plain' }))
-        text = `\n${assetMarkdown(complete)}\n`
+        text = `\n${provenance}${assetMarkdown(complete)}\n`
         warnings.push('识别正文超过当前位置剩余字数，完整识别内容已保存为文件；原文件也保留，可另存后分段编辑。')
         if (text.length > remaining) {
           setImportResults(assetMarkdown(complete))

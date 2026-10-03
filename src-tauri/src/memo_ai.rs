@@ -241,8 +241,13 @@ pub async fn ai_generate_flow(
         return Err(AppError::validation("请先粘贴文字、聊天记录或添加截图"));
     }
     crate::ai_media::validate_material_text(&input.text)?;
-    let loaded =
-        crate::ai_media::load_flow_media(&state.db, config.provider, &input.asset_ids).await?;
+    let loaded = crate::ai_media::load_flow_media_for_source(
+        &state.db,
+        config.provider,
+        &input.asset_ids,
+        &input.text,
+    )
+    .await?;
     let source = flow_source(&input.text, &loaded);
     // Extracted document text is already in source with original image anchors.
     // Do not send a second copy as a file/text part for the model to split again.
@@ -275,6 +280,7 @@ pub async fn ai_generate_flow(
         &source,
         &loaded.references,
         &loaded.derived,
+        &loaded.warnings,
     )
     .await
 }
@@ -320,38 +326,119 @@ pub(crate) async fn analyze_flow(
     unreachable!("bounded analysis returns on the second attempt")
 }
 
+fn without_recognition_transport(text: &str, loaded: &crate::ai_media::FlowMedia) -> String {
+    use pulldown_cmark::{Event, Parser, Tag};
+    let transport_ranges = Parser::new(text)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            let is_transport = loaded.archived_documents.iter().any(|asset| match &event {
+                Event::Html(html) => html
+                    .trim()
+                    .eq_ignore_ascii_case(&format!("<!-- lumen-extracted:{} -->", asset.id)),
+                Event::Start(Tag::Heading { .. }) => {
+                    text[range.clone()].trim() == format!("### {} · 识别内容", asset.name)
+                }
+                _ => false,
+            });
+            is_transport.then_some(range)
+        })
+        .collect::<Vec<_>>();
+    let mut material = text.to_owned();
+    for range in transport_ranges.into_iter().rev() {
+        material.replace_range(range, "");
+    }
+    material
+}
+
+fn expand_source_tokens(
+    text: &str,
+    loaded: &crate::ai_media::FlowMedia,
+    expanded: &mut std::collections::HashSet<String>,
+) -> String {
+    let mut material = without_recognition_transport(text, loaded);
+    let mut replacements = Vec::new();
+    let mut consumed = 0;
+    // Decide expansions in document order, then replace backwards so byte
+    // offsets remain valid. Code examples never enter this list.
+    for link in crate::ai_media::resource_links(&material) {
+        if link.range.start < consumed {
+            continue;
+        }
+        let replacement = if loaded
+            .archived_documents
+            .iter()
+            .any(|a| a.id.eq_ignore_ascii_case(&link.id))
+        {
+            Some(String::new())
+        } else if let Some((id, document)) = loaded
+            .source_documents
+            .iter()
+            .find(|(id, _)| id.eq_ignore_ascii_case(&link.id))
+        {
+            Some(if expanded.insert(id.clone()) {
+                format!(
+                    "\n\n{}\n\n",
+                    expand_source_tokens(document, loaded, expanded)
+                )
+            } else {
+                String::new()
+            })
+        } else if !link.inline {
+            let label = link
+                .label
+                .replace('\\', "\\\\")
+                .replace('[', "\\[")
+                .replace(']', "\\]");
+            let title = if link.title.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " \"{}\"",
+                    link.title.replace('\\', "\\\\").replace('"', "\\\"")
+                )
+            };
+            Some(format!(
+                "{}[{label}](lumen-asset:{}{title})",
+                if link.image { "!" } else { "" },
+                link.id
+            ))
+        } else {
+            None
+        };
+        if let Some(replacement) = replacement {
+            consumed = link.range.end;
+            replacements.push((link.range, replacement));
+        }
+    }
+    for (range, replacement) in replacements.into_iter().rev() {
+        material.replace_range(range, &replacement);
+    }
+    material
+}
+
 fn flow_source(text: &str, loaded: &crate::ai_media::FlowMedia) -> String {
-    let tokens = regex::Regex::new(
-        r#"!?\[[^\]\n]*\]\(lumen-asset:([0-9a-fA-F-]{36})(?: "(?:\\.|[^"\\\n])*")?\)"#,
-    )
-    .expect("asset token regex");
-    let mut expanded = std::collections::HashSet::new();
+    let mut expanded = loaded
+        .archived_documents
+        .iter()
+        .map(|a| a.id.clone())
+        .collect::<std::collections::HashSet<_>>();
     // Expand at the selected file's original position. File transport labels are
     // retained in the archive, not promoted to business steps or fake headings.
-    let mut source = tokens
-        .replace_all(text, |c: &regex::Captures<'_>| {
-            if let Some((id, document)) = loaded
-                .source_documents
-                .iter()
-                .find(|(id, _)| id.eq_ignore_ascii_case(&c[1]))
-            {
-                if expanded.insert(id.clone()) {
-                    format!("\n\n{document}\n\n")
-                } else {
-                    String::new()
-                }
-            } else {
-                c[0].to_owned()
-            }
-        })
-        .into_owned();
+    let mut source = expand_source_tokens(text, loaded, &mut expanded);
     for (id, document) in &loaded.source_documents {
         if expanded.insert(id.clone()) {
-            source.push_str(&format!("\n\n{document}\n"));
+            source.push_str(&format!(
+                "\n\n{}\n",
+                expand_source_tokens(document, loaded, &mut expanded)
+            ));
         }
     }
     for asset in &loaded.references {
-        if !expanded.contains(&asset.id) && !source.contains(&format!("lumen-asset:{}", asset.id)) {
+        if !expanded.contains(&asset.id)
+            && !crate::ai_media::resource_links(&source)
+                .iter()
+                .any(|link| link.id == asset.id)
+        {
             source.push_str(&format!(
                 "\n{}[原始材料](lumen-asset:{})\n",
                 if asset.mime.starts_with("image/") {
@@ -372,12 +459,16 @@ async fn finish_flow(
     source: &str,
     references: &[ContentAsset],
     derived: &[ContentAsset],
+    warnings: &[String],
 ) -> AppResult<SaveMemoInput> {
     let mut draft = parse_flow(raw, source, references)?;
     let originals: Vec<_> = references
         .iter()
         .filter(|a| {
-            !a.mime.starts_with("image/") && !source.contains(&format!("lumen-asset:{}", a.id))
+            !a.mime.starts_with("image/")
+                && !crate::ai_media::resource_links(source)
+                    .iter()
+                    .any(|link| link.id == a.id)
         })
         .collect();
     if !originals.is_empty() {
@@ -390,6 +481,15 @@ async fn finish_flow(
         }
         crate::memos::validate(&draft)?;
     }
+    if !warnings.is_empty() {
+        draft.body_md.push_str("\n\n## 材料识别提示\n\n");
+        for warning in warnings {
+            draft
+                .body_md
+                .push_str(&format!("- {}\n", warning.replace(['\r', '\n'], " ")));
+        }
+        crate::memos::validate(&draft)?;
+    }
     crate::content_assets::persist_assets(db, derived).await?;
     Ok(draft)
 }
@@ -397,6 +497,269 @@ async fn finish_flow(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reference_image_metadata_and_definition_keep_markdown_anchor() {
+        let outer = crate::content_assets::prepare_bytes("outer.md", b"outer".to_vec()).unwrap();
+        let image = test_image(&uuid::Uuid::now_v7().to_string());
+        let definition = format!("[pic]: lumen-asset:{} \"原备注\"", image.id);
+        let text = format!("前操作。\n\n![原图][pic]\n\n后操作。\n\n![原图][pic]\n\n{definition}");
+        let loaded = crate::ai_media::FlowMedia {
+            media: vec![image.clone()],
+            references: vec![outer.clone(), image.clone()],
+            warnings: vec![],
+            derived: vec![],
+            source_documents: vec![(outer.id.clone(), text)],
+            archived_documents: vec![],
+        };
+        let source = flow_source(&format!("[材料](lumen-asset:{})", outer.id), &loaded);
+        let inline = format!("![原图](lumen-asset:{} \"原备注\")", image.id);
+        assert_eq!(
+            source.matches(&inline).count(),
+            2,
+            "引用式图片应在两个原锚点保留alt/title"
+        );
+        assert!(source.find("前操作。").unwrap() < source.find(&inline).unwrap());
+        assert!(source.find(&inline).unwrap() < source.find("后操作。").unwrap());
+        assert!(source.rfind(&inline).unwrap() > source.find("后操作。").unwrap());
+        assert!(source.contains(&definition), "原定义行仍保留在全文归档");
+        let blocks: serde_json::Value =
+            serde_json::from_str(&crate::flow_structure::prompt(&source).unwrap()).unwrap();
+        let count = blocks.as_array().unwrap().len();
+        let plan = serde_json::json!({"schemaVersion":2,"steps":[{"begin":1,"end":count-1,"kind":"step","title":"对照原图核对"},{"begin":count,"end":count,"kind":"context"}]}).to_string();
+        let draft = parse_flow(&plan, &source, &[image]).unwrap();
+        assert_eq!(draft.steps[0].detail.matches(&inline).count(), 2);
+        assert!(draft.body_md.contains(&definition));
+    }
+
+    #[test]
+    fn code_only_resource_uuid_is_literal_at_markdown_anchor() {
+        let source = "对照语法记录操作。\n\n```md\n![代码示例](lumen-asset:00000000-0000-7000-8000-000000000001)\n```";
+        let count = crate::flow_structure::packets(source).len();
+        let plan = serde_json::json!({"schemaVersion":2,"steps":[{"begin":1,"end":count,"kind":"step","title":"对照语法记录操作"}]}).to_string();
+        let draft = parse_flow(&plan, source, &[]).expect("代码示例UUID不能当未选择附件");
+        assert_eq!(draft.steps[0].detail, source);
+    }
+
+    #[test]
+    fn reference_document_expands_at_real_markdown_anchor() {
+        let outer = crate::content_assets::prepare_bytes("outer.md", b"outer".to_vec()).unwrap();
+        let inner = crate::content_assets::prepare_bytes("inner.md", b"inner".to_vec()).unwrap();
+        let source = format!(
+            "前操作。\n\n[内层][m]\n\n后操作。\n\n[m]: lumen-asset:{}",
+            inner.id
+        );
+        let loaded = crate::ai_media::FlowMedia {
+            media: vec![],
+            references: vec![outer.clone(), inner.clone()],
+            warnings: vec![],
+            derived: vec![],
+            source_documents: vec![(outer.id.clone(), source), (inner.id, "中间操作。".into())],
+            archived_documents: vec![],
+        };
+        let source = flow_source(&format!("[外层](lumen-asset:{})", outer.id), &loaded);
+        assert!(source.find("前操作。").unwrap() < source.find("中间操作。").unwrap());
+        assert!(
+            source.find("中间操作。").unwrap() < source.find("后操作。").unwrap(),
+            "引用式资源必须在真实链接位置展开"
+        );
+    }
+
+    #[test]
+    fn code_asset_example_cannot_consume_real_markdown_anchor() {
+        let outer = crate::content_assets::prepare_bytes("outer.md", b"outer".to_vec()).unwrap();
+        let inner = crate::content_assets::prepare_bytes("inner.md", b"inner".to_vec()).unwrap();
+        let example = format!("```md\n[内层](lumen-asset:{})\n```", inner.id);
+        let source = format!(
+            "{example}\n\n前操作。\n\n[内层](lumen-asset:{})\n\n后操作。",
+            inner.id
+        );
+        let loaded = crate::ai_media::FlowMedia {
+            media: vec![],
+            references: vec![outer.clone(), inner.clone()],
+            warnings: vec![],
+            derived: vec![],
+            source_documents: vec![(outer.id.clone(), source), (inner.id, "中间操作。".into())],
+            archived_documents: vec![],
+        };
+        let source = flow_source(&format!("[外层](lumen-asset:{})", outer.id), &loaded);
+        assert!(
+            source.contains(&example),
+            "代码字面量必须逐字保留，不展开或消耗业务材料"
+        );
+        assert!(source.find("前操作。").unwrap() < source.find("中间操作。").unwrap());
+        assert!(source.find("中间操作。").unwrap() < source.find("后操作。").unwrap());
+    }
+
+    #[tokio::test]
+    async fn recognized_markdown_file_reuses_its_local_image_references() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumen-recognized-markdown-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(
+            &db,
+            "SOP.docx",
+            crate::document_import::tests::ordered_sop(),
+        )
+        .await
+        .unwrap();
+        let extraction = crate::document_import::extract_asset(&db, original.clone())
+            .await
+            .unwrap();
+        let markdown = crate::content_assets::store_bytes(
+            &db,
+            "SOP-识别内容.md",
+            extraction.text.as_bytes().to_vec(),
+        )
+        .await
+        .unwrap();
+        let source = format!("[SOP.docx](lumen-asset:{})\n\n<!-- lumen-extracted:{} -->\n\n[识别内容.md](lumen-asset:{})", original.id, original.id, markdown.id);
+        let loaded = crate::ai_media::load_flow_media_for_source(
+            &db,
+            crate::ai::Provider::DeepSeek,
+            &[original.id.clone(), markdown.id.clone()],
+            &source,
+        )
+        .await
+        .unwrap();
+        for image in &extraction.images {
+            assert!(
+                loaded.references.iter().any(|a| a.id == image.id),
+                "选中识别MD内部明确引用的原图不能漏载"
+            );
+            assert!(loaded.media.iter().any(|a| a.id == image.id));
+        }
+        assert!(loaded.derived.is_empty());
+        let material = flow_source(&source, &loaded);
+        assert_eq!(material.matches("取得本周表格。").count(), 1);
+        assert_eq!(material.matches("lumen-asset:").count(), 2);
+        let outer = crate::content_assets::store_bytes(
+            &db,
+            "outer.md",
+            format!(
+                "原前言。\n\n[内层材料](lumen-asset:{})\n\n原结尾。",
+                markdown.id
+            )
+            .into_bytes(),
+        )
+        .await
+        .unwrap();
+        let loaded = crate::ai_media::load_flow_media_for_source(
+            &db,
+            crate::ai::Provider::DeepSeek,
+            std::slice::from_ref(&outer.id),
+            &format!("[材料](lumen-asset:{})", outer.id),
+        )
+        .await
+        .unwrap();
+        let nested_source = flow_source(&format!("[材料](lumen-asset:{})", outer.id), &loaded);
+        assert!(
+            nested_source.find("原前言。").unwrap() < nested_source.find("取得本周表格。").unwrap()
+        );
+        assert!(
+            nested_source.find("按表格生成单据 & 核对。").unwrap()
+                < nested_source.find("原结尾。").unwrap()
+        );
+        assert_eq!(nested_source.matches("lumen-asset:").count(), 2);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn already_recognized_word_is_not_expanded_twice() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-recognized-flow-{}", uuid::Uuid::now_v7()));
+        let db = crate::db::Db::init(&dir).await.unwrap();
+        let original = crate::content_assets::store_bytes(
+            &db,
+            "SOP.docx",
+            crate::document_import::tests::ordered_sop(),
+        )
+        .await
+        .unwrap();
+        let extraction = crate::document_import::extract_asset(&db, original.clone())
+            .await
+            .unwrap();
+        let mut ids = vec![original.id.clone()];
+        ids.extend(extraction.images.iter().map(|a| a.id.clone()));
+        for marker in [
+            format!("<!-- lumen-extracted:{} -->\n", original.id),
+            String::new(),
+        ] {
+            let text = format!(
+                "[SOP.docx](lumen-asset:{})\n\n{marker}### SOP.docx · 识别内容\n\n{}",
+                original.id, extraction.text
+            );
+            let loaded = crate::ai_media::load_flow_media_for_source(
+                &db,
+                crate::ai::Provider::DeepSeek,
+                &ids,
+                &text,
+            )
+            .await
+            .unwrap();
+            let source = flow_source(&text, &loaded);
+            assert_eq!(
+                source.matches("取得本周表格。").count(),
+                1,
+                "手动识别正文不能再展开一次"
+            );
+            assert_eq!(source.matches("按表格生成单据 & 核对。").count(), 1);
+            for image in &extraction.images {
+                assert_eq!(source.matches(&image.id).count(), 1);
+            }
+            assert!(
+                loaded.derived.is_empty(),
+                "复用已有正文图片，不生成第二套资源"
+            );
+            assert!(!source.contains("lumen-extracted:"));
+            assert!(!source.contains(&original.id));
+            let blocks: serde_json::Value =
+                serde_json::from_str(&crate::flow_structure::prompt(&source).unwrap()).unwrap();
+            let blocks = blocks.as_array().unwrap();
+            let first = blocks
+                .iter()
+                .position(|b| b["text"].as_str().unwrap().trim().starts_with("## 1."))
+                .unwrap()
+                + 1;
+            let second = blocks
+                .iter()
+                .position(|b| b["text"].as_str().unwrap().trim().starts_with("## 2."))
+                .unwrap()
+                + 1;
+            let plan = serde_json::json!({"schemaVersion":2,"steps":[
+                {"begin":1,"end":first-1,"kind":"context"},
+                {"begin":first,"end":second-1,"kind":"step","groupPath":[first],"title":"下载表格"},
+                {"begin":second,"end":blocks.len(),"kind":"step","groupPath":[second],"title":"创建单据"}
+            ]});
+            let draft = finish_flow(
+                &db,
+                &plan.to_string(),
+                &source,
+                &loaded.references,
+                &loaded.derived,
+                &loaded.warnings,
+            )
+            .await
+            .unwrap();
+            assert!(
+                draft
+                    .body_md
+                    .contains(&format!("[SOP.docx](lumen-asset:{})", original.id)),
+                "复用识别正文仍保留原文件存档"
+            );
+            assert_eq!(draft.steps.len(), 2);
+            let asset_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM content_assets")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+            assert_eq!(asset_count, 3, "重复生成不能重新写入一套图片");
+        }
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn heading_material_must_not_return_a_local_plan_before_ai_analysis() {
         let source = include_str!("memo_ai.rs");
@@ -481,6 +844,7 @@ mod tests {
             &source,
             &loaded.references,
             &loaded.derived,
+            &loaded.warnings,
         )
         .await;
         std::fs::write(
@@ -539,6 +903,7 @@ mod tests {
             warnings: vec![],
             derived: vec![],
             source_documents: vec![(original.id.clone(), document.clone())],
+            archived_documents: vec![],
         };
         let text = format!("用户前言。\n\n[原文件.docx](lumen-asset:{})", original.id);
         let source = flow_source(&text, &loaded);
@@ -563,7 +928,7 @@ mod tests {
         let plan = serde_json::json!({"schemaVersion":2,"steps":[{"begin":1,"end":chapters[1]-1,"titleBlock":chapters[0],"groupPath":[chapters[0]]},{"begin":chapters[1],"end":count,"titleBlock":chapters[1],"groupPath":[chapters[1]]}]}).to_string();
         let dir = std::env::temp_dir().join(format!("lumen-word-archive-{}", uuid::Uuid::now_v7()));
         let db = crate::db::Db::init(&dir).await.unwrap();
-        let draft = finish_flow(&db, &plan, &source, &loaded.references, &[])
+        let draft = finish_flow(&db, &plan, &source, &loaded.references, &[], &[])
             .await
             .unwrap();
         assert_eq!(draft.steps.len(), 2);
@@ -771,8 +1136,10 @@ mod tests {
     #[tokio::test]
     async fn derived_image_insert_failure_rolls_back_all_images() {
         use std::io::{Cursor, Write};
-        let mut zip =
-            zip::ZipWriter::new_append(Cursor::new(crate::document_import::tests::docx())).unwrap();
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(
+            crate::document_import::tests::docx_image_source(&["image1.png", "image2.png"]),
+        ))
+        .unwrap();
         for name in ["word/media/image1.png", "word/media/image2.png"] {
             zip.start_file(name, zip::write::SimpleFileOptions::default())
                 .unwrap();
@@ -805,8 +1172,10 @@ mod tests {
     async fn word_generation_exposes_embedded_image_without_saving_memo() {
         use base64::{engine::general_purpose::STANDARD, Engine};
         use std::io::{Cursor, Write};
-        let mut zip =
-            zip::ZipWriter::new_append(Cursor::new(crate::document_import::tests::docx())).unwrap();
+        let mut zip = zip::ZipWriter::new_append(Cursor::new(
+            crate::document_import::tests::docx_image_source(&["image1.png"]),
+        ))
+        .unwrap();
         zip.start_file(
             "word/media/image1.png",
             zip::write::SimpleFileOptions::default(),
@@ -851,7 +1220,8 @@ mod tests {
             "invalid model output",
             "",
             &loaded.references,
-            &loaded.derived
+            &loaded.derived,
+            &[]
         )
         .await
         .is_err());
@@ -867,6 +1237,7 @@ mod tests {
             &format!("[原始材料](lumen-asset:{})", original.id),
             &loaded.references,
             &loaded.derived,
+            &[],
         )
         .await
         .unwrap();
