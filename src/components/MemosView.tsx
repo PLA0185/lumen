@@ -328,7 +328,7 @@ export function MemosView({
   const documentActions = draft ? (
               <div className="memos__document-actions memos__document-actions--merged">
                 {draft.kind === 'flow' && (fullCanvas ? <button className="btn btn--ghost" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost" onClick={() => setFlowView('canvas')}>画布</button>)}
-                {fullCanvas ? <FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} /> : <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
+                {!fullCanvas && <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
                 {(fullCanvas || dirty) && <span className="setgroup__hint memos__save-status" role="status" title={saveStatus}><span aria-hidden="true">{aiDraft ? '待确认' : autoSaving || busy ? '保存中' : dirty ? '待保存' : '已保存'}</span><span className="sr-only">{saveStatus}</span></span>}
                 {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
@@ -659,7 +659,7 @@ export function MemosView({
                 </div>
               ))}
               {draft.kind === 'flow' && flowView === 'canvas' && <>
-                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onFinishEditing={async () => { if (aiDraft) return true; if (!dirty) { setEditing(false); return true }; return save(false) }} onChange={steps => { setEditing(true); patch({ steps }) }} />
+                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} switcher={<FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} />} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onFinishEditing={async () => { if (aiDraft) return true; if (!dirty) { setEditing(false); return true }; return save(false) }} onChange={steps => { setEditing(true); patch({ steps }) }} />
               </>}
             </>
           )}

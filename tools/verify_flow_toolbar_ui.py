@@ -67,6 +67,7 @@ try:
     assert t.wait_for('document.querySelectorAll(".flow-canvas__nav-step").length===' + str(len(groups)))
     check('顶部按钮固定8px间距靠拢，搜索相邻且顶栏高度不超过60px', t.eval('(()=>{const controls=document.querySelector(".topbar__controls"),end=document.querySelector(".topbar__end"),style=getComputedStyle(controls);return style.justifyContent==="flex-start"&&parseFloat(style.gap)===8&&end.getBoundingClientRect().left-controls.getBoundingClientRect().right<=13&&document.querySelector(".topbar").getBoundingClientRect().height<=60})()'))
     check('流程切换按钮使用与主要操作相同的紫色底', t.eval('getComputedStyle(document.querySelector(".flow-switcher__title")).backgroundColor===getComputedStyle(document.querySelector(".memos__toolbar .btn--primary:not(.flow-switcher__title)")).backgroundColor&&document.querySelector(".flow-switcher__title").classList.contains("btn--primary")'))
+    check('流程名称完整显示在画布左上角，不参与工具栏缩放', t.eval('(()=>{const button=document.querySelector(".flow-canvas__switcher .flow-switcher__title"),head=document.querySelector(".flow-canvas__head"),toolbar=document.querySelector(".memos__toolbar"),b=button.getBoundingClientRect(),h=head.getBoundingClientRect();return button.textContent.includes(' + json.dumps(doc['title']) + ')&&button.scrollWidth<=button.clientWidth&&!toolbar.contains(button)&&Math.abs(b.left-h.left)<1})()'))
     check('普通操作按钮均有可见底色', t.eval('[...document.querySelectorAll(".memos__toolbar .btn:not(.btn--primary)")].every(e=>{const bg=getComputedStyle(e).backgroundColor;return bg!=="transparent"&&bg!=="rgba(0, 0, 0, 0)"&&bg!==getComputedStyle(document.querySelector(".memos__toolbar")).backgroundColor})'))
     check('返回列表与同行普通按钮高度、字号和内边距一致', t.eval('(()=>{const buttons=[...document.querySelectorAll(".memos__toolbar .btn--ghost")],back=buttons.find(b=>b.textContent.trim()==="返回列表"),other=buttons.find(b=>b.textContent.trim()==="细分流程"),a=getComputedStyle(back),b=getComputedStyle(other);return a.height===b.height&&a.fontSize===b.fontSize&&a.padding===b.padding})()'))
     check('名称与细分流程之间仅保留简短保存状态，无大片空位', t.eval('(()=>{const status=document.querySelector(".memos__save-status"),style=getComputedStyle(status);return status.querySelector("[aria-hidden]").textContent==="已保存"&&parseFloat(style.width)<=3.1*parseFloat(style.fontSize)&&status.title.length>0})()'))
@@ -82,6 +83,7 @@ try:
     time.sleep(.2)
     tooltip = t.eval('(()=>{const e=document.querySelector(".flow-canvas__nav-label");return {text:e.textContent,visible:getComputedStyle(e).visibility}})()')
     check('真实悬停只显示当前章节路径、不展开其他小章节', tooltip['visible'] == 'visible' and all(s in tooltip['text'] for s in ['6. 发票', '6.1 美国发票']) and '6.2 英国发票' not in tooltip['text'])
+    check('大章节悬停明显放大，提示框避开刻度', t.eval('(()=>{const step=[...document.querySelectorAll(".flow-canvas__nav-step[data-level=chapter]")].find(e=>e.matches(":hover")),mark=step.querySelector(".flow-canvas__nav-mark").getBoundingClientRect(),label=step.querySelector(".flow-canvas__nav-label").getBoundingClientRect();return mark.height>=30&&mark.width>=5&&label.top-mark.bottom>=20})()'))
     check('导航提示框与刻度保留20px间距', t.eval('document.querySelector(".flow-canvas__nav-label").getBoundingClientRect().top-document.querySelector(".flow-canvas__nav-step").getBoundingClientRect().bottom>=19.5'))
     ui.real_click(t, '.flow-canvas__nav-step', index=2)
     check('阶段导航真实点击定位对应步骤', t.wait_for('document.querySelectorAll(".flow-canvas__nav-step")[2].getAttribute("aria-current")==="step"'))
@@ -126,6 +128,7 @@ try:
     click('收起信息')
     ui.real_click(t, '.flow-switcher__title')
     check('缩放后的流程切换菜单完整弹出', t.wait_for('document.querySelector(".flow-switcher__menu")') and t.eval('document.querySelector(".flow-switcher__menu").parentElement===document.body'))
+    check('当前流程以柔和底色和边线标识，文字保持正常正文色', t.eval('(()=>{const menu=document.querySelector(".flow-switcher__menu"),item=menu.querySelector(".flow-switcher__item[aria-current=page]");return !!item&&getComputedStyle(item).color===getComputedStyle(menu).color&&getComputedStyle(item).backgroundColor!==getComputedStyle(menu).backgroundColor&&getComputedStyle(item).boxShadow.includes("inset")})()'))
     (args.output_dir / 'native.png').write_bytes(base64.b64decode(t.call('Page.captureScreenshot', {'format': 'png'})['data']))
     (args.output_dir / 'native.json').write_text(json.dumps({'checks': checks, 'geometry': positions, 'savedRevision': normalized['revision']}, ensure_ascii=False, indent=2), encoding='utf8')
 finally:

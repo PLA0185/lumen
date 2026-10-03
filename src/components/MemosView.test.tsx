@@ -90,13 +90,14 @@ describe('独立备忘与业务流程', () => {
     expect(document.querySelector('.memos__item')).toBe(card)
     expect(document.querySelector('.memos__reading')?.textContent).toContain('已保存正文')
   })
-  it('流程名称、记录操作与创建筛选合并在顶部工具栏，画布不再叠第二条菜单', async () => {
+  it('流程名称完整放在画布左上角，记录操作与创建筛选合并在顶部工具栏', async () => {
     const doc: memo.MemoDocument = { id: 'merged', title: '合并菜单流程', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{id:'one',title:'原操作',owner:'',detail:'原说明'}] }
     vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
     await mount('', [doc])
     await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
     const toolbar = document.querySelector('.memos__toolbar')!
-    expect(toolbar.querySelector('[aria-label="切换流程：合并菜单流程"]')).not.toBeNull()
+    expect(document.querySelector('.flow-canvas__switcher [aria-label="切换流程：合并菜单流程"]')).not.toBeNull()
+    expect(toolbar.querySelector('[aria-label="切换流程：合并菜单流程"]')).toBeNull()
     for (const label of ['细分流程', '历史版本', '编辑记录', '复制内容', '删除记录', '新建流程', 'AI 生成流程']) {
       expect([...toolbar.querySelectorAll('button')].some(b => b.textContent?.trim() === label), label).toBe(true)
     }
@@ -110,6 +111,9 @@ describe('独立备忘与业务流程', () => {
     await act(async () => (document.querySelector('.flow-switcher__title') as HTMLButtonElement).click())
     const menu = document.querySelector('.flow-switcher__menu')!
     expect(menu.parentElement).toBe(document.body)
+    const current = menu.querySelector<HTMLButtonElement>('[aria-current="page"]')
+    expect(current?.textContent).toBe('原流程')
+    expect(current?.disabled).toBe(true)
     const item = [...menu.querySelectorAll('button')].find(b=>b.textContent==='另一个流程')!
     await act(async () => item.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})))
     expect(document.querySelector('.flow-switcher__menu')).toBe(menu)

@@ -25,8 +25,8 @@ function isInput(target: EventTarget | null) {
   return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], .flow-canvas__inspector, .flow-canvas__inline-editor')
 }
 
-export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled = false, readOnly = false, initialEdit = false, metadata }: {
-  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; onFinishEditing?: () => Promise<boolean>; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode
+export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled = false, readOnly = false, initialEdit = false, metadata, switcher }: {
+  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; onFinishEditing?: () => Promise<boolean>; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode; switcher?: ReactNode
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => initialEdit ? steps[0]?.id ?? null : null)
   const [query, setQuery] = useState('')
@@ -281,6 +281,8 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
   }
   return <section className="flow-canvas" style={{ '--flow-nav-top': `${navTop}px` } as import('react').CSSProperties}>
     {inputError && <p className="alert alert--err" role="alert">{inputError}</p>}
+    <div className="flow-canvas__head">
+    {switcher && <div className="flow-canvas__switcher">{switcher}</div>}
     <nav className="flow-canvas__nav" aria-label="流程节点导航">
       {steps.map((s, i) => {
         const previous = steps[i - 1]?.group, group = s.group
@@ -292,6 +294,7 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
       }}><span className="flow-canvas__nav-mark" /><span className="flow-canvas__nav-label">{group && <strong><SafeText>{group.title}</SafeText></strong>}{!!group?.path.length && <span className="flow-canvas__nav-stage"><SafeText>{group.path.join(' › ')}</SafeText></span>}<span>{i + 1} · <SafeText>{flowStepDisplayTitle(s.title)}</SafeText></span></span></button>
       })}
     </nav>
+    </div>
     <div className="flow-canvas__toolbar">
       <input className="input" aria-label="搜索流程步骤" placeholder="搜索标题、负责人、操作…" value={query} onChange={e => setQuery(e.target.value)} />
       <select className="input input--compact" aria-label="搜索方式" value={mode} onChange={e => setMode(e.target.value)}><option value="fuzzy">模糊搜索</option><option value="exact">精准搜索</option></select>
