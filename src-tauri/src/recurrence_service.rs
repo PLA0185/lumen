@@ -313,13 +313,26 @@ async fn materialize_range(
     range_end_utc: &str,
     limit: usize,
 ) -> AppResult<usize> {
-    let series = get_series(state, series_id).await?;
+    let mut tx = state.db.pool().begin().await?;
+    #[cfg(test)]
+    crate::recurrence_e2e::before_materialization_write(series_id).await;
+    // Reserve SQLite's writer before reading rules, skips, templates and the cutoff.
+    // A pending edit/termination must commit before this snapshot is selected.
+    sqlx::query("UPDATE task_series SET rule_version = rule_version WHERE id = ?1")
+        .bind(series_id)
+        .execute(&mut *tx)
+        .await?;
+    let series = sqlx::query_as::<_, Series>("SELECT * FROM task_series WHERE id = ?1")
+        .bind(series_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::not_found("重复系列", series_id))?;
 
     let seg_rows = sqlx::query_as::<_, SeriesSegmentRow>(
         "SELECT * FROM task_series_segments WHERE series_id = ?1 ORDER BY effective_from_occurrence ASC",
     )
     .bind(series_id)
-    .fetch_all(state.db.pool())
+    .fetch_all(&mut *tx)
     .await?;
     let segments: Vec<Segment> = seg_rows.into_iter().map(Segment::from).collect();
 
@@ -330,7 +343,7 @@ async fn materialize_range(
         "SELECT occurrence_key FROM tasks WHERE series_id = ?1 AND occurrence_key IS NOT NULL",
     )
     .bind(series_id)
-    .fetch_all(state.db.pool())
+    .fetch_all(&mut *tx)
     .await?;
     let existing_keys: std::collections::HashSet<String> =
         existing.into_iter().map(|(k,)| k).collect();
@@ -339,7 +352,7 @@ async fn materialize_range(
     let skips: Vec<(String,)> =
         sqlx::query_as("SELECT occurrence_key FROM task_series_skips WHERE series_id = ?1")
             .bind(series_id)
-            .fetch_all(state.db.pool())
+            .fetch_all(&mut *tx)
             .await?;
     let skip_keys: std::collections::HashSet<String> = skips.into_iter().map(|(k,)| k).collect();
 
@@ -422,11 +435,9 @@ async fn materialize_range(
          FROM task_series_template WHERE series_id = ?1",
     )
     .bind(series_id)
-    .fetch_optional(state.db.pool())
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::conflict("重复系列缺少持久化模板，无法安全物化"))?;
-
-    let mut tx = state.db.pool().begin().await?;
 
     for (key, _ver, occ, ov, period) in candidates {
         if existing_keys.contains(&key) || skip_keys.contains(&key) {
@@ -451,7 +462,7 @@ async fn materialize_range(
         let link_url = &template.link_url;
 
         let inserted = sqlx::query(
-            "INSERT OR IGNORE INTO tasks (
+            "INSERT INTO tasks (
                 id, title, description, note_md, link_url,
                 status, priority, project_id, category_id,
                 planned_at, has_planned_time, due_at, has_due_time,
@@ -467,7 +478,8 @@ async fn materialize_range(
                 NULL, ?12, ?12,
                 0, 0, 0,
                 ?13, ?14, ?15, 'generated', 0, ?16
-             )",
+             ) ON CONFLICT (series_id, occurrence_key)
+               WHERE series_id IS NOT NULL AND occurrence_key IS NOT NULL DO NOTHING",
         )
         .bind(&id)
         .bind(title)
@@ -520,13 +532,15 @@ async fn materialize_range(
 /// Resume a committed rebuild in bounded chunks. The cursor is durable, so a
 /// crash or SQLite error cannot silently turn a partial rebuild into success.
 async fn regenerate_pending(state: &AppState, series_id: &str) -> AppResult<usize> {
-    let pending: Option<(String, String)> = sqlx::query_as(
-        "SELECT range_start_utc, range_end_utc FROM task_series_rebuilds WHERE series_id = ?1",
+    let pending: Option<(String, String, String, i64)> = sqlx::query_as(
+        "SELECT r.range_start_utc, r.range_end_utc, r.requested_at, s.rule_version
+         FROM task_series_rebuilds r JOIN task_series s ON s.id = r.series_id
+         WHERE r.series_id = ?1",
     )
     .bind(series_id)
     .fetch_optional(state.db.pool())
     .await?;
-    let Some((start, end)) = pending else {
+    let Some((start, end, requested_at, rule_version)) = pending else {
         return Ok(0);
     };
     let mut cursor = chrono::DateTime::parse_from_rfc3339(&start)
@@ -543,32 +557,71 @@ async fn regenerate_pending(state: &AppState, series_id: &str) -> AppResult<usiz
         match materialize_range(state, series_id, &from, &to, MAX_MATERIALIZE).await {
             Ok(n) => {
                 total += n;
-                sqlx::query(
+                // Compare the queue and rule snapshot before advancing it. A newer
+                // scope edit can replace the same range with a different rule version.
+                let advanced = sqlx::query(
                     "UPDATE task_series_rebuilds SET range_start_utc = ?1, last_error = NULL
-                     WHERE series_id = ?2",
+                     WHERE series_id = ?2 AND range_start_utc = ?3 AND range_end_utc = ?4
+                       AND requested_at = ?5 AND EXISTS (
+                         SELECT 1 FROM task_series s WHERE s.id = task_series_rebuilds.series_id
+                         AND s.rule_version = ?6)",
                 )
                 .bind(&to)
                 .bind(series_id)
+                .bind(&from)
+                .bind(&end)
+                .bind(&requested_at)
+                .bind(rule_version)
                 .execute(state.db.pool())
-                .await?;
+                .await?
+                .rows_affected();
+                if advanced != 1 {
+                    return Err(AppError::conflict(
+                        "重复系列的重建请求已被其它编辑替换，请刷新后重试",
+                    ));
+                }
                 cursor = next;
             }
             Err(e) => {
-                sqlx::query("UPDATE task_series_rebuilds SET last_error = ?1 WHERE series_id = ?2")
-                    .bind(e.to_string())
-                    .bind(series_id)
-                    .execute(state.db.pool())
-                    .await?;
+                sqlx::query(
+                    "UPDATE task_series_rebuilds SET last_error = ?1
+                     WHERE series_id = ?2 AND range_start_utc = ?3 AND range_end_utc = ?4
+                       AND requested_at = ?5 AND EXISTS (
+                         SELECT 1 FROM task_series s WHERE s.id = task_series_rebuilds.series_id
+                         AND s.rule_version = ?6)",
+                )
+                .bind(e.to_string())
+                .bind(series_id)
+                .bind(&from)
+                .bind(&end)
+                .bind(&requested_at)
+                .bind(rule_version)
+                .execute(state.db.pool())
+                .await?;
                 return Err(AppError::internal(format!(
                     "重复系列重建尚未完成，维护任务将重试：{e}"
                 )));
             }
         }
     }
-    sqlx::query("DELETE FROM task_series_rebuilds WHERE series_id = ?1")
-        .bind(series_id)
-        .execute(state.db.pool())
-        .await?;
+    let finished = sqlx::query(
+        "DELETE FROM task_series_rebuilds WHERE series_id = ?1
+         AND range_start_utc = ?2 AND range_end_utc = ?2 AND requested_at = ?3
+         AND EXISTS (SELECT 1 FROM task_series s
+                     WHERE s.id = task_series_rebuilds.series_id AND s.rule_version = ?4)",
+    )
+    .bind(series_id)
+    .bind(&end)
+    .bind(&requested_at)
+    .bind(rule_version)
+    .execute(state.db.pool())
+    .await?
+    .rows_affected();
+    if finished != 1 {
+        return Err(AppError::conflict(
+            "重复系列的重建请求已被其它编辑替换，请刷新后重试",
+        ));
+    }
     Ok(total)
 }
 
@@ -1343,7 +1396,7 @@ pub async fn edit_instance_impl(
     state: &AppState,
     task_id: String,
     scope: EditScope,
-    patch: InstancePatch,
+    mut patch: InstancePatch,
     // 新增/变更的规则（仅"此次及以后"与"整个系列"使用）
     new_rrule: Option<String>,
     // 允许影响历史（§5 要求明确确认）。
@@ -1353,6 +1406,25 @@ pub async fn edit_instance_impl(
     confirm_history: bool,
 ) -> AppResult<ScopeActionResult> {
     let db = &state.db;
+    // Validate every scope before a rule edit can prune the existing cache.
+    if let Some(title) = &patch.title {
+        crate::commands::validate_title(title)?;
+    }
+    if let Some(description) = &patch.description {
+        crate::commands::validate_long_text("描述", description)?;
+    }
+    if let Some(priority) = patch.priority {
+        crate::commands::validate_priority(priority)?;
+    }
+    if let Some(minutes) = patch.estimated_minutes {
+        crate::commands::validate_minutes("预计耗时", minutes)?;
+    }
+    if let Some(time) = &patch.planned_at {
+        patch.planned_at = Some(crate::commands::validate_time("计划时间", time)?);
+    }
+    if let Some(time) = &patch.due_at {
+        patch.due_at = Some(crate::commands::validate_time("截止时间", time)?);
+    }
 
     // 读取实例
     let task = sqlx::query_as::<_, Task>("SELECT * FROM tasks WHERE id = ?1")
@@ -1418,13 +1490,19 @@ pub async fn edit_instance_impl(
             || patch.category_id.is_some()
             || patch.tag_ids.is_some()
             || patch.period_type.is_some()
+            || patch.planned_at.is_some()
+            || patch.due_at.is_some()
+            || patch.has_planned_time.is_some()
+            || patch.has_due_time.is_some()
+            || patch.clear_planned_at
+            || patch.clear_due_at
             || patch.clear_link
             || patch.clear_project
             || patch.clear_category
             || patch.clear_estimated_minutes)
     {
         return Err(AppError::validation(
-            "备注、链接、归属、标签、周期及清空预计耗时目前仅支持「仅此次」",
+            "改期、备注、链接、归属、标签、周期及清空预计耗时目前仅支持「仅此次」",
         ));
     }
 
@@ -1801,7 +1879,12 @@ pub async fn edit_instance_impl(
                 .await?;
                 let (_, preserved) = purge_future_generated(&mut tx, &series_id, anchor).await?;
                 preserved_by_rebuild = preserved;
-                let end = to_db_time(utc_now() + chrono::Duration::days(365));
+                let anchor_dt = chrono::DateTime::parse_from_rfc3339(anchor)
+                    .map_err(|_| AppError::validation("发生时间格式无效"))?
+                    .with_timezone(&chrono::Utc);
+                let horizon = (utc_now() + chrono::Duration::days(365))
+                    .max(anchor_dt + chrono::Duration::days(365));
+                let end = to_db_time(horizon);
                 sqlx::query(
                     "INSERT INTO task_series_rebuilds
                      (series_id, range_start_utc, range_end_utc, requested_at)

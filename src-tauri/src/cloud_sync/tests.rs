@@ -1087,3 +1087,42 @@ async fn all_nine_scope_direction_combinations_only_exchange_selected_content() 
         }
     }
 }
+
+#[tokio::test]
+async fn alias_audit_rebuilt_occurrence_accepts_peer_edit_without_duplicate() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let a = db().await;
+    let b = db().await;
+    let c = cfg();
+    let key = [6; 32];
+    sqlx::query("INSERT INTO task_series(id,rrule,tzid,dtstart_local,created_at,updated_at) VALUES('shared-series','FREQ=DAILY','UTC','2026-09-30T09:00:00',?,?)").bind(stamp()).bind(stamp()).execute(a.pool()).await.unwrap();
+    add_task(&a, "0199-old-task", "重建前").await;
+    sqlx::query("UPDATE tasks SET series_id='shared-series',occurrence_key='2026-09-30T09:00:00.000Z',planned_at='2026-09-30T09:00:00.000Z',occurrence_kind='generated' WHERE id='0199-old-task'").execute(a.pool()).await.unwrap();
+    push_all(&a, &dav, &c, &key).await;
+    download(&b, &dav, &c, &key).await.unwrap();
+    // A recurrence rebuild replaces a disposable cache row while retaining its natural occurrence identity.
+    sqlx::query("DELETE FROM tasks WHERE id='0199-old-task'")
+        .execute(a.pool())
+        .await
+        .unwrap();
+    add_task(&a, "019a-new-task", "重建后").await;
+    sqlx::query("UPDATE tasks SET series_id='shared-series',occurrence_key='2026-09-30T09:00:00.000Z',planned_at='2026-09-30T09:00:00.000Z',occurrence_kind='generated' WHERE id='019a-new-task'").execute(a.pool()).await.unwrap();
+    push_all(&a, &dav, &c, &key).await;
+    download(&b, &dav, &c, &key).await.unwrap();
+    sqlx::query("UPDATE tasks SET title='另一台设备的编辑' WHERE series_id='shared-series'")
+        .execute(b.pool())
+        .await
+        .unwrap();
+    push_all(&b, &dav, &c, &key).await;
+    download(&a, &dav, &c, &key)
+        .await
+        .expect("peer edit must target the existing rebuilt occurrence");
+    let rows: Vec<(String,String)> = sqlx::query_as("SELECT id,title FROM tasks WHERE series_id='shared-series' AND occurrence_key='2026-09-30T09:00:00.000Z'").fetch_all(a.pool()).await.unwrap();
+    assert_eq!(
+        rows,
+        vec![("019a-new-task".into(), "另一台设备的编辑".into())]
+    );
+    close(a).await;
+    close(b).await;
+}

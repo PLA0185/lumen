@@ -24,6 +24,22 @@ use crate::recurrence_service::{
 // `try_get` 来自 Row trait，必须显式引入（trait 方法不会自动可见）
 use sqlx::Row;
 
+type MaterializeGate = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
+static MATERIALIZE_GATES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, MaterializeGate>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(Default::default()));
+
+pub(crate) async fn before_materialization_write(series_id: &str) {
+    let gate = MATERIALIZE_GATES.lock().unwrap().remove(series_id);
+    if let Some((reached, resume)) = gate {
+        reached.send(()).unwrap();
+        resume.await.unwrap();
+    }
+}
+
 /// 建一个临时库并返回状态句柄。调用方负责删除目录。
 async fn setup(name: &str) -> (AppState, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("lumen-{name}-{}", uuid::Uuid::now_v7()));
@@ -2050,4 +2066,459 @@ async fn this_only_content_and_tags_commit_atomically_without_changing_siblings(
     assert_eq!(unchanged.note_md, sibling.note_md);
     assert_eq!(unchanged.estimated_minutes, sibling.estimated_minutes);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn bulk_restore_audit_clears_skip_marker() {
+    let (state, dir) = setup("rec-restore-skip").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "可恢复的发生".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2026-10-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(3),
+        },
+    )
+    .await
+    .unwrap();
+    let first = list_instances(&state, &created.series_id).await.unwrap()[0].clone();
+    skip_occurrence_impl(&state, first.id.clone())
+        .await
+        .unwrap();
+    let affected = crate::commands::bulk_tasks_impl(
+        &state.db,
+        crate::models::BulkActionInput {
+            ids: vec![first.id.clone()],
+            action: "restore".into(),
+            priority: None,
+            project_id: None,
+            tag_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(affected, 1);
+    let restored = list_instances(&state, &created.series_id).await.unwrap();
+    assert!(restored.iter().any(|t| t.id == first.id));
+    let skipped: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM task_series_skips WHERE series_id=?1 AND occurrence_key=?2",
+    )
+    .bind(&created.series_id)
+    .bind(first.occurrence_key.unwrap())
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(skipped, 0);
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn materialize_audit_waiting_writer_observes_committed_termination() {
+    let (state, dir) = setup("materialize-audit").await;
+    let state = std::sync::Arc::new(state);
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "终止竞态".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2030-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    let mut writer = state.db.pool().begin().await.unwrap();
+    sqlx::query("UPDATE task_series SET terminated_from_occurrence_key='2030-01-02T09:00:00.000Z' WHERE id=?")
+        .bind(&created.series_id).execute(&mut *writer).await.unwrap();
+    let (reached, observed) = tokio::sync::oneshot::channel();
+    let (resume, paused) = tokio::sync::oneshot::channel();
+    MATERIALIZE_GATES
+        .lock()
+        .unwrap()
+        .insert(created.series_id.clone(), (reached, paused));
+    let worker_state = state.clone();
+    let series_id = created.series_id.clone();
+    let materialize = tokio::spawn(async move {
+        recurring_materialize_inner(
+            &worker_state,
+            series_id,
+            "2030-01-03T00:00:00.000Z".into(),
+            "2030-01-05T00:00:00.000Z".into(),
+        )
+        .await
+    });
+    // Synchronize at the production operation's first write request, not by elapsed time.
+    // The old implementation has already read its metadata at this point.
+    tokio::time::timeout(std::time::Duration::from_secs(5), observed)
+        .await
+        .unwrap()
+        .unwrap();
+    writer.commit().await.unwrap();
+    resume.send(()).unwrap();
+    assert_eq!(
+        materialize.await.unwrap().unwrap(),
+        0,
+        "committed cutoff must govern this materialization"
+    );
+    let alive: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE series_id=? AND occurrence_key>='2030-01-03' AND deleted_at IS NULL")
+        .bind(&created.series_id).fetch_one(state.db.pool()).await.unwrap();
+    assert_eq!(alive, 0);
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn future_scope_audit_invalid_priority_preserves_original_occurrences() {
+    let (state, dir) = setup("invalid-priority-audit").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "校验原子性".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2030-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(3),
+        },
+    )
+    .await
+    .unwrap();
+    let before = list_instances(&state, &created.series_id).await.unwrap();
+    let result = edit_instance_impl(
+        &state,
+        before[0].id.clone(),
+        EditScope::ThisAndFuture,
+        InstancePatch {
+            priority: Some(99),
+            ..Default::default()
+        },
+        None,
+        true,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "invalid priority must fail before pruning generated instances"
+    );
+    let after = list_instances(&state, &created.series_id).await.unwrap();
+    assert_eq!(
+        after.iter().map(|t| &t.id).collect::<Vec<_>>(),
+        before.iter().map(|t| &t.id).collect::<Vec<_>>()
+    );
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn whole_scope_audit_far_future_rule_keeps_materialized_instances() {
+    let (state, dir) = setup("far-future-audit").await;
+    let start = (chrono::Utc::now() + chrono::Duration::days(730))
+        .format("%Y-%m-%dT09:00:00")
+        .to_string();
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "远未来计划".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: start,
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(3),
+        },
+    )
+    .await
+    .unwrap();
+    let first = list_instances(&state, &created.series_id).await.unwrap()[0].clone();
+    edit_instance_impl(
+        &state,
+        first.id,
+        EditScope::WholeSeries,
+        InstancePatch::default(),
+        Some("FREQ=DAILY;INTERVAL=2".into()),
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !list_instances(&state, &created.series_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "successful rule edit must rebuild far-future occurrences"
+    );
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn materialize_constraint_audit_reports_invalid_template_instead_of_success() {
+    let (state, dir) = setup("materialize-constraint-audit").await;
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "约束错误不能伪成功".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2030-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(1),
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE task_series_template SET priority=99 WHERE series_id=?")
+        .bind(&created.series_id)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let result = recurring_materialize_inner(
+        &state,
+        created.series_id.clone(),
+        "2030-01-03T00:00:00.000Z".into(),
+        "2030-01-05T00:00:00.000Z".into(),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "a CHECK failure must propagate instead of returning zero created"
+    );
+    let alive: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM tasks WHERE series_id=? AND occurrence_key>='2030-01-03'",
+    )
+    .bind(&created.series_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(alive, 0, "failed materialization must roll back");
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn rebuild_queue_audit_older_maintenance_cannot_advance_replaced_queue() {
+    let (state, dir) = setup("rebuild-queue-audit").await;
+    let state = std::sync::Arc::new(state);
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "并发重建".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: "FREQ=DAILY".into(),
+            tzid: Some("UTC".into()),
+            dtstart_local: "2030-01-01T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(3),
+        },
+    )
+    .await
+    .unwrap();
+    let first_id = list_instances(&state, &created.series_id).await.unwrap()[0]
+        .id
+        .clone();
+    // A real user mark keeps the anchor row available for two scope edits.
+    sqlx::query("UPDATE tasks SET is_pinned=1 WHERE id=?")
+        .bind(&first_id)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (reached_a, observed_a) = tokio::sync::oneshot::channel();
+    let (resume_a, paused_a) = tokio::sync::oneshot::channel();
+    MATERIALIZE_GATES
+        .lock()
+        .unwrap()
+        .insert(created.series_id.clone(), (reached_a, paused_a));
+    let a_state = state.clone();
+    let a_id = first_id.clone();
+    let edit_a = tokio::spawn(async move {
+        edit_instance_impl(
+            &a_state,
+            a_id,
+            EditScope::ThisAndFuture,
+            InstancePatch::default(),
+            Some("FREQ=DAILY;INTERVAL=2".into()),
+            true,
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), observed_a)
+        .await
+        .unwrap()
+        .unwrap();
+    let (reached_b, observed_b) = tokio::sync::oneshot::channel();
+    let (resume_b, paused_b) = tokio::sync::oneshot::channel();
+    MATERIALIZE_GATES
+        .lock()
+        .unwrap()
+        .insert(created.series_id.clone(), (reached_b, paused_b));
+    let b_state = state.clone();
+    let edit_b = tokio::spawn(async move {
+        edit_instance_impl(
+            &b_state,
+            first_id,
+            EditScope::ThisAndFuture,
+            InstancePatch::default(),
+            Some("FREQ=DAILY;INTERVAL=3".into()),
+            true,
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), observed_b)
+        .await
+        .unwrap()
+        .unwrap();
+    let latest: (String, String) = sqlx::query_as(
+        "SELECT range_start_utc,range_end_utc FROM task_series_rebuilds WHERE series_id=?",
+    )
+    .bind(&created.series_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    resume_a.send(()).unwrap();
+    let older_result = edit_a.await.unwrap();
+    let retained: Option<(String, String)> = sqlx::query_as(
+        "SELECT range_start_utc,range_end_utc FROM task_series_rebuilds WHERE series_id=?",
+    )
+    .bind(&created.series_id)
+    .fetch_optional(state.db.pool())
+    .await
+    .unwrap();
+    resume_b.send(()).unwrap();
+    edit_b.await.unwrap().unwrap();
+    assert!(
+        older_result.is_err(),
+        "old maintenance must report that another edit replaced its queue"
+    );
+    assert_eq!(
+        retained,
+        Some(latest),
+        "old maintenance must leave the new queue untouched"
+    );
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM task_series_rebuilds WHERE series_id=?")
+            .bind(&created.series_id)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        left, 0,
+        "the newer maintenance must still complete successfully"
+    );
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn instance_time_audit_invalid_time_rejects_before_mutation() {
+    let (state, dir) = setup("instance-time-audit").await;
+    let input: CreateRecurringInput = serde_json::from_value(serde_json::json!({
+        "title":"时间校验", "rrule":"FREQ=DAILY", "tzid":"UTC",
+        "dtstartLocal":"2030-01-01T09:00:00", "hasStartTime":true, "materializeDays":3
+    }))
+    .unwrap();
+    let created = create_recurring_impl(&state, input).await.unwrap();
+    let first = list_instances(&state, &created.series_id).await.unwrap()[0].clone();
+    let result = edit_instance_impl(
+        &state,
+        first.id.clone(),
+        EditScope::ThisOnly,
+        InstancePatch {
+            planned_at: Some("not-a-date".into()),
+            ..Default::default()
+        },
+        None,
+        true,
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "invalid IPC time must not poison the task row when it has no reminders"
+    );
+    let after = list_instances(&state, &created.series_id).await.unwrap();
+    assert_eq!(
+        after.iter().find(|t| t.id == first.id).unwrap().planned_at,
+        first.planned_at
+    );
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn broader_scope_time_audit_rejects_instead_of_silently_ignoring_schedule() {
+    let (state, dir) = setup("scope-time-audit").await;
+    let input: CreateRecurringInput = serde_json::from_value(serde_json::json!({
+        "title":"范围校验", "rrule":"FREQ=DAILY", "tzid":"UTC",
+        "dtstartLocal":"2030-01-01T09:00:00", "hasStartTime":true, "materializeDays":3
+    }))
+    .unwrap();
+    let created = create_recurring_impl(&state, input).await.unwrap();
+    let first = list_instances(&state, &created.series_id).await.unwrap()[0].clone();
+    for scope in [EditScope::ThisAndFuture, EditScope::WholeSeries] {
+        let result = edit_instance_impl(
+            &state,
+            first.id.clone(),
+            scope,
+            InstancePatch {
+                due_at: Some("2030-01-02T09:00:00.000Z".into()),
+                ..Default::default()
+            },
+            None,
+            true,
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "schedule fields cannot silently disappear for {scope:?}"
+        );
+    }
+    let after = list_instances(&state, &created.series_id).await.unwrap();
+    assert!(after.iter().all(|t| t.due_at.is_none()));
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
 }

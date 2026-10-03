@@ -231,40 +231,22 @@ pub async fn pending_migrations(db_path: &Path) -> Result<Vec<String>, DbError> 
 /// 只 copy `.db` 会得到一个"看起来是完整数据库、其实缺了最近操作"的快照——
 /// 一旦迁移失败再从这份备份恢复，用户就会丢数据。这是数据安全问题。
 ///
-/// ## 方案
-///
-/// 1. 首选 `VACUUM INTO`：把**包含 WAL 内容**的一致快照写成单文件，
-///    且**完全不修改源库**（这是 SQLite 官方推荐的备份方式之一）。
-/// 2. 万一 `VACUUM INTO` 走不通（例如目标盘空间不足、SQLite 版本限制），
-///    退回到"先 `wal_checkpoint(TRUNCATE)` 再复制主库文件"：
-///    checkpoint 会把 WAL 内容并入主库，之后复制就是完整的。
-///    这一步会写源库，但只做持久化、不改任何用户数据，属于可接受的降级路径。
-///
-/// 两条路都失败才返回错误；此时调用方应当**中止迁移**。
+/// `VACUUM INTO` reads one SQLite snapshot, including committed WAL frames.
+/// A failed snapshot aborts the migration. Checkpoint followed by a bare file copy
+/// is unsafe: a busy checkpoint can leave frames behind, and writers can race the copy.
 pub async fn pre_migration_snapshot(db_path: &Path, backup_dir: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(backup_dir).map_err(|e| format!("创建备份目录失败：{e}"))?;
     let dest = backup_dir.join(format!("pre-migrate-{}.db", now_stamp()));
-
-    // ---- 首选：VACUUM INTO（不改源库，天然包含 WAL 内容）----
-    match vacuum_into(db_path, &dest).await {
-        Ok(()) => return Ok(dest),
-        Err(e) => {
-            log::warn!("VACUUM INTO 备份失败，改用 checkpoint + 复制：{e}");
-            let _ = std::fs::remove_file(&dest);
-        }
+    let result = match vacuum_into(db_path, &dest).await {
+        Ok(()) => verify_backup(&dest)
+            .await
+            .map_err(|e| format!("备份完整性校验失败：{e}")),
+        Err(e) => Err(format!("一致性快照失败：{e}")),
+    };
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&dest);
+        return Err(error);
     }
-
-    // ---- 降级：checkpoint 后再复制 ----
-    checkpoint_truncate(db_path)
-        .await
-        .map_err(|e| format!("checkpoint 失败：{e}"))?;
-    std::fs::copy(db_path, &dest).map_err(|e| format!("复制数据库文件失败：{e}"))?;
-
-    // 复制完成后校验一次完整性：宁可现在发现备份是坏的，
-    // 也不要在用户真正需要恢复时才发现。
-    verify_backup(&dest)
-        .await
-        .map_err(|e| format!("备份完整性校验失败：{e}"))?;
     Ok(dest)
 }
 
@@ -276,17 +258,6 @@ async fn vacuum_into(db_path: &Path, dest: &Path) -> Result<(), DbError> {
     let dest_str = dest.to_string_lossy().replace('\'', "''");
     let sql = format!("VACUUM INTO '{dest_str}'");
     let res = sqlx::query(sqlx::AssertSqlSafe(sql))
-        .execute(&mut conn)
-        .await;
-    let _ = conn.close().await;
-    res?;
-    Ok(())
-}
-
-/// 把 WAL 内容并入主库文件（降级路径用）。
-async fn checkpoint_truncate(db_path: &Path) -> Result<(), DbError> {
-    let mut conn = open_probe_connection(db_path).await?;
-    let res = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(&mut conn)
         .await;
     let _ = conn.close().await;
@@ -464,6 +435,100 @@ mod tests {
 
         let _ = db.pool().close().await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn snapshot_audit_preserves_commits_behind_busy_wal_reader() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-snapshot-audit-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let path = db.db_path();
+        let mut writer = open_probe_connection(&path).await.unwrap();
+        sqlx::query("PRAGMA wal_autocheckpoint=0")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        let mut reader = open_probe_connection(&path).await.unwrap();
+        sqlx::query("BEGIN").execute(&mut reader).await.unwrap();
+        let _: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+            .fetch_one(&mut reader)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO tasks(id,title,created_at,updated_at) VALUES('busy-wal','最新提交','2026-10-04T00:00:00.000Z','2026-10-04T00:00:00.000Z')")
+            .execute(&mut writer).await.unwrap();
+        sqlx::query("PRAGMA busy_timeout=1")
+            .execute(&mut writer)
+            .await
+            .unwrap();
+        let (busy, frames, copied): (i64, i64, i64) =
+            sqlx::query_as("PRAGMA wal_checkpoint(TRUNCATE)")
+                .fetch_one(&mut writer)
+                .await
+                .unwrap();
+        assert_eq!(busy, 1);
+        assert!(
+            frames > copied,
+            "the reader must pin uncheckpointed committed frames"
+        );
+        // Characterize the removed downgrade: a healthy main-file copy still omits committed WAL data.
+        let unsafe_copy = dir.join("unsafe-copy.db");
+        std::fs::copy(&path, &unsafe_copy).unwrap();
+        verify_backup(&unsafe_copy).await.unwrap();
+        let mut probe = open_probe_connection(&unsafe_copy).await.unwrap();
+        let missing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id='busy-wal'")
+            .fetch_one(&mut probe)
+            .await
+            .unwrap();
+        assert_eq!(missing, 0);
+        probe.close().await.unwrap();
+        let snapshot = pre_migration_snapshot(&path, &dir.join("backups"))
+            .await
+            .unwrap();
+        let mut probe = open_probe_connection(&snapshot).await.unwrap();
+        let saved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE id='busy-wal'")
+            .fetch_one(&mut probe)
+            .await
+            .unwrap();
+        assert_eq!(saved, 1);
+        probe.close().await.unwrap();
+        reader.close().await.unwrap();
+        writer.close().await.unwrap();
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn snapshot_audit_failure_aborts_pending_migration() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-snapshot-fail-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=12")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        db.pool().close().await;
+        // Simulate an unwritable backup location with a real filesystem obstruction.
+        std::fs::write(dir.join("backups"), b"occupied path").unwrap();
+        assert!(matches!(
+            Db::init(&dir).await,
+            Err(DbError::PreMigrationBackup(_))
+        ));
+        let mut probe = open_probe_connection(&dir.join("lumen.db")).await.unwrap();
+        let applied: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations WHERE version=12")
+                .fetch_one(&mut probe)
+                .await
+                .unwrap();
+        assert_eq!(
+            applied, 0,
+            "snapshot failure must stop before migration execution"
+        );
+        probe.close().await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// 迁移前备份要能保留最近 N 份、删掉更老的（§4.5）

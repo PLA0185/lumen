@@ -520,7 +520,7 @@ async fn tick(app: &AppHandle) -> AppResult<()> {
         if d.task_done {
             continue;
         }
-        fire(app, &d).await;
+        fire(app, &d).await?;
     }
     Ok(())
 }
@@ -574,27 +574,18 @@ pub(crate) async fn due_reminders(
 /// 顺序很重要：**先落库再通知**。若先通知后落库，程序在两者之间崩溃
 /// 会导致下次启动重复通知；反过来最坏情况是漏掉一次通知，
 /// 而"宁可漏发一次也不重复轰炸"正是 §4.3 的要求。
-async fn fire(app: &AppHandle, d: &DueReminder) {
-    let state = match app.try_state::<AppState>() {
-        Some(s) => s,
-        None => return,
-    };
+async fn fire(app: &AppHandle, d: &DueReminder) -> AppResult<()> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| AppError::internal("应用状态未就绪"))?;
     let now = to_db_time(utc_now());
 
     // 条件里再带一次 fired_at IS NULL，防止并发 tick 重复触发
-    let claimed = sqlx::query(
-        "UPDATE reminders SET fired_at = ?1, updated_at = ?1 WHERE id = ?2 AND fired_at IS NULL",
-    )
-    .bind(&now)
-    .bind(&d.id)
-    .execute(state.db.pool())
-    .await
-    .map(|r| r.rows_affected())
-    .unwrap_or(0);
+    let claimed = claim_reminder(&state.db, d, &now).await?;
 
     if claimed == 0 {
         // 已被其他 tick 处理，直接返回，避免重复通知
-        return;
+        return Ok(());
     }
 
     // 记录发出日志：既是对"提醒确实发出过"的可诊断证据（§10），
@@ -624,6 +615,23 @@ async fn fire(app: &AppHandle, d: &DueReminder) {
             "title": d.title,
         }),
     );
+    Ok(())
+}
+
+async fn claim_reminder(db: &crate::db::Db, d: &DueReminder, now: &str) -> AppResult<u64> {
+    Ok(sqlx::query(
+        "UPDATE reminders SET fired_at = ?1, updated_at = ?1
+         WHERE id = ?2 AND fired_at IS NULL AND is_enabled = 1
+           AND remind_at = ?3 AND remind_at <= ?1
+           AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = reminders.task_id
+                       AND t.deleted_at IS NULL AND t.status NOT IN ('done', 'archived'))",
+    )
+    .bind(now)
+    .bind(&d.id)
+    .bind(&d.remind_at)
+    .execute(db.pool())
+    .await?
+    .rows_affected())
 }
 
 /// 通过系统通知中心发送提醒。
@@ -832,6 +840,74 @@ mod disable_reason_tests {
     use super::*;
     use crate::db::Db;
     use sqlx::Row;
+
+    #[tokio::test]
+    async fn claim_audit_rechecks_postponed_disabled_and_completed_reminders() {
+        for change in ["postpone", "disable", "complete", "delete", "unchanged"] {
+            let (db, dir) = setup("claim-audit").await;
+            let (task, reminder) =
+                task_with_relative_reminder(&db, Some("2026-01-01T00:00:00.000Z")).await;
+            let now = "2026-01-02T00:00:00.000Z";
+            let due = due_reminders(&db, now, 20).await.unwrap().remove(0);
+            match change {
+                "postpone" => {
+                    sqlx::query(
+                        "UPDATE reminders SET remind_at='2026-01-03T00:00:00.000Z' WHERE id=?",
+                    )
+                    .bind(&reminder)
+                    .execute(db.pool())
+                    .await
+                    .unwrap();
+                }
+                "disable" => {
+                    sqlx::query("UPDATE reminders SET is_enabled=0 WHERE id=?")
+                        .bind(&reminder)
+                        .execute(db.pool())
+                        .await
+                        .unwrap();
+                }
+                "complete" => {
+                    sqlx::query("UPDATE tasks SET status='done' WHERE id=?")
+                        .bind(&task)
+                        .execute(db.pool())
+                        .await
+                        .unwrap();
+                }
+                "delete" => {
+                    sqlx::query("UPDATE tasks SET deleted_at=? WHERE id=?")
+                        .bind(now)
+                        .bind(&task)
+                        .execute(db.pool())
+                        .await
+                        .unwrap();
+                }
+                _ => {}
+            }
+            let claimed = claim_reminder(&db, &due, now).await.unwrap();
+            assert_eq!(
+                claimed,
+                u64::from(change == "unchanged"),
+                "stale eligibility after {change}"
+            );
+            if change == "unchanged" {
+                assert_eq!(
+                    claim_reminder(&db, &due, now).await.unwrap(),
+                    0,
+                    "claims must stay idempotent"
+                );
+            } else {
+                let fired: Option<String> =
+                    sqlx::query_scalar("SELECT fired_at FROM reminders WHERE id=?")
+                        .bind(&reminder)
+                        .fetch_one(db.pool())
+                        .await
+                        .unwrap();
+                assert!(fired.is_none());
+            }
+            db.pool().close().await;
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
 
     async fn setup(name: &str) -> (Db, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!("lumen-rem-{name}-{}", uuid::Uuid::now_v7()));

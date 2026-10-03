@@ -340,7 +340,17 @@ fn normalize(table: &str, row: &mut Value, aliases: &Aliases) {
     }
 }
 async fn local_id(conn: &mut SqliteConnection, table: &str, canonical: &str) -> AppResult<String> {
-    let local:Option<String>=sqlx::query_scalar("SELECT local_id FROM cloud_aliases WHERE table_name=? AND canonical_id=? ORDER BY local_id LIMIT 1").bind(table).bind(canonical).fetch_optional(conn).await?;
+    if !TABLES.contains(&table) {
+        return Err(AppError::validation("云端包含不支持的业务类型"));
+    }
+    // Rebuilding a generated occurrence leaves its old alias in durable history.
+    // Prefer a live row; retain the historical fallback for tombstones.
+    let sql = format!("SELECT a.local_id FROM cloud_aliases a LEFT JOIN {table} live ON live.id=a.local_id WHERE a.table_name=? AND a.canonical_id=? ORDER BY live.id IS NULL,a.local_id LIMIT 1");
+    let local: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(table)
+        .bind(canonical)
+        .fetch_optional(conn)
+        .await?;
     Ok(local.unwrap_or_else(|| canonical.to_owned()))
 }
 async fn localize(conn: &mut SqliteConnection, table: &str, row: &Value) -> AppResult<Value> {

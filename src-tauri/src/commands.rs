@@ -130,7 +130,7 @@ pub(crate) fn validate_minutes(field: &str, v: i64) -> AppResult<i64> {
 }
 
 /// 校验标题
-fn validate_title(raw: &str) -> AppResult<String> {
+pub(crate) fn validate_title(raw: &str) -> AppResult<String> {
     let t = raw.trim();
     if t.is_empty() {
         return Err(AppError::validation("标题不能为空").with_hint("请输入 1–500 个字符的标题"));
@@ -156,7 +156,7 @@ pub(crate) fn validate_long_text(field: &str, raw: &str) -> AppResult<String> {
 }
 
 /// 校验优先级（§4.1 四级：0 无 / 1 低 / 2 中 / 3 高）
-fn validate_priority(p: i64) -> AppResult<i64> {
+pub(crate) fn validate_priority(p: i64) -> AppResult<i64> {
     if (0..=3).contains(&p) {
         Ok(p)
     } else {
@@ -215,7 +215,7 @@ pub(crate) fn validate_period(v: &str) -> AppResult<&'static str> {
 /// 因此这里一律经 `to_db_time` 归一化，而不是把用户输入原样回显。
 ///
 /// §4.3：是否含具体时刻由 `has_*_time` 表达，与本函数的格式无关。
-fn validate_time(field: &str, raw: &str) -> AppResult<String> {
+pub(crate) fn validate_time(field: &str, raw: &str) -> AppResult<String> {
     let parsed = chrono::DateTime::parse_from_rfc3339(raw).map_err(|_| {
         AppError::validation(format!("{field}格式不正确：{raw}"))
             .with_hint("请使用 ISO-8601 且带时区，例如 2026-09-23T09:00:00+08:00")
@@ -1497,7 +1497,10 @@ async fn build_report_rows(db: &Db, tasks: Vec<Task>) -> AppResult<Vec<TaskRepor
 /// 全部在一个事务内完成，避免"部分成功"导致 UI 与数据库不一致。
 #[tauri::command]
 pub async fn task_bulk(state: State<'_, AppState>, input: BulkActionInput) -> AppResult<i64> {
-    let db = &state.db;
+    bulk_tasks_impl(&state.db, input).await
+}
+
+pub(crate) async fn bulk_tasks_impl(db: &Db, input: BulkActionInput) -> AppResult<i64> {
     if input.ids.is_empty() {
         return Err(AppError::validation("请至少选择一项任务"));
     }
@@ -1553,14 +1556,25 @@ pub async fn task_bulk(state: State<'_, AppState>, input: BulkActionInput) -> Ap
             .await?
             .rows_affected(),
 
-            "restore" => sqlx::query(
-                "UPDATE tasks SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NOT NULL",
-            )
-            .bind(&now)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected(),
+            "restore" => {
+                sqlx::query(
+                    "DELETE FROM task_series_skips WHERE EXISTS (
+                        SELECT 1 FROM tasks t WHERE t.id = ?1 AND t.deleted_at IS NOT NULL
+                        AND t.series_id = task_series_skips.series_id
+                        AND t.occurrence_key = task_series_skips.occurrence_key)",
+                )
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "UPDATE tasks SET deleted_at = NULL, updated_at = ?1 WHERE id = ?2 AND deleted_at IS NOT NULL",
+                )
+                .bind(&now)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+            },
 
             "archive" => sqlx::query(
                 "UPDATE tasks SET status = 'archived', updated_at = ?1 WHERE id = ?2",
