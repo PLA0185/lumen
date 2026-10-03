@@ -62,7 +62,7 @@ interface AppStore {
   totalCount: number
   /** 是否还有未加载的任务 */
   hasMore: boolean
-  /** 正在加载下一页（界面据此禁用按钮，避免重复请求） */
+  /** 正在刷新列表或加载下一页（界面据此禁用分页按钮，避免请求争抢） */
   loadingMore: boolean
   /** 下一页的 offset，等于已加载条数 */
   nextOffset: number
@@ -266,6 +266,9 @@ export const SEARCH_DEBOUNCE_MS = 250
 
 /** 待执行的搜索刷新（模块级：同一时刻只允许一个） */
 let searchReloadTimer: ReturnType<typeof setTimeout> | null = null
+/** A reload also invalidates pages from the same query generation. */
+let paginationRequest = 0
+let reloadRequest = 0
 
 function scheduleSearchReload() {
   if (searchReloadTimer !== null) clearTimeout(searchReloadTimer)
@@ -311,11 +314,19 @@ export const useApp = create<AppStore>((set, get) => ({
   },
 
   reload: async () => {
+    // Enter、清除或其它立即刷新已处理当前搜索，无需再执行防抖查询。
+    if (searchReloadTimer !== null) {
+      clearTimeout(searchReloadTimer)
+      searchReloadTimer = null
+    }
     const s = get()
+    paginationRequest += 1
     // 记下这次请求属于哪一代查询（第三轮任务书 §4.3）
     const generation = s.queryGeneration
+    const request = ++reloadRequest
+    const isCurrent = () => get().queryGeneration === generation && reloadRequest === request
     // 后台刷新保留已显示的列表或空态，首次读取仍显示加载占位。
-    set({ loadState: s.loadState === 'ready' ? 'ready' : 'loading', loadError: null })
+    set({ loadState: s.loadState === 'ready' ? 'ready' : 'loading', loadError: null, loadingMore: true })
     try {
       const query = buildQuery(s)
       // 列表与总数**同时**取，且用同一套条件（§10 要求条件完全一致）：
@@ -327,14 +338,14 @@ export const useApp = create<AppStore>((set, get) => ({
 
       // 期间用户可能已经改了条件：这份结果属于上一代查询，必须丢弃。
       // 不加这一层就会出现"旧请求比新请求更晚返回，把新结果覆盖掉"。
-      if (get().queryGeneration !== generation) return
+      if (!isCurrent()) return
 
       // 注意 `fetchProgress` 也是一次 await：**它之后必须再查一次代数**
       // （第三轮收口任务书 §9）。只在它之前检查会留下窗口：
       // 检查通过 → fetchProgress 挂起 → 用户切条件且新结果落地 →
       // 旧 fetchProgress 返回 → 旧 set 覆盖新结果。
       const progressMap = await fetchProgress(tasks)
-      if (get().queryGeneration !== generation) return
+      if (!isCurrent()) return
 
       set({
         tasks,
@@ -347,9 +358,9 @@ export const useApp = create<AppStore>((set, get) => ({
         loadError: null,
       })
     } catch (e) {
-      if (get().queryGeneration !== generation) return
+      if (!isCurrent()) return
       const msg = e instanceof IpcError ? e.userMessage() : String(e)
-      set({ loadState: 'error', loadError: msg })
+      set({ loadState: 'error', loadError: msg, loadingMore: false })
     }
   },
 
@@ -359,6 +370,10 @@ export const useApp = create<AppStore>((set, get) => ({
     if (s.loadingMore) return
     // 记下这次请求属于哪一代查询（第三轮任务书 §4.3）
     const generation = s.queryGeneration
+    const request = ++paginationRequest
+    const isCurrent = () => get().queryGeneration === generation && paginationRequest === request
+    // 计数也属于分页请求，必须在第一个 await 前占锁。
+    set({ loadingMore: true })
 
     // 先按当前条件**刷新一次总数**再决定能不能继续加载。
     //
@@ -367,21 +382,18 @@ export const useApp = create<AppStore>((set, get) => ({
     // ① 其实还有更多，却因为旧的 hasMore=false 而不再加载；
     // ② 界面渲染出「加载更多」，点下去 `loadMore` 却直接返回——按钮点了没反应。
     // 计数很便宜（一条 count 查询），拿它当"要不要继续"的唯一依据最稳。
-    let total = s.totalCount
     try {
-      total = (await ipc.countTasks(buildQuery(s))).total
-    } catch {
-      // 计数失败就用旧值继续，不让一次计数错误挡住翻页
-    }
-    // 计数期间条件可能已经变了：这份判断也作废，交给新的一代去处理
-    if (get().queryGeneration !== generation) return
-    if (s.tasks.length >= total) {
-      set({ totalCount: total, hasMore: false, loadingMore: false })
-      return
-    }
-
-    set({ loadingMore: true })
-    try {
+      let total = s.totalCount
+      try {
+        total = (await ipc.countTasks(buildQuery(s))).total
+      } catch {
+        // 计数失败就用旧值继续，不让一次计数错误挡住翻页
+      }
+      if (!isCurrent() || get().tasks !== s.tasks) return
+      if (s.tasks.length >= total) {
+        set({ totalCount: total, hasMore: false })
+        return
+      }
       const rows = await ipc.listTasks({
         ...buildQuery(s),
         limit: PAGE_SIZE,
@@ -390,18 +402,12 @@ export const useApp = create<AppStore>((set, get) => ({
         offset: s.tasks.length,
       })
       // 过期结果直接丢弃：绝不能把"A 条件的第二页"追加进"B 条件的结果"里
-      if (get().queryGeneration !== generation) {
-        set({ loadingMore: false })
-        return
-      }
+      if (!isCurrent() || get().tasks !== s.tasks) return
       const seen = new Set(s.tasks.map((t) => t.id))
       const fresh = rows.filter((t) => !seen.has(t.id))
       // fetchProgress 同样是一次 await：写回前必须**再查一次**代数（收口任务书 §10）
       const freshProgress = await fetchProgress(fresh)
-      if (get().queryGeneration !== generation) {
-        set({ loadingMore: false })
-        return
-      }
+      if (!isCurrent() || get().tasks !== s.tasks) return
       const tasks = [...s.tasks, ...fresh]
       set({
         tasks,
@@ -410,13 +416,13 @@ export const useApp = create<AppStore>((set, get) => ({
         nextOffset: tasks.length,
         // 这一页一条新的都没拿到（并发删除等）就停下，避免无限请求同一页
         hasMore: fresh.length > 0 && tasks.length < total,
-        loadingMore: false,
       })
     } catch (e) {
-      set({ loadingMore: false })
-      if (get().queryGeneration === generation) {
+      if (isCurrent()) {
         get().pushToast('error', e instanceof IpcError ? e.userMessage() : String(e))
       }
+    } finally {
+      if (isCurrent()) set({ loadingMore: false })
     }
   },
 

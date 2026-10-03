@@ -22,7 +22,7 @@ import { ContentMarkdown } from './ContentMarkdown'
  * 的渲染白名单，非白名单内容一律丢弃，因此不会执行注入的脚本（§10）。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
@@ -72,6 +72,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const [projectId, setProjectId] = useState(task.projectId ?? '')
   const [categoryId, setCategoryId] = useState(task.categoryId ?? '')
   const [tagIds, setTagIds] = useState<string[]>([])
+  const tagsTouched = useRef(false)
+  const knownTags = useRef(new Map<string, Tag>())
 
   // 三个时间字段（各自独立）
   const [plannedDate, setPlannedDate] = useState('')
@@ -120,6 +122,8 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         tags: org.tagList,
         selectedTags: () => org.taskTagsGet(task.id),
       })
+    // Retain display names so a selected tag removed elsewhere can still be removed here.
+    for (const tag of [...(t.status === 'fulfilled' ? t.value : []), ...(mine.status === 'fulfilled' ? mine.value : [])]) knownTags.current.set(tag.id, tag)
     if (p.status === 'fulfilled') {
       setProjects(p.value)
       setAuxReady((old) => ({ ...old, projects: true }))
@@ -139,13 +143,13 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
     if (t.status === 'fulfilled' && mine.status === 'fulfilled') {
       setTags(t.value)
       setOriginalTags(mine.value)
-      setTagIds(mine.value.map((x) => x.id))
+      if (!tagsTouched.current) setTagIds(mine.value.map((x) => x.id))
       setAuxReady((old) => ({ ...old, tags: true }))
       setAuxErrors((old) => ({ ...old, tags: null }))
     } else {
       if (mine.status === 'fulfilled') {
         setOriginalTags(mine.value)
-        setTagIds(mine.value.map((x) => x.id))
+        if (!tagsTouched.current) setTagIds(mine.value.map((x) => x.id))
       }
       setAuxReady((old) => ({ ...old, tags: false }))
       setAuxErrors((old) => ({ ...old, tags: errText(
@@ -176,13 +180,14 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (pendingRecurringPatch) return
         if (showRuleEditor) setShowRuleEditor(false)
         else onClose()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose, showRuleEditor])
+  }, [onClose, showRuleEditor, pendingRecurringPatch])
 
   /** 客户端校验，减少一次往返就能告诉用户哪里填错了 */
   const validate = (): boolean => {
@@ -360,7 +365,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
     [noteMd],
   )
   const selectedTagRecords = tagIds.map((id) =>
-    tags.find((tag) => tag.id === id) ?? originalTags.find((tag) => tag.id === id),
+    tags.find((tag) => tag.id === id) ?? originalTags.find((tag) => tag.id === id) ?? knownTags.current.get(id),
   ).filter((tag): tag is Tag | TagWithCount => Boolean(tag))
   const availableTags = tags.filter((tag) => !tagIds.includes(tag.id) &&
     tag.name.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()))
@@ -658,7 +663,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                 重试
               </button>
             </div>
-          ) : tags.length === 0 ? (
+          ) : tags.length === 0 && selectedTagRecords.length === 0 ? (
             <p className="setgroup__hint" style={{ margin: 0 }}>
               还没有标签。可在「标签」页创建。
             </p>
@@ -672,7 +677,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                     type="button"
                     className="tagtoggle tagtoggle--on"
                     aria-label={`移除标签 ${t.name}`}
-                    onClick={() => setTagIds((prev) => prev.filter((x) => x !== t.id))}
+                    onClick={() => { tagsTouched.current = true; setTagIds((prev) => prev.filter((x) => x !== t.id)) }}
                   >
                     {t.color && (
                       <span
@@ -694,7 +699,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                   {availableTags.length > 0 ? availableTags.map((t) => (
                     <button key={t.id} type="button" className="tagresult" role="option"
                       aria-selected="false"
-                      onClick={() => { setTagIds((old) => [...old, t.id]); setTagSearch('') }}>
+                      onClick={() => { tagsTouched.current = true; setTagIds((old) => [...old, t.id]); setTagSearch('') }}>
                       {t.color && <span className="orgrow__swatch orgrow__swatch--round"
                         style={{ background: t.color }} aria-hidden="true" />}
                       {t.name}

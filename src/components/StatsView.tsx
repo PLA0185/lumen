@@ -136,6 +136,7 @@ export function StatsView() {
   }, [days, gate])
 
   useEffect(() => {
+    gate.activate()
     void reload()
     const off = onDataChanged(['tasks', 'focus', 'stats', 'all'], () => void reload())
     return () => {

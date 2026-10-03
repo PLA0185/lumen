@@ -77,6 +77,10 @@ export function QuickAdd({
   /** 用户是否手动改过日期；改过之后不再用解析值覆盖（避免"我改的又被冲掉"） */
   const [dateTouched, setDateTouched] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const draftSnapshot = JSON.stringify({ text, dateStr, timeStr, priority, repeat, rule, description,
+    materializeDays, periodType, periodTouched, dateTouched, configureReminder })
+  const latestDraft = useRef(draftSnapshot)
+  latestDraft.current = draftSnapshot
 
   const parsed = useMemo(() => parseQuickInput(text), [text])
   useEffect(() => {
@@ -174,7 +178,7 @@ export function QuickAdd({
         if (configureReminder) onConfigureReminder?.(task)
       }
       // createTask 的统一 mutation 层已通知所有数据视图。
-      reset()
+      if (latestDraft.current === draftSnapshot) reset()
       inputRef.current?.focus()
     } catch (e) {
       setError(e instanceof IpcError ? e.userMessage() : String(e))
@@ -202,9 +206,11 @@ export function QuickAdd({
     context,
     configureReminder,
     onConfigureReminder,
+    draftSnapshot,
   ])
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void save()

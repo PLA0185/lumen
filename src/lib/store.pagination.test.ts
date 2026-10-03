@@ -336,6 +336,25 @@ describe('列表分页', () => {
 })
 
 describe('搜索条件变化', () => {
+  it.each(['立即搜索', ''])('立即刷新取消搜索词「%s」的待执行防抖，仅查一次列表与计数', async search => {
+    vi.useFakeTimers()
+    try {
+      listTasks.mockResolvedValue([])
+      countTasks.mockResolvedValue({ total: 0 })
+      useApp.setState({ search: '旧搜索词' })
+      useApp.getState().setSearch(search)
+      await useApp.getState().reload()
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 10)
+      expect(listTasks).toHaveBeenCalledOnce()
+      expect(countTasks).toHaveBeenCalledOnce()
+      expect(listTasks).toHaveBeenCalledWith(expect.objectContaining({ search: search || null, offset: 0 }))
+      expect(useApp.getState().loadingMore).toBe(false)
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
   it('输入搜索词会自动刷新（不必按回车），并且从第一页重新开始', async () => {
     vi.useFakeTimers()
     try {
@@ -380,6 +399,125 @@ describe('过期请求不得覆盖新条件的结果', () => {
     })
     return { promise, resolve }
   }
+
+  it('计数请求尚未返回时已占分页锁，连续调用不会重入', async () => {
+    const slowCount = deferred<{ total: number }>()
+    useApp.setState({ tasks: makeTasks(1, PAGE_SIZE), totalCount: 600, hasMore: true })
+    countTasks.mockReturnValue(slowCount.promise)
+    listTasks.mockResolvedValue(makeTasks(PAGE_SIZE + 1, PAGE_SIZE * 2))
+    const first = useApp.getState().loadMore()
+    const second = useApp.getState().loadMore()
+    try {
+      expect(useApp.getState().loadingMore).toBe(true)
+      expect(countTasks).toHaveBeenCalledOnce()
+    } finally {
+      slowCount.resolve({ total: 600 })
+      await Promise.all([first, second])
+    }
+    expect(listTasks).toHaveBeenCalledOnce()
+    expect(useApp.getState().loadingMore).toBe(false)
+  })
+
+  it.each(['resolve', 'reject'] as const)('旧查询分页 %s 不能解开新查询在飞请求的锁', async mode => {
+    let resolveOld!: (rows: Task[]) => void
+    let rejectOld!: (error: Error) => void
+    const oldPage = new Promise<Task[]>((resolve, reject) => { resolveOld = resolve; rejectOld = reject })
+    const newPage = deferred<Task[]>()
+    countTasks.mockResolvedValue({ total: 600 })
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    await useApp.getState().reload()
+    listTasks.mockReturnValueOnce(oldPage)
+    const old = useApp.getState().loadMore()
+    await vi.waitFor(() => expect(listTasks).toHaveBeenCalledTimes(2))
+    useApp.setState({ queryGeneration: useApp.getState().queryGeneration + 1, search: '新查询' })
+    listTasks.mockResolvedValueOnce(makeTasks(501, 700))
+    await useApp.getState().reload()
+    listTasks.mockReturnValueOnce(newPage.promise)
+    const current = useApp.getState().loadMore()
+    await vi.waitFor(() => expect(listTasks).toHaveBeenCalledTimes(4))
+    try {
+      if (mode === 'resolve') resolveOld(makeTasks(201, 400))
+      else rejectOld(new Error('旧查询失败'))
+      await old
+      expect(useApp.getState().loadingMore).toBe(true)
+      await useApp.getState().loadMore()
+      expect(listTasks).toHaveBeenCalledTimes(4)
+    } finally {
+      newPage.resolve(makeTasks(701, 900))
+      await current
+    }
+    expect(useApp.getState().tasks).toEqual(makeTasks(501, 900))
+    expect(useApp.getState().loadingMore).toBe(false)
+  })
+
+  it('同条件重载也作废在飞旧页，迟到结果不覆盖新第一页', async () => {
+    const oldPage = deferred<Task[]>()
+    countTasks.mockResolvedValue({ total: 600 })
+    listTasks.mockResolvedValueOnce(makeTasks(1, PAGE_SIZE))
+    await useApp.getState().reload()
+    listTasks.mockReturnValueOnce(oldPage.promise)
+    const old = useApp.getState().loadMore()
+    await vi.waitFor(() => expect(listTasks).toHaveBeenCalledTimes(2))
+    listTasks.mockResolvedValueOnce(makeTasks(501, 700))
+    await useApp.getState().reload()
+    oldPage.resolve(makeTasks(201, 400))
+    await old
+    expect(useApp.getState().tasks).toEqual(makeTasks(501, 700))
+    expect(useApp.getState().loadingMore).toBe(false)
+  })
+
+  it.each(['resolve', 'reject'] as const)('同条件两次重载，迟到旧请求 %s 不覆盖新结果', async mode => {
+    let resolveOld!: (rows: Task[]) => void
+    let rejectOld!: (error: Error) => void
+    const oldRows = new Promise<Task[]>((resolve, reject) => { resolveOld = resolve; rejectOld = reject })
+    countTasks.mockResolvedValue({ total: 1 })
+    listTasks.mockReturnValueOnce(oldRows)
+    const old = useApp.getState().reload()
+    listTasks.mockResolvedValueOnce(makeTasks(501, 501))
+    await useApp.getState().reload()
+    if (mode === 'resolve') resolveOld(makeTasks(1, 1))
+    else rejectOld(new Error('迟到旧请求失败'))
+    await old
+    expect(useApp.getState().tasks.map(task => task.id)).toEqual(['t-501'])
+    expect(useApp.getState().loadState).toBe('ready')
+    expect(useApp.getState().loadError).toBeNull()
+  })
+
+  it('同条件旧重载卡在进度读取时，新重载结果也不能被旧进度覆盖', async () => {
+    const oldProgress = deferred<SubtaskProgress[]>()
+    countTasks.mockResolvedValue({ total: 1 })
+    listTasks.mockResolvedValueOnce(makeTasks(1, 1))
+    subtaskProgressBatch.mockReturnValueOnce(oldProgress.promise)
+    subtaskProgressBatch.mockImplementation((ids: string[]) => Promise.resolve(progressRows(ids)))
+    const old = useApp.getState().reload()
+    await vi.waitFor(() => expect(subtaskProgressBatch).toHaveBeenCalledOnce())
+    listTasks.mockResolvedValueOnce(makeTasks(501, 501))
+    await useApp.getState().reload()
+    oldProgress.resolve(progressRows(['t-1']))
+    await old
+    expect(useApp.getState().tasks.map(task => task.id)).toEqual(['t-501'])
+    expect(Object.keys(useApp.getState().progressMap)).toEqual(['t-501'])
+  })
+
+  it('后台重载在飞时禁用分页，首屏和追加页不能争抢同一列表', async () => {
+    const refreshedRows = deferred<Task[]>()
+    useApp.setState({ tasks: makeTasks(1, PAGE_SIZE), totalCount: 600, hasMore: true, loadState: 'ready' })
+    countTasks.mockResolvedValue({ total: 600 })
+    listTasks.mockReturnValueOnce(refreshedRows.promise).mockResolvedValue(makeTasks(201, 400))
+    const refresh = useApp.getState().reload()
+    try {
+      await useApp.getState().loadMore()
+      expect(countTasks).toHaveBeenCalledOnce()
+      expect(listTasks).toHaveBeenCalledOnce()
+      expect(useApp.getState().loadingMore).toBe(true)
+      expect(useApp.getState().loadState).toBe('ready')
+    } finally {
+      refreshedRows.resolve(makeTasks(501, 700))
+      await refresh
+    }
+    expect(useApp.getState().tasks).toEqual(makeTasks(501, 700))
+    expect(useApp.getState().loadingMore).toBe(false)
+  })
 
   it('旧 reload 比新 reload 更晚返回时，不能覆盖新结果', async () => {
     const slow = deferred<Task[]>()

@@ -17,6 +17,7 @@ afterEach(() => {
   act(() => root?.unmount())
   root = undefined
   vi.restoreAllMocks()
+  window.getSelection()?.removeAllRanges()
   document.body.innerHTML = ''
 })
 async function mount(node: React.ReactNode) {
@@ -107,4 +108,71 @@ it('完成简览显示实际完成时间到秒，缺失的历史时间明确显�
   await mount(<SubtaskPreview items={[{ ...child, isDone: 1, completedAt }, { ...child, id: 'legacy', isDone: 1 }]} />)
   expect(document.body.textContent).toContain(formatCompletionTime(completedAt))
   expect(document.body.textContent).toContain('完成时间未记录')
+})
+
+it('子任务重命名按钮可聚焦，键盘激活后回车提交新标题', async () => {
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child])
+  const change = vi.spyOn(org, 'subtaskChange').mockResolvedValue([{ ...child, title: '新标题' }])
+  await mount(<SubtaskList taskId="parent" />)
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="重命名子任务「CA」"]')
+  expect(button).not.toBeNull()
+  await act(async () => {
+    button!.focus()
+    expect(document.activeElement).toBe(button)
+    // Enter/Space on a native button produces this detail=0 activation event.
+    button!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }))
+  })
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="子任务标题"]'))
+  await input('子任务标题', '新标题')
+  await act(async () => document.querySelector('[aria-label="子任务标题"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(change).toHaveBeenCalledExactlyOnceWith('parent', { kind: 'rename', id: 'child', title: '新标题' }, undefined)
+  expect(document.body.textContent).toContain('新标题')
+})
+
+it('子任务双击标题仍可进入重命名', async () => {
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child])
+  await mount(<SubtaskList taskId="parent" />)
+  const button = document.querySelector<HTMLButtonElement>('button[aria-label="重命名子任务「CA」"]')
+  expect(button).not.toBeNull()
+  await act(async () => button!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, detail: 2 })))
+  expect(document.querySelector<HTMLInputElement>('[aria-label="子任务标题"]')!.value).toBe('CA')
+})
+
+it.each(['子任务标题', '新子任务标题'])('%s 的组合输入回车只选字，结束组合后回车才提交', async label => {
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child])
+  const change = vi.spyOn(org, 'subtaskChange').mockResolvedValue([{ ...child, title: '中文标题' }])
+  await mount(<SubtaskList taskId="parent" />)
+  if (label === '子任务标题') await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="重命名子任务「CA」"]')!.click())
+  await input(label, '中文标题')
+  const field = document.querySelector(`[aria-label="${label}"]`)!
+  await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true })))
+  expect(change).not.toHaveBeenCalled()
+  await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229, bubbles: true })))
+  expect(change).not.toHaveBeenCalled()
+  await act(async () => field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+  expect(change).toHaveBeenCalledOnce()
+})
+
+it('鼠标选择子任务标题文本后不立即进入重命名，选区保留', async () => {
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child])
+  await mount(<SubtaskList taskId="parent" />)
+  const button = document.querySelector('[aria-label="重命名子任务「CA」"]')!
+  const range = document.createRange()
+  range.selectNodeContents(button)
+  window.getSelection()!.addRange(range)
+  await act(async () => button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })))
+  expect(document.querySelector('[aria-label="子任务标题"]')).toBeNull()
+  expect(window.getSelection()!.toString()).toBe('CA')
+})
+
+it('重命名按 Esc 取消，保留原标题且不提交修改', async () => {
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child])
+  const change = vi.spyOn(org, 'subtaskChange')
+  await mount(<SubtaskList taskId="parent" />)
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="重命名子任务「CA」"]')!.click())
+  await input('子任务标题', '取消的草稿')
+  await act(async () => document.querySelector('[aria-label="子任务标题"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(change).not.toHaveBeenCalled()
+  expect(document.querySelector('[aria-label="子任务标题"]')).toBeNull()
+  expect(document.querySelector('[aria-label="重命名子任务「CA」"]')?.textContent).toBe('CA')
 })

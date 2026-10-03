@@ -89,6 +89,10 @@ export function SubtaskList({ taskId, isRecurring = false, taskTitle = '' }: Sub
     if (!t || t === s.title) { setEditingId(null); return }
     await request({ kind: 'rename', id: s.id, title: t })
   }
+  const startRename = (s: Subtask) => {
+    setEditingId(s.id)
+    setEditTitle(s.title)
+  }
 
   const remove = async (s: Subtask) => {
     await request({ kind: 'delete', id: s.id })
@@ -157,22 +161,25 @@ export function SubtaskList({ taskId, isRecurring = false, taskTitle = '' }: Sub
                   aria-label="子任务标题"
                   onChange={(e) => setEditTitle(e.target.value)}
                   onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing || e.keyCode === 229) return
                     if (e.key === 'Enter') void saveRename(s)
                     if (e.key === 'Escape') setEditingId(null)
                   }}
                   onBlur={() => void saveRename(s)}
                 />
               ) : (
-                <span
+                <button
+                  type="button"
                   className="subtask__title selectable"
-                  onDoubleClick={() => {
-                    setEditingId(s.id)
-                    setEditTitle(s.title)
-                  }}
-                  title="双击可重命名"
+                  style={{ textAlign: 'left', padding: 0 }}
+                  aria-label={`重命名子任务「${s.title}」`}
+                  disabled={adding || pending !== null}
+                  onClick={(e) => { if (e.detail === 0 || !window.getSelection()?.toString()) startRename(s) }}
+                  onDoubleClick={() => startRename(s)}
+                  title="点击或双击可重命名，也可聚焦后按回车"
                 >
                   {s.title}
-                </span>
+                </button>
               )}
 
               {s.isDone === 1 && <span className="subtask__completed selectable">{formatCompletionTime(s.completedAt)}</span>}
@@ -198,6 +205,7 @@ export function SubtaskList({ taskId, isRecurring = false, taskTitle = '' }: Sub
           aria-label="新子任务标题"
           onChange={(e) => setNewTitle(e.target.value)}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return
             if (e.key === 'Enter') void add()
           }}
         />

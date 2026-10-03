@@ -571,6 +571,7 @@ export default function App() {
                 aria-label={view === 'memos' ? '搜索备忘与流程' : '搜索任务'}
                 onChange={(e) => view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
                   if (e.key === 'Enter' && view !== 'memos') void reload()
                 }}
               />

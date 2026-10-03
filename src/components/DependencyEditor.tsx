@@ -85,7 +85,10 @@ export function DependencyEditor({ taskId, taskTitle }: DependencyEditorProps) {
     return () => { window.clearTimeout(timer); candidateGate.invalidate() }
   }, [candidateGate, loadCandidates, picking])
 
-  useEffect(() => () => candidateGate.dispose(), [candidateGate])
+  useEffect(() => {
+    candidateGate.activate()
+    return () => candidateGate.dispose()
+  }, [candidateGate])
 
   /** 候选：排除自身、已存在的前置、以及已完成任务（已完成的不构成阻塞） */
   const filtered = useMemo(() => {

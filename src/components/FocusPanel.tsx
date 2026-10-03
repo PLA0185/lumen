@@ -66,6 +66,7 @@ export function FocusPanel({ taskId, taskTitle, compact = false }: FocusPanelPro
   }, [gate])
 
   useEffect(() => {
+    gate.activate()
     void reload()
     const off = onDataChanged(['focus', 'tasks', 'all'], () => void reload())
     return () => { off(); gate.invalidate() }
