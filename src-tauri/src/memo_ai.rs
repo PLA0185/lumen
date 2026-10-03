@@ -244,6 +244,16 @@ pub async fn ai_generate_flow(
     let loaded =
         crate::ai_media::load_flow_media(&state.db, config.provider, &input.asset_ids).await?;
     let source = flow_source(&input.text, &loaded);
+    if let Some(plan) = crate::flow_structure::explicit_plan(&source)? {
+        return finish_flow(
+            &state.db,
+            &plan,
+            &source,
+            &loaded.references,
+            &loaded.derived,
+        )
+        .await;
+    }
     // Extracted document text is already in source with original image anchors.
     // Do not send a second copy as a file/text part for the model to split again.
     let media: Vec<_> = loaded
