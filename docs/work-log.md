@@ -3438,3 +3438,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.26 发布说明](../RELEASE_NOTES.md)、[备忘与流程视图](../src/components/MemosView.tsx)、[项目关联任务视图](../src/components/ContextTaskList.tsx)、[知识库问答和导入进度（第 65 轮）](work-log.md#第-65-轮--2026-10-04--问答保留导入进度与资料清单收纳)。
+
+## 第 67 轮 · 2026-10-05 · 覆盖安装并启动 0.4.26
+
+### 做了
+
+- 按用户明确要求，把仓库外签名包 `D:/Codex/Lumen_0.4.26_x64-setup.exe` 覆盖安装到原 0.4.25 安装目录 `C:/Users/linxi/AppData/Local/Temp/Lumen-OCR-PackageVerify-Final-2ac92178b68d4e4a933d93bcc0e85d41`，没有改安装位置。
+- 安装后启动新版本；旧进程已由安装替换，新进程运行自同一目录。
+
+### 没做到
+
+- 未在桌面窗口内逐项手工操作分类候选和项目页布局；本轮核验了 0.4.26 已启动且窗口响应，但没有做完整视觉验收。
+- 未重新运行代码门禁；本轮只做已通过门禁的 0.4.26 安装包覆盖与启动核验，没有改动应用源码。安装包对应提交 `beff24f` 的 GitHub Actions 全部门禁已在第 66 轮记录。
+
+### 怎么验证的
+
+- 覆盖安装器以静默模式运行，进程退出码为 0。
+- 安装注册项确认 `DisplayVersion=0.4.26`，`InstallLocation` 仍为原目录；安装后的 `lumen.exe` 文件版本和产品版本均为 `0.4.26`。
+- 确认安装目录包含检测、识别、方向分类三份 PaddleOCR ONNX 模型。
+- 启动后确认进程路径与安装目录一致，窗口标题为 `Lumen` 且 `Responding=True`。
+- 本轮安装包对应代码的 CI：[GitHub Actions 37241681229](https://github.com/PLA0185/lumen/actions/runs/37241681229) 已通过，详情见第 66 轮。
+
+### 相关文档
+
+- [0.4.26 发布说明](../RELEASE_NOTES.md)、[第 66 轮记录](work-log.md#第-66-轮--2026-10-05--分类候选项目页对齐与-0426)。
