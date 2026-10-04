@@ -3312,7 +3312,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 本轮是界面焦点修复，没有重新调用外部 AI 服务；本轮真实鼠标路径仅验证导航和已安装 UI。公司电脑双机同步、任意 Word 版式、全部模型语义与系统通知弹出仍未穷举；流程多格式导出、完整快捷键和 Harness 产品接入仍未实现。
 - 正式程序启动时现有云同步运行态有变化：1 条既有同步事件的 `uploaded` 标志由 0 变为 1，`memo_sync_runtime` 更新 `head_generation`、`budget_start`、`retry_until`。未新增/删除事件，事件 payload 未改；不能把两张运行态表说成逐行不变。
-- 提交已在本机 `main` 完成，但 GitHub 推送未成功：`git push` 两次收到 github.com:443 connection timeout，一次连接被重置；HTTP/1.1 重试同样无法连接。因此这三笔本地提交目前没有推送，提交后的 GitHub CI 未触发、未验证。网络恢复后必须推送并确认 CI；未创建公开 Release。
+- 本轮提交已在本机 `main` 完成，但 GitHub 推送未成功：对 `PLA0185/lumen` 的重试收到 github.com:443 connection timeout 或连接重置，HTTP/1.1 与直接 HTTPS 连通性检查也失败。因此本轮提交和此前本任务的未推送提交仍在本机，GitHub CI 未触发、未验证。网络恢复后必须推送并确认 CI；未创建公开 Release。
 
 ### 怎么验证的
 
