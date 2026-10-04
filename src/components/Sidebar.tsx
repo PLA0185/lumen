@@ -54,6 +54,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '整理',
     items: [
       { id: 'memos', icon: 'edit', label: '备忘与流程' },
+      { id: 'knowledge', icon: 'document', label: '知识库问答' },
       { id: 'projects', icon: 'projects', label: '项目与分类' },
       { id: 'tags', icon: 'tags', label: '标签' },
       { id: 'completed', icon: 'completed', label: '已完成' },
@@ -74,6 +75,7 @@ export const NAV_GROUPS: NavGroup[] = [
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   'weekly-recurring': { title: '每周重复', subtitle: '查看每周特定一天或几天执行的重复任务，编辑星期和节假日规则' },
   memos: { title: '备忘与流程', subtitle: '随手记录业务要点，把操作步骤整理成随时可查的流程' },
+  knowledge: { title: '知识库问答', subtitle: '检索导入资料与已保存流程，答案附带可核实的来源' },
   assistant: { title: 'AI 助手', subtitle: '一段话生成计划待办，日、周、月、年总结' },
   today: { title: '今天', subtitle: '计划时间落在今天的所有任务' },
   tomorrow: { title: '明天', subtitle: '计划时间落在明天的所有任务' },

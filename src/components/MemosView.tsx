@@ -34,9 +34,13 @@ function errorText(e: unknown) {
 export function MemosView({
   query = '',
   onDirtyChange,
+  initialFlowTarget,
+  onFlowTargetHandled,
 }: {
   query?: string
   onDirtyChange?: (dirty: boolean) => void
+  initialFlowTarget?: { flowId: string; stepId: string; requestId: string } | null
+  onFlowTargetHandled?: () => void
 }) {
   const [items, setItems] = useState<memo.MemoSummary[]>([])
   const [trash, setTrash] = useState(false)
@@ -55,6 +59,7 @@ export function MemosView({
   const [aiDraft, setAiDraft] = useState(false)
   const [flowView, setFlowView] = useState<'canvas' | 'list'>('canvas')
   const [canvasSession, setCanvasSession] = useState(0)
+  const [externalFocusStepId, setExternalFocusStepId] = useState<string | null>(null)
   const [showList, setShowList] = useState(false)
   const saving = useRef(false)
   const [error, setError] = useState<string | null>(null)
@@ -121,19 +126,38 @@ export function MemosView({
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
+  useEffect(() => {
+    if (!initialFlowTarget) return
+    if (selected?.id === initialFlowTarget.flowId && selected.kind === 'flow' && !selected.deletedAt) {
+      if (selected.steps.some(step => step.id === initialFlowTarget.stepId)) setExternalFocusStepId(initialFlowTarget.stepId)
+      else setError('该流程步骤已不存在或编号已变化，请从知识库重新检索。')
+      onFlowTargetHandled?.()
+      return
+    }
+    if (!canLeave()) { onFlowTargetHandled?.(); return }
+    void load(initialFlowTarget.flowId, true, initialFlowTarget.stepId).then(loaded => {
+      if (loaded) setExternalFocusStepId(initialFlowTarget.stepId)
+      onFlowTargetHandled?.()
+    })
+  // requestId makes repeated navigation to the same step a new focus request.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFlowTarget?.requestId])
+
   const canLeave = () =>
     !busy && !saving.current && (!dirty || window.confirm('当前修改尚未保存。放弃修改吗？'))
-  const load = async (id: string, flowOnly = false) => {
+  const load = async (id: string, flowOnly = false, focusStepId?: string) => {
     setBusy(true)
     setError(null)
     setNotice(null)
     return runLatestRequest(detailGate, async () => {
       const doc = await memo.memoGet(id)
       if (flowOnly && (doc.kind !== 'flow' || doc.deletedAt)) throw new Error('此流程已经删除或不再可用，请刷新流程列表')
+      if (focusStepId && !doc.steps.some(step => step.id === focusStepId)) throw new Error('该流程步骤已不存在或编号已变化，请从知识库重新检索。')
       return doc
     }, {
       apply: (doc) => {
         setCanvasSession(n => n + 1)
+        setExternalFocusStepId(null)
         setFlowView('canvas')
         setAiDraft(false)
         setSelected(doc)
@@ -662,7 +686,7 @@ export function MemosView({
                 </div>
               ))}
               {draft.kind === 'flow' && flowView === 'canvas' && <>
-                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} switcher={<FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} />} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onFinishEditing={async () => { if (aiDraft) return true; if (!dirty) { setEditing(false); return true }; return save(false) }} onChange={steps => { setEditing(true); patch({ steps }) }} />
+                <FlowCanvas key={canvasSession} steps={draft.steps} source={imageSource} focusStepId={externalFocusStepId} switcher={<FlowSwitcher id={draft.id} title={draft.title} disabled={busy || autoSaving} onSwitch={switchFlow} />} metadata={<div className="memos__editor">{originalImages.length > 0 && <p className="setgroup__hint">{missingImages.length ? `还有 ${missingImages.length} 张原图未关联步骤，请在对应步骤下选择原图并核对。` : '原图均已关联步骤，请核对图片是否放在正确位置。'}</p>}{editing && !selected?.deletedAt ? metadataFields : <><h2>{draft.title}</h2>{draft.category && <p className="setgroup__hint">分类：{draft.category}</p>}<ContentMarkdown>{draft.bodyMd}</ContentMarkdown></>}</div>} initialEdit={editing} readOnly={!!selected?.deletedAt} disabled={busy} onFinishEditing={async () => { if (aiDraft) return true; if (!dirty) { setEditing(false); return true }; return save(false) }} onChange={steps => { setEditing(true); patch({ steps }) }} />
               </>}
             </>
           )}

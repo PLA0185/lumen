@@ -3,6 +3,7 @@ import { emit, listen } from '@tauri-apps/api/event'
 
 export type DataDomain =
   | 'memos'
+  | 'knowledge'
   | 'tasks'
   | 'organization'
   | 'subtasks'
@@ -21,6 +22,8 @@ export const MUTATION_DOMAINS = {
   ai_clear_key: ['aiConfig'],
   memo_save: ['memos'],
   memo_set_deleted: ['memos'],
+  knowledge_import: ['knowledge'],
+  knowledge_delete: ['knowledge'],
   cloud_sync_restore: ['memos'],
   cloud_sync_business_resolve: ['all'],
   task_create: ['tasks', 'organization', 'stats'],

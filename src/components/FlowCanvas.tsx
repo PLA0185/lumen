@@ -25,8 +25,8 @@ function isInput(target: EventTarget | null) {
   return target instanceof Element && !!target.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], .flow-canvas__inspector, .flow-canvas__inline-editor')
 }
 
-export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled = false, readOnly = false, initialEdit = false, metadata, switcher }: {
-  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; onFinishEditing?: () => Promise<boolean>; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode; switcher?: ReactNode
+export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled = false, readOnly = false, initialEdit = false, metadata, switcher, focusStepId }: {
+  steps: FlowStep[]; source: string; onChange: (steps: FlowStep[]) => void; onFinishEditing?: () => Promise<boolean>; disabled?: boolean; readOnly?: boolean; initialEdit?: boolean; metadata?: ReactNode; switcher?: ReactNode; focusStepId?: string | null
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(() => initialEdit ? steps[0]?.id ?? null : null)
   const [query, setQuery] = useState('')
@@ -94,6 +94,7 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
   }, [editingId, infoOpen, finishEditing])
   const drag = useRef<{ id: number; x: number; y: number; originX: number; originY: number } | null>(null)
   const pendingFocus = useRef<string | null>(null)
+  const lastExternalFocus = useRef<string | null>(null)
   const viewTouched = useRef(false)
   const marker = useId().replace(/:/g, '')
   const latest = useRef({ steps, disabled, readOnly, onChange }); latest.current = { steps, disabled, readOnly, onChange }
@@ -184,6 +185,15 @@ export function FlowCanvas({ steps, source, onChange, onFinishEditing, disabled 
     pendingFocus.current = null
     if (index >= 0) center(index)
   })
+  useEffect(() => {
+    if (!focusStepId || focusStepId === lastExternalFocus.current) return
+    if (!steps.some(step => step.id === focusStepId)) return
+    lastExternalFocus.current = focusStepId
+    pendingFocus.current = focusStepId
+    setSelectedId(focusStepId)
+    setEditingId(null)
+    setInfoOpen(false)
+  }, [focusStepId, steps])
   useLayoutEffect(() => {
     if (!editingId) return
     const node = Array.from(viewport.current?.querySelectorAll<HTMLElement>('.flow-canvas__node') ?? []).find(n => n.dataset.stepId === editingId)

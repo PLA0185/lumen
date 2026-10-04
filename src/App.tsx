@@ -24,6 +24,7 @@ import { SettingsView } from './components/SettingsView'
 import { CloudSyncButton } from './components/CloudSyncButton'
 import { AiAssistant } from './components/AiAssistant'
 import { MemosView } from './components/MemosView'
+import { KnowledgeBase } from './components/KnowledgeBase'
 import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
@@ -42,6 +43,7 @@ import { Icon } from './components/Icons'
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'weekly-recurring',
   'memos',
+  'knowledge',
   'assistant',
   'today',
   'tomorrow',
@@ -106,6 +108,8 @@ export default function App() {
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [memoSearch, setMemoSearch] = useState('')
   const [memoDirty, setMemoDirty] = useState(false)
+  const [knowledgeMounted, setKnowledgeMounted] = useState(view === 'knowledge')
+  const [knowledgeFlowTarget, setKnowledgeFlowTarget] = useState<{ flowId: string; stepId: string; requestId: string } | null>(null)
   const [showAi, setShowAi] = useState(false)
   const aiDialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
@@ -121,6 +125,11 @@ export default function App() {
   const [calendarDate, setCalendarDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const defaults = creationDefaults(view, calendarDate)
   useEffect(() => { setCreationContext(undefined) }, [view])
+  useEffect(() => { if (view === 'knowledge') setKnowledgeMounted(true) }, [view])
+  const openKnowledgeFlow = useCallback((flowId: string, stepId: string) => {
+    setKnowledgeFlowTarget({ flowId, stepId, requestId: crypto.randomUUID() })
+    navigate('memos')
+  }, [navigate])
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
   const [deletingRecurring, setDeletingRecurring] = useState<Task | null>(null)
@@ -482,9 +491,9 @@ export default function App() {
           <div className="topbar__actions">
             <div className="topbar__controls">
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
-            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>
-            <CloudSyncButton />
-            <button
+            {view !== 'knowledge' && <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>}
+            {view !== 'knowledge' && <CloudSyncButton />}
+            {view !== 'knowledge' && <button
               type="button"
               className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}
               aria-pressed={floatingOn === true}
@@ -498,9 +507,9 @@ export default function App() {
             >
               <Icon name="pin" size={15} />
               悬浮窗
-            </button>
+            </button>}
 
-            {view !== 'memos' && <><button
+            {view !== 'memos' && view !== 'knowledge' && <><button
               type="button"
               className={`btn btn--ghost btn--sm${overdueOnly ? ' btn--filter-on' : ''}`}
               aria-pressed={overdueOnly}
@@ -559,6 +568,7 @@ export default function App() {
             </>}
             </div>
             <div className="topbar__end">
+            {view !== 'knowledge' && <>
             <div className="search">
               <span className="search__icon" aria-hidden="true">
                 <Icon name="search" size={15} />
@@ -590,7 +600,8 @@ export default function App() {
                 </button>
               )}
             </div>
-            {view !== 'memos' && <>
+            </>}
+            {view !== 'memos' && view !== 'knowledge' && <>
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -615,7 +626,7 @@ export default function App() {
         </header>
 
         <main className="content">
-          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} /> : <>
+          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} initialFlowTarget={knowledgeFlowTarget} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : <>
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
@@ -738,6 +749,9 @@ export default function App() {
               } catch (e) { pushToast('error', e instanceof IpcError ? e.userMessage() : String(e)) }
             })() }} onDuplicate={(task) => void duplicate(task.id)} />}
           </>}
+          {knowledgeMounted && <div className="knowledge-base-host" style={{ display: view === 'knowledge' ? 'contents' : 'none' }}>
+            <KnowledgeBase onOpenFlow={openKnowledgeFlow} />
+          </div>}
         </main>
       </div>
 
