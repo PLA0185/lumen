@@ -224,6 +224,11 @@ it('导航区分章节、阶段和步骤，悬停只显示当前节点的章节�
   expect(marks[3]!.textContent).not.toContain('6.2 德国发票')
   await act(async () => marks[2]!.click())
   expect(document.querySelector('.flow-canvas__node[aria-pressed="true"]')?.getAttribute('data-step-id')).toBe('germany')
+  expect(marks[0]!.getAttribute('data-current-chapter')).toBe('true')
+  expect(marks[2]!.getAttribute('aria-current')).toBe('step')
+  await act(async () => marks[0]!.click())
+  expect(marks[0]!.getAttribute('data-current-chapter')).toBe('true')
+  expect(marks[0]!.getAttribute('aria-current')).toBe('step')
 })
 it('超过四个章节仍使用独立柔和色相，组内步骤保持同色', async () => {
   const chapters = Array.from({ length: 9 }, (_, i) => ({ ...steps[0]!, id: `chapter-${i}`, group: { id: `chapter-${i}`, title: `${i + 1}. 原章节`, path: [] } }))

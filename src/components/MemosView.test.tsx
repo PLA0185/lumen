@@ -280,6 +280,7 @@ describe('独立备忘与业务流程', () => {
     expect(save).toHaveBeenCalledOnce()
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: null, expectedRevision: null, bodyMd: generated.bodyMd, steps: [expect.objectContaining({ owner: '销售' })] }))
     expect(document.body.textContent).toContain('已保存到本机')
+    expect(document.querySelector('.memos__save-status')).toBeNull()
   })
   it('生成失败保留材料，重试生成后取消草稿仍不保存', async () => {
     vi.spyOn(ai, 'aiGetConfig').mockResolvedValue(config)
@@ -434,6 +435,7 @@ describe('独立备忘与业务流程', () => {
     ).toEqual(['接收资料', '审核'])
     expect(document.body.textContent).toContain('负责人：运营')
     expect(document.body.textContent).toContain('已保存到本机')
+    expect(document.querySelector('.memos__save-status')).toBeNull()
   })
   it('保存失败保留全部草稿，不呈现保存成功', async () => {
     vi.spyOn(memo, 'memoSave').mockRejectedValue(new Error('磁盘写入失败'))

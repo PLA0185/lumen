@@ -325,11 +325,14 @@ export function MemosView({
   </> : null
 
   const saveStatus = aiDraft ? 'AI 草稿待确认，尚未保存' : autoSaving || busy ? '保存到本机中…' : dirty ? '编辑停顿后自动保存' : notice ?? '已保存到本机'
+  const hasSaveActivity = aiDraft || autoSaving || busy || dirty
   const documentActions = draft ? (
               <div className="memos__document-actions memos__document-actions--merged">
                 {draft.kind === 'flow' && (fullCanvas ? <button className="btn btn--ghost" onClick={() => setFlowView('list')}>返回列表</button> : <button className="btn btn--ghost" onClick={() => setFlowView('canvas')}>画布</button>)}
                 {!fullCanvas && <span className="chip">{draft.kind === 'flow' ? '业务流程' : '备忘录'}</span>}
-                {(fullCanvas || dirty) && <span className="setgroup__hint memos__save-status" role="status" title={saveStatus}><span aria-hidden="true">{aiDraft ? '待确认' : autoSaving || busy ? '保存中' : dirty ? '待保存' : '已保存'}</span><span className="sr-only">{saveStatus}</span></span>}
+                {draft && (hasSaveActivity && (fullCanvas || dirty)
+                  ? <span className="setgroup__hint memos__save-status" role="status" title={saveStatus}><span aria-hidden="true">{aiDraft ? '待确认' : autoSaving || busy ? '保存中' : '待保存'}</span><span className="sr-only">{saveStatus}</span></span>
+                  : <span className="sr-only" role="status">{saveStatus}</span>)}
                 {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
                 {!selected?.deletedAt &&
