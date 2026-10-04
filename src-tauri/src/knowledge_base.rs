@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::collections::{HashMap, HashSet};
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 const MAX_QUERY_CHARS: usize = 500;
 const MAX_QUESTION_CHARS: usize = 2_000;
@@ -44,6 +44,17 @@ pub struct KnowledgeSourceSummary {
 pub struct KnowledgeImportResult {
     pub source: KnowledgeSourceSummary,
     pub duplicate: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeImportProgressEvent {
+    request_id: String,
+    file_name: String,
+    phase: &'static str,
+    message: String,
+    current: Option<usize>,
+    total: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -340,12 +351,24 @@ async fn import_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<Knowledg
     .await
 }
 
+#[cfg(test)]
 async fn import_bytes_with_ocr(
     db: &Db,
     name: &str,
     bytes: Vec<u8>,
     ai_config: Option<ai::ProviderConfig>,
     model_dir: std::path::PathBuf,
+) -> AppResult<KnowledgeImportResult> {
+    import_bytes_with_ocr_progress(db, name, bytes, ai_config, model_dir, &|_| {}).await
+}
+
+async fn import_bytes_with_ocr_progress(
+    db: &Db,
+    name: &str,
+    bytes: Vec<u8>,
+    ai_config: Option<ai::ProviderConfig>,
+    model_dir: std::path::PathBuf,
+    on_progress: &(dyn Fn(document_import::ExtractionProgress) + Send + Sync),
 ) -> AppResult<KnowledgeImportResult> {
     let asset = content_assets::prepare_bytes(name, bytes)?;
     let duplicate_id: Option<String> =
@@ -354,6 +377,12 @@ async fn import_bytes_with_ocr(
             .fetch_optional(db.pool())
             .await?;
     if let Some(id) = duplicate_id {
+        on_progress(document_import::ExtractionProgress {
+            phase: "complete",
+            message: "内容已在知识库中，沿用现有索引".into(),
+            current: None,
+            total: None,
+        });
         return Ok(KnowledgeImportResult {
             source: source_row(db, &id).await?.summary()?,
             duplicate: true,
@@ -361,8 +390,13 @@ async fn import_bytes_with_ocr(
     }
 
     let (text, warnings, status, parse_error, chunks) =
-        match document_import::extract_asset_read_only_with_ocr(asset.clone(), ai_config, model_dir)
-            .await
+        match document_import::extract_asset_read_only_with_progress(
+            asset.clone(),
+            ai_config,
+            model_dir,
+            on_progress,
+        )
+        .await
         {
             Ok(extraction) => {
                 if extraction.text.trim().is_empty() {
@@ -388,6 +422,12 @@ async fn import_bytes_with_ocr(
                 vec![],
             ),
         };
+    on_progress(document_import::ExtractionProgress {
+        phase: "saving",
+        message: "正在保存原件和解析结果".into(),
+        current: None,
+        total: None,
+    });
     let warnings_json =
         serde_json::to_string(&warnings).map_err(|_| AppError::internal("序列化解析告警失败"))?;
     let source_id = uuid::Uuid::now_v7().to_string();
@@ -416,13 +456,38 @@ async fn import_bytes_with_ocr(
         }
         return Err(error.into());
     }
-    for chunk in chunks {
+    let chunk_count = chunks.len();
+    if chunk_count > 0 {
+        on_progress(document_import::ExtractionProgress {
+            phase: "indexing",
+            message: format!("正在写入 {chunk_count} 个检索片段"),
+            current: Some(0),
+            total: Some(chunk_count),
+        });
+    }
+    for (index, chunk) in chunks.into_iter().enumerate() {
         sqlx::query("INSERT INTO knowledge_chunks (source_id,locator,heading,content,start_offset,end_offset) VALUES (?,?,?,?,?,?)")
             .bind(&source_id).bind(chunk.locator).bind(chunk.heading).bind(chunk.content)
             .bind(chunk.start_offset as i64).bind(chunk.end_offset as i64)
             .execute(&mut *tx).await?;
+        on_progress(document_import::ExtractionProgress {
+            phase: "indexing",
+            message: format!("已写入检索片段 {}/{}", index + 1, chunk_count),
+            current: Some(index + 1),
+            total: Some(chunk_count),
+        });
     }
     tx.commit().await?;
+    on_progress(document_import::ExtractionProgress {
+        phase: "complete",
+        message: if status == "ready" {
+            "解析、检索索引和原件已保存".into()
+        } else {
+            "原件已保存，但没有建立可检索内容".into()
+        },
+        current: None,
+        total: None,
+    });
     Ok(KnowledgeImportResult {
         source: source_row(db, &source_id).await?.summary()?,
         duplicate: false,
@@ -1202,7 +1267,9 @@ pub async fn knowledge_import(
     state: State<'_, AppState>,
     name: String,
     data_base64: String,
+    request_id: String,
 ) -> AppResult<KnowledgeImportResult> {
+    uuid::Uuid::parse_str(&request_id).map_err(|_| AppError::validation("导入请求标识无效"))?;
     if data_base64.len() > MAX_ASSET_BYTES.div_ceil(3) * 4 {
         return Err(AppError::validation("单个知识库文件最多 20 MiB"));
     }
@@ -1214,7 +1281,22 @@ pub async fn knowledge_import(
         .path()
         .resolve("ocr", tauri::path::BaseDirectory::Resource)
         .unwrap_or_else(|_| crate::paddle_ocr::bundled_model_dir());
-    import_bytes_with_ocr(&state.db, &name, bytes, config, model_dir).await
+    let progress_app = app.clone();
+    let progress_request_id = request_id.clone();
+    let progress_file_name = name.clone();
+    let report_progress = move |progress: document_import::ExtractionProgress| {
+        let event = KnowledgeImportProgressEvent {
+            request_id: progress_request_id.clone(),
+            file_name: progress_file_name.clone(),
+            phase: progress.phase,
+            message: progress.message,
+            current: progress.current,
+            total: progress.total,
+        };
+        let _ = progress_app.emit("knowledge-import-progress", event);
+    };
+    import_bytes_with_ocr_progress(&state.db, &name, bytes, config, model_dir, &report_progress)
+        .await
 }
 
 #[tauri::command]
@@ -1474,6 +1556,41 @@ mod tests {
         let duplicate = import_bytes(&db, "renamed.md", stored).await.unwrap();
         assert!(duplicate.duplicate);
         assert_eq!(duplicate.source.id, result.source.id);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn import_progress_reports_parsing_indexing_and_commit_stages() {
+        let (db, dir) = test_db().await;
+        let events = std::sync::Mutex::new(Vec::new());
+        let report = |progress: document_import::ExtractionProgress| {
+            events.lock().unwrap().push((
+                progress.phase,
+                progress.message,
+                progress.current,
+                progress.total,
+            ));
+        };
+        let result = import_bytes_with_ocr_progress(
+            &db,
+            "知识库进度.md",
+            "# 货件标签\n进入货件页面打印标签。".as_bytes().to_vec(),
+            None,
+            crate::paddle_ocr::bundled_model_dir(),
+            &report,
+        )
+        .await
+        .unwrap();
+
+        let events = events.into_inner().unwrap();
+        assert_eq!(events.first().unwrap().0, "parsing");
+        assert!(events.iter().any(|event| event.0 == "saving"));
+        assert!(events
+            .iter()
+            .any(|event| { event.0 == "indexing" && event.2 == Some(1) && event.3 == Some(1) }));
+        assert_eq!(events.last().unwrap().0, "complete");
+        assert_eq!(result.source.status, "ready");
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }

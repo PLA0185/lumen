@@ -3388,3 +3388,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [知识库检索调研](knowledge-base-research-2026-10-04.md)、[本机知识库设计](design-knowledge-base-2026-10-04.md)、[图片识别实施计划](superpowers/plans/2026-10-04-knowledge-image-recognition.md)、[文件导入说明](file-import-2026-10-01.md)、[发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
+
+## 第 65 轮 · 2026-10-04 · 问答保留、导入进度与资料清单收纳
+
+### 做了
+
+- 修复知识库资料或已保存流程变动时清空当前答案的问题。数据变更只刷新来源检索；回答会保留，直到用户发起下一次问答或关闭应用。
+- 为资料导入增加按请求 ID 关联的实时阶段事件：读取文件、解析格式、逐张多模态 AI 识别、AI 失败后切换 PaddleOCR、建立检索分块、保存完成；OCR 和索引阶段提供当前/总数。监听失败时导入仍继续并给出提示。
+- 将资料卡整理为紧凑单行，文件类型、长解析告警和错误默认收在“解析详情”折叠区；流程仍从已保存的流程内容实时检索，不要求重复导入，界面也明确说明这一点。
+- 增加回答持久化、紧凑资料卡、实际导入阶段顺序和索引计数回归覆盖。
+
+### 没做到
+
+- 未在正式 Windows WebView2 安装版中手工导入含多张图片的真实文件，也未用真实服务商账号完成在线 OCR 端到端验收。本轮以前端/后端事件路径、阶段顺序和现有 OCR 自动化测试验证；实际服务商响应及 UI 实机显示未验证。
+- 本轮没有生成签名安装包或发布版本；当前用户安装目录中的旧版本不会立即包含这些改动，需通过后续构建交付。
+
+### 怎么验证的
+
+- 实际执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（359 项，46 个文件）、`pnpm build`、`pnpm lint`；均退出 0。生产构建仍显示原有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示，不阻断产物。
+- 实际执行 `cargo fmt --check`、`cargo test --lib`（548 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings`；均退出 0。知识库新增用例验证解析、索引写入计数和提交完成事件的顺序。
+- `git diff --check` 通过；提交前安全文件检查未发现被跟踪的数据库、密钥、日志、EXE、签名文件或构建产物。私钥说明文字的预期命中仅在 `AGENTS.md`、本工作日志和整改报告中。
+
+### 相关文档
+
+- [知识库问答组件](../src/components/KnowledgeBase.tsx)、[导入进度 IPC](../src/lib/knowledge-base-ipc.ts)、[知识库导入后端](../src-tauri/src/knowledge_base.rs)、[文档解析与 OCR](../src-tauri/src/document_import.rs)、[知识库检索调研](knowledge-base-research-2026-10-04.md)、[本机知识库设计](design-knowledge-base-2026-10-04.md)。

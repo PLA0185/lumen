@@ -155,6 +155,57 @@ it('导入成功提示不复述资料卡中的解析告警，并合并重复的�
   expect(document.body.textContent?.match(/原件已保留|原文件已保留/g)).toHaveLength(1)
 })
 
+it('导入期间实时显示解析阶段和图片识别计数', async () => {
+  await mount()
+  const source: api.KnowledgeSourceSummary = {
+    id: 'progress-source', assetId: 'progress-asset', title: '出货流程.docx',
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    byteSize: 2048, sha256: 'progress-hash', status: 'ready', warnings: [], error: null,
+    createdAt: '', updatedAt: '',
+  }
+  let finishImport!: (result: { source: api.KnowledgeSourceSummary; duplicate: boolean }) => void
+  let reportProgress!: (progress: api.KnowledgeImportProgress) => void
+  vi.mocked(api.knowledgeImportFile).mockImplementationOnce((_file, onProgress) => new Promise(resolve => {
+    finishImport = resolve
+    reportProgress = onProgress!
+  }))
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File(['SOP'], source.title)] })
+  await act(async () => {
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(api.knowledgeImportFile).toHaveBeenCalledTimes(1))
+  })
+
+  await act(async () => reportProgress({
+    phase: 'ocr', message: '正在识别内嵌图片 image29.png（多模态 AI）', current: 29, total: 30,
+  }))
+  expect(document.body.textContent).toContain('正在识别内嵌图片 image29.png（多模态 AI）')
+  expect(document.body.textContent).toContain('29/30')
+
+  await act(async () => finishImport({ source, duplicate: false }))
+})
+
+it('资料清单默认使用紧凑行，MIME 和长解析告警收纳在折叠详情内', async () => {
+  const source: api.KnowledgeSourceSummary = {
+    id: 'compact-source', assetId: 'compact-asset', title: 'TK-WM出货SOP.docx',
+    mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    byteSize: 3_800_000, sha256: 'compact-hash', status: 'ready',
+    warnings: ['已提取正文、表格和内嵌图片；图片文字识别完成：多模态 AI 45 张，本机 PaddleOCR 兜底 4 张。请核对识别结果。'],
+    error: null, createdAt: '', updatedAt: '',
+  }
+  await mount()
+  vi.mocked(api.knowledgeList).mockResolvedValue([source])
+  await publishDataChange('knowledge')
+
+  const row = document.querySelector('.knowledge-sources__item')
+  expect(row).not.toBeNull()
+  expect(row?.querySelector('.knowledge-sources__actions')).not.toBeNull()
+  const details = row?.querySelector<HTMLDetailsElement>('details')
+  expect(details?.open).toBe(false)
+  expect(details?.querySelector('.knowledge-sources__warning')?.textContent).toContain('45 张')
+  expect(row?.querySelector('.knowledge-sources__mime')?.textContent).toContain('application/vnd.')
+})
+
 it('流程内容变化只刷新流程检索，不反复重载资料列表', async () => {
   await mount()
   expect(api.knowledgeList).toHaveBeenCalledTimes(1)
@@ -210,4 +261,20 @@ it('资料变化事件不会静默取消正在进行的问答', async () => {
     citations: [flowCitation], flowCandidates: [], message: null, providerNotice: '',
   }))
   expect(document.body.textContent).toContain('按流程先核对货件资料。')
+})
+
+it('回答展示后，资料或流程变化不会自动清空回答', async () => {
+  await mount()
+  vi.mocked(api.knowledgeAsk).mockResolvedValue({
+    status: 'answered', answer: '先打印 FBA 标签，再核对货件。', searchTerms: ['FBA 标签'],
+    citations: [flowCitation], flowCandidates: [], message: null, providerNotice: '',
+  })
+  await enterQuestion('FBA 标贴去哪里打印？')
+  await act(async () => document.querySelector<HTMLButtonElement>('form button[type="submit"]')!.click())
+  expect(document.body.textContent).toContain('先打印 FBA 标签，再核对货件。')
+
+  await publishDataChange('knowledge')
+  expect(document.body.textContent).toContain('先打印 FBA 标签，再核对货件。')
+  await publishDataChange('memos')
+  expect(document.body.textContent).toContain('先打印 FBA 标签，再核对货件。')
 })

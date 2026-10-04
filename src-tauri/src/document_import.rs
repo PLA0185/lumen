@@ -29,6 +29,15 @@ struct OcrRecognition {
     engine: OcrEngine,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ExtractionProgress {
+    pub phase: &'static str,
+    pub message: String,
+    pub current: Option<usize>,
+    pub total: Option<usize>,
+}
+
+#[cfg(test)]
 async fn recognize_with_fallback<AiFuture, PaddleFuture, Paddle>(
     ai: AiFuture,
     paddle: Paddle,
@@ -38,6 +47,20 @@ where
     PaddleFuture: Future<Output = AppResult<String>>,
     Paddle: FnOnce() -> PaddleFuture,
 {
+    recognize_with_fallback_report(ai, paddle, || {}).await
+}
+
+async fn recognize_with_fallback_report<AiFuture, PaddleFuture, Paddle, F>(
+    ai: AiFuture,
+    paddle: Paddle,
+    on_fallback: F,
+) -> AppResult<OcrRecognition>
+where
+    AiFuture: Future<Output = AppResult<String>>,
+    PaddleFuture: Future<Output = AppResult<String>>,
+    Paddle: FnOnce() -> PaddleFuture,
+    F: FnOnce(),
+{
     if let Ok(text) = ai.await {
         if is_ocr_text(&text) {
             return Ok(OcrRecognition {
@@ -46,6 +69,7 @@ where
             });
         }
     }
+    on_fallback();
     let text = paddle().await?;
     if !is_ocr_text(&text) {
         return Err(AppError::validation("AI 与 PaddleOCR 均未识别到文字"));
@@ -904,16 +928,60 @@ pub async fn extract_asset_read_only_with_ocr(
     ai_config: Option<crate::ai::ProviderConfig>,
     model_dir: std::path::PathBuf,
 ) -> AppResult<Extraction> {
+    extract_asset_read_only_with_progress(asset, ai_config, model_dir, &|_| {}).await
+}
+
+pub(crate) async fn extract_asset_read_only_with_progress(
+    asset: ContentAsset,
+    ai_config: Option<crate::ai::ProviderConfig>,
+    model_dir: std::path::PathBuf,
+    on_progress: &(dyn Fn(ExtractionProgress) + Send + Sync),
+) -> AppResult<Extraction> {
+    let parse_message = match asset.mime.as_str() {
+        "application/pdf" => "正在解析 PDF 正文和页面；扫描页将继续识别",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document" => {
+            "正在解析 Word 正文、表格和内嵌图片"
+        }
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => {
+            "正在解析 Excel 工作表和内嵌图片"
+        }
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation" => {
+            "正在解析演示文稿内容和内嵌图片"
+        }
+        mime if mime.starts_with("image/") => "正在读取图片并准备文字识别",
+        _ => "正在识别文件格式并提取正文、表格和图片",
+    };
+    report_extraction_progress(on_progress, "parsing", parse_message.into(), None, None);
     let parsed = tokio::task::spawn_blocking(move || parse(&asset))
         .await
         .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
-    read_only_extraction(parsed, ai_config, model_dir).await
+    let total = parsed.ocr_images.len() + parsed.images.len();
+    if total > 0 {
+        report_extraction_progress(
+            on_progress,
+            "ocr",
+            format!("已提取正文，发现 {total} 张待识别图片，开始多模态 AI 识别"),
+            Some(0),
+            Some(total),
+        );
+    } else {
+        report_extraction_progress(
+            on_progress,
+            "parsing",
+            "正文解析完成，没有待识别图片".into(),
+            None,
+            None,
+        );
+    }
+    read_only_extraction(parsed, ai_config, model_dir, on_progress, total).await
 }
 
 async fn read_only_extraction(
     parsed: Parsed,
     ai_config: Option<crate::ai::ProviderConfig>,
     model_dir: std::path::PathBuf,
+    on_progress: &(dyn Fn(ExtractionProgress) + Send + Sync),
+    progress_total: usize,
 ) -> AppResult<Extraction> {
     let Parsed {
         mut text,
@@ -927,13 +995,50 @@ async fn read_only_extraction(
     let mut recognized_chars = 0;
     let mut ai_count = 0;
     let mut paddle_count = 0;
+    let mut progress_current = 0;
     for image in ocr_images {
-        match recognize_image(&image.name, &image.bytes, ai_config.as_ref(), &model_dir).await {
+        progress_current += 1;
+        report_extraction_progress(
+            on_progress,
+            "ocr",
+            format!("正在识别 {}（多模态 AI）", image.name),
+            Some(progress_current),
+            Some(progress_total),
+        );
+        let fallback_progress = || {
+            report_extraction_progress(
+                on_progress,
+                "ocr",
+                format!("AI 未返回可用文字，正在切换本机 PaddleOCR：{}", image.name),
+                Some(progress_current),
+                Some(progress_total),
+            )
+        };
+        match recognize_image_with_fallback(
+            &image.name,
+            &image.bytes,
+            ai_config.as_ref(),
+            &model_dir,
+            fallback_progress,
+        )
+        .await
+        {
             Ok(result) => {
                 match result.engine {
                     OcrEngine::MultimodalAi => ai_count += 1,
                     OcrEngine::Paddle => paddle_count += 1,
                 }
+                report_extraction_progress(
+                    on_progress,
+                    "ocr",
+                    format!(
+                        "已识别 {}（{}）",
+                        image.name,
+                        ocr_engine_name(result.engine)
+                    ),
+                    Some(progress_current),
+                    Some(progress_total),
+                );
                 text = text.replace(&image.marker, &result.text);
             }
             Err(error) => {
@@ -943,12 +1048,47 @@ async fn read_only_extraction(
         }
     }
     for (name, bytes) in &images {
-        match recognize_image(name, bytes, ai_config.as_ref(), &model_dir).await {
+        progress_current += 1;
+        report_extraction_progress(
+            on_progress,
+            "ocr",
+            format!("正在识别内嵌图片 {name}（多模态 AI）"),
+            Some(progress_current),
+            Some(progress_total),
+        );
+        let fallback_progress = || {
+            report_extraction_progress(
+                on_progress,
+                "ocr",
+                format!("AI 未返回可用文字，正在切换本机 PaddleOCR：{name}"),
+                Some(progress_current),
+                Some(progress_total),
+            )
+        };
+        match recognize_image_with_fallback(
+            name,
+            bytes,
+            ai_config.as_ref(),
+            &model_dir,
+            fallback_progress,
+        )
+        .await
+        {
             Ok(result) => {
                 match result.engine {
                     OcrEngine::MultimodalAi => ai_count += 1,
                     OcrEngine::Paddle => paddle_count += 1,
                 }
+                report_extraction_progress(
+                    on_progress,
+                    "ocr",
+                    format!(
+                        "已识别内嵌图片 {name}（{}）",
+                        ocr_engine_name(result.engine)
+                    ),
+                    Some(progress_current),
+                    Some(progress_total),
+                );
                 let value = result.text;
                 if value.is_empty() {
                     warnings.push(format!("内嵌图片 {name} 的 OCR 未识别到文字；原件已保留。"));
@@ -1063,12 +1203,26 @@ async fn read_only_extraction(
     })
 }
 
+#[cfg(test)]
 async fn recognize_image(
     name: &str,
     bytes: &[u8],
     ai_config: Option<&crate::ai::ProviderConfig>,
     model_dir: &std::path::Path,
 ) -> AppResult<OcrRecognition> {
+    recognize_image_with_fallback(name, bytes, ai_config, model_dir, || {}).await
+}
+
+async fn recognize_image_with_fallback<F>(
+    name: &str,
+    bytes: &[u8],
+    ai_config: Option<&crate::ai::ProviderConfig>,
+    model_dir: &std::path::Path,
+    on_fallback: F,
+) -> AppResult<OcrRecognition>
+where
+    F: FnOnce(),
+{
     let ai = async {
         let image = crate::content_assets::prepare_bytes(name, bytes.to_vec())?;
         match ai_config {
@@ -1078,12 +1232,38 @@ async fn recognize_image(
     };
     let bytes = bytes.to_vec();
     let model_dir = model_dir.to_path_buf();
-    recognize_with_fallback(ai, move || async move {
-        tokio::task::spawn_blocking(move || crate::paddle_ocr::recognize(&bytes, &model_dir))
-            .await
-            .map_err(|error| AppError::internal(format!("PaddleOCR 工作线程失败：{error}")))?
-    })
+    recognize_with_fallback_report(
+        ai,
+        move || async move {
+            tokio::task::spawn_blocking(move || crate::paddle_ocr::recognize(&bytes, &model_dir))
+                .await
+                .map_err(|error| AppError::internal(format!("PaddleOCR 工作线程失败：{error}")))?
+        },
+        on_fallback,
+    )
     .await
+}
+
+fn report_extraction_progress(
+    on_progress: &(dyn Fn(ExtractionProgress) + Send + Sync),
+    phase: &'static str,
+    message: String,
+    current: Option<usize>,
+    total: Option<usize>,
+) {
+    on_progress(ExtractionProgress {
+        phase,
+        message,
+        current,
+        total,
+    });
+}
+
+fn ocr_engine_name(engine: OcrEngine) -> &'static str {
+    match engine {
+        OcrEngine::MultimodalAi => "多模态 AI",
+        OcrEngine::Paddle => "PaddleOCR 兜底",
+    }
 }
 pub async fn prepare_extraction(asset: ContentAsset) -> AppResult<Extraction> {
     let mut parsed = tokio::task::spawn_blocking(move || parse(&asset))

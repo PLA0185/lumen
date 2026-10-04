@@ -10,6 +10,7 @@ import {
   type KnowledgeAskResult,
   type KnowledgeCitation,
   type KnowledgeHistoryEntry,
+  type KnowledgeImportProgress,
   type KnowledgeSourceSummary,
 } from '../lib/knowledge-base-ipc'
 import { onDataChanged } from '../lib/data-change'
@@ -26,6 +27,28 @@ function formatSourceWarning(warnings: string[], error: string | null) {
     /((?:原文件|原件)已保留)(?:[；。]\s*(?:原文件|原件)已保留)+/g,
     '$1',
   )))].join('；')
+}
+
+function ImportStatus({ progress, fileNumber, fileCount }: {
+  progress: KnowledgeImportProgress
+  fileNumber: number
+  fileCount: number
+}) {
+  const determinate = progress.current !== null && progress.total !== null && progress.total > 0
+  const phaseLabel = {
+    reading: '读取文件', parsing: '解析文档', ocr: '识别图片',
+    indexing: '建立索引', saving: '保存资料', complete: '已完成',
+  }[progress.phase]
+  return <div className="knowledge-import-progress" role="status" aria-live="polite">
+    <div className="knowledge-import-progress__heading">
+      <strong>{fileNumber}/{fileCount} · {phaseLabel}</strong>
+      <span title={progress.message}>{progress.message}</span>
+    </div>
+    {determinate
+      ? <progress max={progress.total!} value={Math.min(progress.current!, progress.total!)} aria-label="解析进度" />
+      : <progress aria-label="解析进度" />}
+    {determinate && <span className="knowledge-import-progress__count">{progress.current}/{progress.total}</span>}
+  </div>
 }
 
 function Evidence({ citation, onOpenFlow }: {
@@ -65,6 +88,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   const [loading, setLoading] = useState(true)
   const [listError, setListError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ progress: KnowledgeImportProgress; fileNumber: number; fileCount: number } | null>(null)
   const [importMessage, setImportMessage] = useState('')
   const [busyDelete, setBusyDelete] = useState('')
   const [exportingId, setExportingId] = useState('')
@@ -95,18 +119,17 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
     } finally { if (request === listRequest.current) setLoading(false) }
   }, [])
   useEffect(() => { void reload() }, [reload])
-  const invalidateAnswers = useCallback(() => {
-    // The backend revalidates issued citations before returning; unrelated edits must not silently cancel an active query.
-    setAnswer(null)
-    setAskError('')
+  const refreshKnowledgeSearch = useCallback(() => {
+    // Corpus updates refresh the explicit source search, but an answer stays visible
+    // until the user starts another question or closes the application.
     setSearchResults([])
     setSearchRevision(value => value + 1)
   }, [])
   useEffect(() => onDataChanged(['knowledge'], () => {
     void reload()
-    invalidateAnswers()
-  }), [invalidateAnswers, reload])
-  useEffect(() => onDataChanged(['memos'], invalidateAnswers), [invalidateAnswers])
+    refreshKnowledgeSearch()
+  }), [refreshKnowledgeSearch, reload])
+  useEffect(() => onDataChanged(['memos'], refreshKnowledgeSearch), [refreshKnowledgeSearch])
 
   useEffect(() => {
     const q = searchText.trim()
@@ -132,9 +155,16 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
     const picked = Array.from(files)
     setImporting(true); setImportMessage('')
     const messages: string[] = []
-    for (const file of picked) {
+    for (const [index, file] of picked.entries()) {
+      setImportProgress({
+        progress: { phase: 'reading', message: `正在读取「${file.name}」…`, current: null, total: null },
+        fileNumber: index + 1,
+        fileCount: picked.length,
+      })
       try {
-        const result = await knowledgeImportFile(file)
+        const result = await knowledgeImportFile(file, progress => setImportProgress({
+          progress, fileNumber: index + 1, fileCount: picked.length,
+        }))
         messages.push(result.duplicate
           ? `「${file.name}」内容已存在，沿用已有索引。`
           : result.source.status === 'ready'
@@ -144,6 +174,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
     }
     setImportMessage(messages.join('\n'))
     await reload()
+    setImportProgress(null)
     setImporting(false)
     if (fileInput.current) fileInput.current.value = ''
   }
@@ -206,7 +237,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
-    <p className="knowledge-base__privacy">知识库资料保存在本机，不参与云同步。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p>
+    <p className="knowledge-base__privacy">导入资料保存在本机；已保存的流程会自动纳入检索，无需重复导入。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p>
     <div className="knowledge-base__grid">
       <section className="knowledge-panel" aria-label="资料库">
         <header><h3>已加入的资料</h3><span>{sources.length} 项</span></header>
@@ -214,18 +245,24 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
         {listError && <div className="alert alert--error" role="alert">{listError}<button type="button" className="btn btn--ghost btn--sm" onClick={() => void reload()}>重试</button></div>}
         {!loading && !listError && sources.length === 0 && <p className="knowledge-empty">还没有资料。可添加 PDF、DOCX、XLSX/XLS、PNG/JPEG/WEBP/GIF、Markdown、CSV、JSON、HTML、XML、log 或文本文件，也可直接检索已保存流程。</p>}
         <ul className="knowledge-sources">
-          {sources.map(source => <li key={source.id}>
-            <div className="knowledge-sources__title"><strong title={source.title}>{source.title}</strong><span>{formatBytes(source.byteSize)}</span></div>
-            <div className="knowledge-sources__state">
+          {sources.map(source => <li className="knowledge-sources__item" key={source.id}>
+            <div className="knowledge-sources__row">
+              <strong className="knowledge-sources__name" title={source.title}>{source.title}</strong>
+              <span className="knowledge-sources__size">{formatBytes(source.byteSize)}</span>
               <span className={source.status === 'ready' ? 'knowledge-status' : 'knowledge-status knowledge-status--warning'}>{source.status === 'ready' ? '可检索' : '未解析'}</span>
-              <span>{source.mime || '未知类型'}</span>
-              <button type="button" className="btn btn--ghost btn--sm" disabled={!!exportingId} onClick={() => void exportSource(source)}>{exportingId === source.id ? '导出中…' : '导出原件'}</button>
-              <button type="button" className="btn btn--ghost btn--sm" aria-label={`移除 ${source.title}`} disabled={busyDelete === source.id} onClick={() => void removeSource(source)}>移除</button>
+              <div className="knowledge-sources__actions">
+                <button type="button" className="btn btn--ghost btn--sm" title="导出原件" aria-label={`导出原件 ${source.title}`} disabled={!!exportingId} onClick={() => void exportSource(source)}>{exportingId === source.id ? '导出中…' : '导出'}</button>
+                <button type="button" className="btn btn--ghost btn--sm" aria-label={`移除 ${source.title}`} disabled={busyDelete === source.id} onClick={() => void removeSource(source)}>移除</button>
+              </div>
             </div>
-            {(source.error || source.warnings.length > 0) && <p className="knowledge-sources__warning">{formatSourceWarning(source.warnings, source.error)}</p>}
+            {(source.mime || source.error || source.warnings.length > 0) && <details className="knowledge-sources__details">
+              <summary>解析详情{source.error || source.warnings.length > 0 ? ' · 有提示' : ''}</summary>
+              {source.mime && <p className="knowledge-sources__mime">{source.mime}</p>}
+              {(source.error || source.warnings.length > 0) && <p className="knowledge-sources__warning">{formatSourceWarning(source.warnings, source.error)}</p>}
+            </details>}
           </li>)}
         </ul>
-        {importing && <p role="status">正在解析并建立本机检索索引…</p>}
+        {importing && importProgress && <ImportStatus {...importProgress} />}
         {importMessage && <pre className="knowledge-message" role="status">{importMessage}</pre>}
         <details className="knowledge-base__scope"><summary>解析范围与限制</summary><p>使用应用现有解析器保留原件并抽取文本。图片、扫描 PDF 页面及 Office 内嵌图片优先由已配置的多模态 AI 逐张转录，失败时使用随应用提供的本机 PaddleOCR；Windows OCR 已移除。暂不支持的格式会保留原件并标明失败，不会假装已入索引。来源会显示解析片段和页码/章节位置，可导出原件核对；知识库为本机数据，目前不随云同步。</p></details>
       </section>
