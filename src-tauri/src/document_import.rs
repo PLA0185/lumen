@@ -819,13 +819,119 @@ pub fn extract_local(asset: &ContentAsset) -> AppResult<String> {
 
 /// Question answering must not persist extracted embedded images into business storage.
 pub async fn extract_asset_read_only(asset: ContentAsset) -> AppResult<Extraction> {
-    let parsed = tokio::task::spawn_blocking(move || parse(&asset))
-        .await
-        .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
+    let extracted =
+        tokio::task::spawn_blocking(move || parse(&asset).and_then(read_only_extraction))
+            .await
+            .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
+    Ok(extracted)
+}
+
+fn read_only_extraction(parsed: Parsed) -> AppResult<Extraction> {
+    let Parsed {
+        mut text,
+        images,
+        mut warnings,
+        image_parts,
+        image_positions,
+    } = parsed;
+    let mut recognized = Vec::with_capacity(images.len());
+    let mut recognized_chars = 0;
+    for (name, bytes) in &images {
+        match native_ocr(bytes, None) {
+            Ok(lines) => {
+                let value = lines.join("\n").trim().to_owned();
+                if value.is_empty() {
+                    warnings.push(format!("内嵌图片 {name} 的 OCR 未识别到文字；原件已保留。"));
+                    recognized.push(None);
+                } else {
+                    recognized_chars += value.chars().count();
+                    if text.chars().count() + recognized_chars > MAX_TEXT {
+                        return Err(AppError::validation(
+                            "文件正文及内嵌图片识别文字超过 100000 字，请拆分文件；原件已保留",
+                        ));
+                    }
+                    recognized.push(Some(value));
+                }
+            }
+            Err(error) => {
+                warnings.push(format!(
+                    "内嵌图片 {name} 的 OCR 未完成：{error}；原件已保留。"
+                ));
+                recognized.push(None);
+            }
+        }
+    }
+
+    let mut positioned = std::collections::HashSet::new();
+    let mut insertions = Vec::new();
+    for (offset, part) in image_positions {
+        let index = image_parts
+            .iter()
+            .position(|name| name == &part)
+            .filter(|index| *index < images.len())
+            .ok_or_else(|| {
+                AppError::validation("文档引用的内嵌图片不存在，无法安全建立知识索引；原件已保留")
+            })?;
+        positioned.insert(index);
+        if recognized[index].is_some() {
+            insertions.push((offset, index));
+        }
+    }
+
+    let mut unpositioned_text = String::new();
+    for (index, (name, _)) in images.iter().enumerate() {
+        if !positioned.contains(&index) {
+            if let Some(value) = &recognized[index] {
+                append(
+                    &mut unpositioned_text,
+                    &format!("\n工作簿内嵌图片识别文字（{name}）：\n{value}\n"),
+                )?;
+            }
+        }
+    }
+    let repeated_image_chars = insertions
+        .iter()
+        .try_fold(0usize, |sum, (_, index)| {
+            let name_chars = images[*index].0.chars().count();
+            let text_chars = recognized[*index]
+                .as_ref()
+                .map_or(0, |value| value.chars().count());
+            sum.checked_add(
+                name_chars + text_chars + "\n内嵌图片识别文字（）：\n\n".chars().count(),
+            )
+        })
+        .unwrap_or(usize::MAX);
+    if text
+        .chars()
+        .count()
+        .saturating_add(repeated_image_chars)
+        .saturating_add(unpositioned_text.chars().count())
+        > MAX_TEXT
+    {
+        return Err(AppError::validation(
+            "文件正文及内嵌图片识别文字超过 100000 字，请拆分文件；原件已保留",
+        ));
+    }
+    insertions.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    for (offset, index) in insertions {
+        if offset > text.len() || !text.is_char_boundary(offset) {
+            return Err(AppError::internal(
+                "文档图片文字定位无效，无法安全建立知识索引",
+            ));
+        }
+        let label = format!(
+            "\n内嵌图片识别文字（{}）：\n{}\n",
+            images[index].0,
+            recognized[index].as_deref().unwrap_or_default()
+        );
+        text.insert_str(offset, &label);
+    }
+    append(&mut text, &unpositioned_text)?;
+    check_text(&text)?;
     Ok(Extraction {
-        text: parsed.text,
+        text,
         images: Vec::new(),
-        warnings: parsed.warnings,
+        warnings,
         sections: Vec::new(),
     })
 }
@@ -1042,6 +1148,54 @@ pub(crate) mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("unused.png") && w.contains("原文件")));
+    }
+
+    #[tokio::test]
+    async fn read_only_word_extraction_indexes_inline_image_text_or_reports_ocr_failure() {
+        let extracted = extract_asset_read_only(asset("SOP.docx", &ordered_sop()))
+            .await
+            .unwrap();
+        assert!(extracted.text.contains("出货SOP"));
+        assert!(!extracted.text.contains("lumen-asset:"));
+        assert!(
+            extracted.text.contains("内嵌图片识别文字")
+                || extracted
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("first.png") && warning.contains("OCR")),
+            "嵌入的业务图片必须参与文字检索，识别失败时也要明确显示告警"
+        );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn read_only_word_extraction_places_real_ocr_text_at_the_image_anchor() {
+        let (png, _, _, _) = printed_fixture();
+        let bytes = docx_image_source(&["order.png"]);
+        let mut archive = zip::ZipWriter::new_append(Cursor::new(bytes)).unwrap();
+        archive
+            .start_file(
+                "word/media/order.png",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(&png).unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+
+        let extracted = extract_asset_read_only(asset("SOP.docx", &bytes))
+            .await
+            .unwrap();
+        let business_text = extracted.text.find("订单核对").unwrap();
+        let image_text = extracted.text.find("ORDER").unwrap();
+        assert!(
+            business_text < image_text,
+            "OCR 结果应在原图位置进入文档顺序"
+        );
+        assert!(extracted.text.contains("内嵌图片识别文字（order.png）"));
+        assert!(extracted
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains("order.png")));
     }
 
     pub(crate) fn asset(name: &str, bytes: &[u8]) -> ContentAsset {
