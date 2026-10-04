@@ -32,7 +32,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 6;
+pub const BACKUP_FORMAT_VERSION: u32 = 7;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -103,6 +103,10 @@ pub struct BackupStats {
     pub memo_documents: usize,
     #[serde(default)]
     pub content_assets: usize,
+    #[serde(default)]
+    pub knowledge_sources: usize,
+    #[serde(default)]
+    pub knowledge_chunks: usize,
 }
 
 /// 备份承载的数据。全部使用 `serde_json::Value` 行式存储，
@@ -134,6 +138,10 @@ pub struct BackupData {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_assets: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge_sources: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge_chunks: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub series_templates: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub series_tags: Vec<serde_json::Value>,
@@ -164,6 +172,8 @@ impl BackupData {
             settings: self.settings.len(),
             memo_documents: self.memo_documents.len(),
             content_assets: self.content_assets.len(),
+            knowledge_sources: self.knowledge_sources.len(),
+            knowledge_chunks: self.knowledge_chunks.len(),
             series_templates: self.series_templates.len(),
             series_tags: self.series_tags.len(),
             series_skips: self.series_skips.len(),
@@ -282,6 +292,8 @@ pub(crate) async fn dump_table_from(
         "settings" => "SELECT * FROM settings",
         "memo_documents" => "SELECT * FROM memo_documents",
         "content_assets" => "SELECT * FROM content_assets",
+        "knowledge_sources" => "SELECT * FROM knowledge_sources",
+        "knowledge_chunks" => "SELECT * FROM knowledge_chunks",
         "memo_sync_events" => "SELECT * FROM memo_sync_events",
         "memo_sync_parents" => "SELECT * FROM memo_sync_parents",
         "cloud_records" => "SELECT * FROM cloud_records",
@@ -375,6 +387,8 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
             (SELECT COUNT(*) FROM settings) AS settings,
             (SELECT COUNT(*) FROM memo_documents) AS memo_documents,
             (SELECT COUNT(*) FROM content_assets) AS content_assets,
+            (SELECT COUNT(*) FROM knowledge_sources) AS knowledge_sources,
+            (SELECT COUNT(*) FROM knowledge_chunks) AS knowledge_chunks,
             (SELECT COUNT(*) FROM task_series_template) AS series_templates,
             (SELECT COUNT(*) FROM task_series_tags) AS series_tags,
             (SELECT COUNT(*) FROM task_series_skips) AS series_skips,
@@ -400,6 +414,8 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
         settings: row.try_get::<i64, _>("settings")? as usize,
         memo_documents: row.try_get::<i64, _>("memo_documents")? as usize,
         content_assets: row.try_get::<i64, _>("content_assets")? as usize,
+        knowledge_sources: row.try_get::<i64, _>("knowledge_sources")? as usize,
+        knowledge_chunks: row.try_get::<i64, _>("knowledge_chunks")? as usize,
         series_templates: row.try_get::<i64, _>("series_templates")? as usize,
         series_tags: row.try_get::<i64, _>("series_tags")? as usize,
         series_skips: row.try_get::<i64, _>("series_skips")? as usize,
@@ -447,6 +463,8 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         settings: dump_table_from(conn, "settings").await?,
         memo_documents: dump_table_from(conn, "memo_documents").await?,
         content_assets: dump_table_from(conn, "content_assets").await?,
+        knowledge_sources: dump_table_from(conn, "knowledge_sources").await?,
+        knowledge_chunks: dump_table_from(conn, "knowledge_chunks").await?,
         series_templates: dump_table_from(conn, "task_series_template").await?,
         series_tags: dump_table_from(conn, "task_series_tags").await?,
         series_skips: dump_table_from(conn, "task_series_skips").await?,
@@ -615,6 +633,63 @@ fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
                 }
             }
             Err(_) => issues.push("备份内容资源缺少有效字段".into()),
+        }
+    }
+    let asset_ids: std::collections::HashSet<&str> = file
+        .data
+        .content_assets
+        .iter()
+        .filter_map(|row| row.get("id").and_then(serde_json::Value::as_str))
+        .collect();
+    let source_ids: std::collections::HashSet<&str> = file
+        .data
+        .knowledge_sources
+        .iter()
+        .filter_map(|row| row.get("id").and_then(serde_json::Value::as_str))
+        .collect();
+    for source in &file.data.knowledge_sources {
+        let Some(id) = source.get("id").and_then(serde_json::Value::as_str) else {
+            issues.push("知识库备份来源缺少编号".into());
+            continue;
+        };
+        if uuid::Uuid::parse_str(id).is_err() {
+            issues.push("知识库备份来源编号无效".into());
+        }
+        let asset_id = source.get("asset_id").and_then(serde_json::Value::as_str);
+        if asset_id.is_none_or(|asset_id| !asset_ids.contains(asset_id)) {
+            issues.push(format!("知识库来源 {id} 缺少原始文件资源"));
+        }
+        let status = source.get("status").and_then(serde_json::Value::as_str);
+        if !matches!(status, Some("ready" | "unreadable")) {
+            issues.push(format!("知识库来源 {id} 的解析状态无效"));
+        }
+        if let Some(warnings) = source
+            .get("warnings_json")
+            .and_then(serde_json::Value::as_str)
+        {
+            if serde_json::from_str::<Vec<String>>(warnings).is_err() {
+                issues.push(format!("知识库来源 {id} 的解析提示数据损坏"));
+            }
+        } else {
+            issues.push(format!("知识库来源 {id} 缺少解析提示"));
+        }
+    }
+    for chunk in &file.data.knowledge_chunks {
+        let Some(source_id) = chunk.get("source_id").and_then(serde_json::Value::as_str) else {
+            issues.push("知识库分块缺少来源编号".into());
+            continue;
+        };
+        if !source_ids.contains(source_id) {
+            issues.push(format!("知识库分块引用了不存在的来源 {source_id}"));
+        }
+        let start = chunk
+            .get("start_offset")
+            .and_then(serde_json::Value::as_i64);
+        let end = chunk.get("end_offset").and_then(serde_json::Value::as_i64);
+        if start.is_none_or(|value| value < 0)
+            || end.zip(start).is_none_or(|(end, start)| end < start)
+        {
+            issues.push(format!("知识库来源 {source_id} 的文字定位无效"));
         }
     }
     Ok(issues)
@@ -849,6 +924,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         "projects",
         "settings",
         "memo_documents",
+        "knowledge_sources",
         "content_assets",
     ] {
         // 表名来自上面这个内部字面量数组，非用户输入
@@ -859,7 +935,7 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
     }
 
     // 插入顺序与外键方向一致：父表先插
-    let plan: [(&str, &[serde_json::Value]); 20] = [
+    let plan: [(&str, &[serde_json::Value]); 22] = [
         ("projects", &file.data.projects),
         ("categories", &file.data.categories),
         ("tags", &file.data.tags),
@@ -878,6 +954,8 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         ("settings", &file.data.settings),
         ("memo_documents", &file.data.memo_documents),
         ("content_assets", &file.data.content_assets),
+        ("knowledge_sources", &file.data.knowledge_sources),
+        ("knowledge_chunks", &file.data.knowledge_chunks),
         ("focus_sessions", &file.data.focus_sessions),
         ("goals", &file.data.goals),
     ];
@@ -909,6 +987,8 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
             "settings" => imported.settings = n,
             "memo_documents" => imported.memo_documents = n,
             "content_assets" => imported.content_assets = n,
+            "knowledge_sources" => imported.knowledge_sources = n,
+            "knowledge_chunks" => imported.knowledge_chunks = n,
             "task_series_template" => imported.series_templates = n,
             "task_series_tags" => imported.series_tags = n,
             "task_series_skips" => imported.series_skips = n,
@@ -1513,6 +1593,71 @@ mod tests {
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
+    #[tokio::test]
+    async fn knowledge_sources_and_fts_roundtrip_through_backup_restore() {
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT OR REPLACE INTO task_series_template (series_id,title) VALUES ('s1','fixture template')")
+            .execute(db.pool()).await.unwrap();
+        let asset = crate::content_assets::store_bytes(
+            &db,
+            "美国发票流程.txt",
+            "美国发票先核对抬头，再提交税务系统。".as_bytes().to_vec(),
+        )
+        .await
+        .unwrap();
+        let source_id = uuid::Uuid::now_v7().to_string();
+        let now = now_stamp();
+        sqlx::query("INSERT INTO knowledge_sources (id,asset_id,title,mime,sha256,extracted_text,warnings_json,status,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'ready',NULL,?,?)")
+            .bind(&source_id).bind(&asset.id).bind(&asset.name).bind(&asset.mime)
+            .bind(&asset.sha256).bind("美国发票先核对抬头，再提交税务系统。").bind("[]")
+            .bind(&now).bind(&now).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO knowledge_chunks (source_id,locator,heading,content,start_offset,end_offset) VALUES (?,?,?,?,0,20)")
+            .bind(&source_id).bind("第 2 页；提取文字 1–20").bind("美国发票")
+            .bind("美国发票先核对抬头，再提交税务系统。").execute(db.pool()).await.unwrap();
+
+        let data = build_backup_data(&db).await.unwrap();
+        assert_eq!(data.knowledge_sources.len(), 1);
+        assert_eq!(data.knowledge_chunks.len(), 1);
+        let file = BackupFile {
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            created_at: now_stamp(),
+            checksum: checksum_of(&data).unwrap(),
+            stats: data.stats(),
+            note: None,
+            data,
+        };
+        let path = dir.join("knowledge.lumen-backup.json");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        sqlx::query("DELETE FROM knowledge_sources")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content_assets WHERE id=?")
+            .bind(&asset.id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let restored = restore_from(&db, path.to_str().unwrap()).await.unwrap();
+        assert_eq!(restored.imported.knowledge_sources, 1);
+        assert_eq!(restored.imported.knowledge_chunks, 1);
+        let hits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_chunks_fts WHERE knowledge_chunks_fts MATCH ?",
+        )
+        .bind(r#""美国发票""#)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(hits, 1, "恢复时的分块插入触发器必须重建 FTS 索引");
+        let restored_asset = crate::content_assets::get_asset(&db, &asset.id)
+            .await
+            .unwrap();
+        assert_eq!(restored_asset.sha256, asset.sha256);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn content_resource_backup_roundtrip_includes_bytes_and_refuses_corruption() {
         let (db, dir) = make_db_with_data().await;
@@ -2327,6 +2472,8 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            knowledge_sources: vec![],
+            knowledge_chunks: vec![],
             sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
@@ -2359,6 +2506,8 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            knowledge_sources: vec![],
+            knowledge_chunks: vec![],
             sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
@@ -2394,6 +2543,8 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            knowledge_sources: vec![],
+            knowledge_chunks: vec![],
             sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
@@ -2429,6 +2580,8 @@ mod tests {
             settings: vec![],
             memo_documents: vec![],
             content_assets: vec![],
+            knowledge_sources: vec![],
+            knowledge_chunks: vec![],
             sync_history: Default::default(),
             series_templates: vec![],
             series_tags: vec![],
@@ -2476,6 +2629,8 @@ mod tests {
                 settings: vec![],
                 memo_documents: vec![],
                 content_assets: vec![],
+                knowledge_sources: vec![],
+                knowledge_chunks: vec![],
                 sync_history: Default::default(),
                 series_templates: vec![],
                 series_tags: vec![],
