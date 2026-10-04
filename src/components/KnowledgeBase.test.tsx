@@ -41,6 +41,12 @@ async function mount(onOpenFlow = vi.fn()) {
   return onOpenFlow
 }
 
+it('在提问前明确说明最近对话也会发送给 AI 服务商', async () => {
+  await mount()
+  expect(document.body.textContent).toContain('当前问题、最近必要对话和少量相关摘录会发送')
+  expect(document.body.textContent).toContain('导入时不会上传整份文件')
+})
+
 async function enterQuestion(value: string) {
   const textarea = document.querySelector('textarea')!
   await act(async () => {

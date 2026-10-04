@@ -194,7 +194,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
-    <p className="knowledge-base__privacy">知识库资料保存在本机，不参与云同步。提问时，问题和少量相关摘录会发送给设置中的 AI 服务商；导入时不会上传整份文件。</p>
+    <p className="knowledge-base__privacy">知识库资料保存在本机，不参与云同步。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入时不会上传整份文件。</p>
     <div className="knowledge-base__grid">
       <section className="knowledge-panel" aria-label="资料库">
         <header><h3>已加入的资料</h3><span>{sources.length} 项</span></header>
