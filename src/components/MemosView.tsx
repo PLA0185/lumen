@@ -329,8 +329,13 @@ export function MemosView({
                       value={draft.category}
                       disabled={busy}
                       placeholder="例如：销售、财务、入职学习"
+                      list="memo-category-options"
                       onChange={(e) => patch({ category: e.target.value })}
                     />
+                    <datalist id="memo-category-options">
+                      {categories.map((value) => <option key={value} value={value} />)}
+                    </datalist>
+                    <p className="setgroup__hint">已有分类可选，也可以输入新名称</p>
                   </label>
                   <details className="memos__materials" open={draft.kind !== 'flow' || flowView === 'list'}>
                     <summary>内容 / 流程说明与原始材料</summary>
@@ -461,6 +466,7 @@ export function MemosView({
           onChange={(e) => setCategory(e.target.value)}
         >
           <option value="">全部分类</option>
+          {categories.length === 0 && <option disabled>保存分类后可筛选</option>}
           {categories.map((c) => (
             <option key={c}>{c}</option>
           ))}

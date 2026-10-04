@@ -356,6 +356,15 @@ describe('独立备忘与业务流程', () => {
     updatedAt: '',
     deletedAt: null,
   }
+  it('分类输入可从已使用的分类中选择，也允许输入新分类', async () => {
+    await mount('', [row])
+    await click('新建备忘')
+
+    const input = document.querySelector('[aria-label="备忘分类"]') as HTMLInputElement
+    expect(input.list?.id).toBe('memo-category-options')
+    expect([...document.querySelectorAll('#memo-category-options option')].map(option => (option as HTMLOptionElement).value)).toContain('学习')
+    expect(input.parentElement?.textContent).toContain('已有分类可选，也可以输入新名称')
+  })
   it('搜索无匹配时仍显示生效中的分类，用户可以清除筛选', async () => {
     await mount('', [row])
     const select = document.querySelector(
