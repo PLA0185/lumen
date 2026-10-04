@@ -3312,7 +3312,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 本轮是界面焦点修复，没有重新调用外部 AI 服务；本轮真实鼠标路径仅验证导航和已安装 UI。公司电脑双机同步、任意 Word 版式、全部模型语义与系统通知弹出仍未穷举；流程多格式导出、完整快捷键和 Harness 产品接入仍未实现。
 - 正式程序启动时现有云同步运行态有变化：1 条既有同步事件的 `uploaded` 标志由 0 变为 1，`memo_sync_runtime` 更新 `head_generation`、`budget_start`、`retry_until`。未新增/删除事件，事件 payload 未改；不能把两张运行态表说成逐行不变。
-- 本轮提交已在本机 `main` 完成，但 GitHub 推送未成功：对 `PLA0185/lumen` 的重试收到 github.com:443 connection timeout 或连接重置，HTTP/1.1 与直接 HTTPS 连通性检查也失败。因此本轮提交和此前本任务的未推送提交仍在本机，GitHub CI 未触发、未验证。网络恢复后必须推送并确认 CI；未创建公开 Release。
+- 首次记录时到 GitHub 的连接超时；网络恢复后已将本轮及此前积压的 11 个提交从 `e4a605c` 推送到 `PLA0185/lumen` 的 `main`。GitHub 源码 CI 已触发并全绿，未创建公开 Release。
 
 ### 怎么验证的
 
@@ -3321,7 +3321,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `node tools/check-version.mjs --tag=v0.4.22` 一致；签名包经配置公钥校验，篡改包字节被拒绝。正式 `Lumen.exe` 的 FileVersion/ProductVersion 均为 0.4.22。
 - 安装前用 SQLite backup 创建一致性快照：`integrity_check=ok`、外键错误 0、32 表逐行匹配之前快照。安装/正式 UI 验收后，除上述两张同步运行态表外，其余 30 张内容/业务表逐行相同；目标备忘 25 步、30 张原图、布局及历史均保留，数据库完整性仍为 `ok`、外键错误 0。用户记录未被清空或迁移。
 - 正式验收首次尝试被仓库外脚本遗留的 DOM 标记选中了日历按钮，修正脚本为每次点击清理标记后重跑成功；这是验收脚本选择器问题，不是应用点击问题。快照、签名包、图片与 JSON 证据仅在 `D:/Codex/lumen-verification-20261003/ui-polish/`，未进入仓库。
-- `cargo clean --manifest-path src-tauri/Cargo.toml` 仅对经绝对路径校验的仓库内 `src-tauri/target` 执行；命令退出 0、target 剩余文件 0、D 盘可用空间增加 8,448,851,968 bytes。CI 未运行的限制来自本机到 GitHub:443 不可达，而非本地门禁失败。
+- `cargo clean --manifest-path src-tauri/Cargo.toml` 仅对经绝对路径校验的仓库内 `src-tauri/target` 执行；命令退出 0、target 剩余文件 0、D 盘可用空间增加 8,448,851,968 bytes。推送后的 [GitHub CI 37172500390](https://github.com/PLA0185/lumen/actions/runs/37172500390) 前端 job 在 1m43s、Rust job 在 5m4s 完成，依赖安装、类型检查、346 项前端测试、构建、lint、格式检查、编译、Rust 测试与无豁免 Clippy 全部通过。GitHub 另提示 workflow 中 checkout/setup-node/pnpm action 声明的 Node.js 20 已弃用、当前被 runner 强制用 Node.js 24；这是非阻塞 annotation，CI 未失败，本轮未升级 action 版本。
 
 ### 相关文档
 
