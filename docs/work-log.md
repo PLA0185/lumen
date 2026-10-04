@@ -3412,3 +3412,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [知识库问答组件](../src/components/KnowledgeBase.tsx)、[导入进度 IPC](../src/lib/knowledge-base-ipc.ts)、[知识库导入后端](../src-tauri/src/knowledge_base.rs)、[文档解析与 OCR](../src-tauri/src/document_import.rs)、[知识库检索调研](knowledge-base-research-2026-10-04.md)、[本机知识库设计](design-knowledge-base-2026-10-04.md)。
+
+## 第 66 轮 · 2026-10-05 · 分类候选、项目页对齐与 0.4.26
+
+### 做了
+
+- 修复组织页中项目列表居中、关联任务标题却贴左的问题。关联任务区复用组织管理的 900px 内容宽度并与上方内容对齐，留出 12px 区隔。
+- 备忘与流程编辑的分类字段可用已保存分类的浏览器原生候选，也能继续输入自定义分类；当记录还没有分类时，筛选菜单会说明保存分类后才有可筛选项。
+- 版本号同步升至 0.4.26，并更新发布说明。生成 x64 签名 NSIS 安装包及签名文件，复制到仓库外的 `D:/Codex/Lumen_0.4.26_x64-setup.exe`。构建产物中的三份 PaddleOCR ONNX 模型均与源文件 SHA-256 一致。
+- 验证结束后清理本轮专用仓库外 Cargo 构建缓存，释放 11.3 GiB；保留 24 MB 安装包及其签名文件供安装。
+
+### 没做到
+
+- 没有把 0.4.26 安装到当前正在运行的应用路径。检测到 0.4.25 的 NSIS 登记路径在 `C:/Users/linxi/AppData/Local/Temp/Lumen-OCR-PackageVerify-Final-2ac92178b68d4e4a933d93bcc0e85d41`，该目录的 `lumen.exe` 仍在运行；为避免打断当前应用或未保存状态，没有覆盖或结束该进程。因此当前窗口不会自动得到 0.4.26 的 UI 修复，安装包已放在上述仓库外路径。
+- 未在真实 WebView2 窗口中手工点验分类下拉与项目页排版；本轮用组件测试、前端构建和完整自动化门禁验证，真实桌面视觉行为未验证。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（361 项，47 个文件）、`pnpm build`、`pnpm lint` 均实际执行；前端构建成功，输出既有 `INEFFECTIVE_DYNAMIC_IMPORT` 分块提示。
+- `cargo fmt --all -- --check`、`cargo test --lib`（548 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并退出 0。Rust 构建缓存使用仓库外 `D:/Codex/Lumen-verify-20261005-target`，未使用仓库内 `src-tauri/target` 作为本轮缓存。
+- 两个新增前端回归先分别按预期失败，再在实现后转绿；随后完整前端测试通过。`pnpm check:version` 确认 package.json、Cargo.toml 和 Tauri 配置均为 0.4.26。
+- `tools/updater-secret.ps1 -Status` 确认签名私钥存在且 DPAPI 密文可由当前账户解密；`-Build` 成功生成约 24 MB 安装包和 436 字节签名文件。三份随包构建的 OCR 模型逐一与源文件哈希匹配。未执行安装，所以安装器实际写入与启动行为未验证。
+- 推送提交 `beff24f` 后的 [GitHub Actions 37241681229](https://github.com/PLA0185/lumen/actions/runs/37241681229) 已通过：前端与 Rust job 均成功，包含格式、编译、361 项前端测试、548 项 Rust 测试及严格 Clippy。Actions 对 Node.js 20 的弃用提示仍存在，但不阻断 CI。
+
+### 相关文档
+
+- [0.4.26 发布说明](../RELEASE_NOTES.md)、[备忘与流程视图](../src/components/MemosView.tsx)、[项目关联任务视图](../src/components/ContextTaskList.tsx)、[知识库问答和导入进度（第 65 轮）](work-log.md#第-65-轮--2026-10-04--问答保留导入进度与资料清单收纳)。
