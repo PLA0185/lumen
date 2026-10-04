@@ -445,6 +445,9 @@ pnpm typecheck                # 类型检查
 | 文档 | 内容 |
 | --- | --- |
 | [流程分组与细分](docs/flow-hierarchy-2026-10-02.md) | 真实 AI 区分目录与动作、规范有依据的短标题；原文及配图校验、章节分组与确认保存；纠正 0.4.18 本机机械拆分 |
+| [知识库检索调研](docs/knowledge-base-research-2026-10-04.md) | 官方与社区 RAG/分块经验、SQLite FTS5、中文检索与引用约束的来源及适用边界 |
+| [本机知识库设计](docs/design-knowledge-base-2026-10-04.md) | 多格式本机资料、实时流程检索、AI 问答引用、备份与不随云同步的边界 |
+| [本机知识库实施计划](docs/superpowers/plans/2026-10-04-knowledge-base-query.md) | 导入、检索、流程问答、引用导航及验证的实施范围和验收记录 |
 | [Word 流程与 AI 忠实性修复](docs/word-flow-fidelity-2026-10-02.md) | 原文章节、图片位置、重复引用和模型补写的原因与程序校验 |
 | [流程卡片与图片操作](docs/flow-inline-images-2026-10-02.md) | 卡片内编辑、序号菜单、布局、中文断行、图片备注批注及真实验证边界 |
 | [DeepSeek Harness 接入调研](docs/deepseek-harness-research-2026-10-02.md) | 官方 SDK、文件技能、流程知识库接入方式、发行与验证边界 |
