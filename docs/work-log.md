@@ -3372,13 +3372,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 未使用真实服务商账号把图片发给 DeepSeek/OpenAI/Anthropic 做在线端到端识别；服务商请求结构、多模态 AI 优先与空结果/错误时 Paddle 回退由本地单测验证。已配置模型能否在线接受图片仍取决于服务商当前响应和用户选择的具体模型。
-- 没有把安装包覆盖安装到当前用户的正式应用目录，也没有发布 GitHub Release；可交付的签名安装包位于仓库外上述路径。
-- 本条写入时推送后的 GitHub Actions 结果尚未取得；收到 CI 结果后如有失败必须修复并补录，不以本地通过代替 CI。
+- 没有把安装包覆盖安装到当前用户的正式应用目录，也没有发布 GitHub Release；签名包仅做了仓库外隔离安装验证，可交付包位于前述路径。
+- GitHub Actions 全部门禁通过，但 runner 给出 Node.js 20 弃用提示：`actions/checkout@v4`、`actions/setup-node@v4`、`pnpm/action-setup@v4` 声明 Node.js 20，当前被强制运行在 Node.js 24。本轮未升级这些 workflow action；提示不阻断 CI。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（356 项，46 个文件）、`pnpm build`、`pnpm lint` 均实际执行；首次前端测试发现隐私文案断言未跟随更新，修正断言后重新运行全套 356 项通过。
 - `cargo fmt --all -- --check`、`cargo test --lib`（547 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行。Rust OCR 集成测试使用随应用的 Paddle 模型识别真实 PNG 与扫描 PDF；回退测试覆盖 AI 成功不调 Paddle、AI 空结果/失败转 Paddle、Paddle 失败不吞错；模型资源测试逐项核验 SHA-256。
+- 推送提交 `9e98b73` 后的 [GitHub Actions 37207510865](https://github.com/PLA0185/lumen/actions/runs/37207510865) 最终全绿：前端与 Rust job 均成功，Rust 格式、编译、单测、严格 Clippy 均通过；Rust job 用时 11m19s，包含首次保存构建缓存。CI 发出上一条所述 Node.js 20 弃用 annotation。
 - 额外复审发现嵌图大于 AI 20 MiB 输入限制时会提前终止、不走 Paddle。回归测试先红（原错误为单文件大小限制），将 AI `ContentAsset` 构造移入 AI 分支后变绿，确认失败的 AI 准备会继续走本机图片解码和 Paddle 路径。
 - `pnpm check:version` 实际确认版本为 0.4.25。`updater-secret.ps1 -Build` 生成 x64 安装包及 `.sig`；NSIS 隔离安装退出码 0，安装所得三份模型各自 SHA-256 校验通过。
 - `git ls-files` 安全模式未发现密钥、数据库、日志、EXE、签名文件或构建输出；`git grep` 对加密私钥说明文字的预期命中仅有 `AGENTS.md`、本工作日志和整改报告，不含实际密钥块。
