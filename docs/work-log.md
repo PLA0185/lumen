@@ -3333,7 +3333,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 对照官方 RAG/分块、SQLite FTS5 与社区解析/引用经验完成调研；采用现有 `document_import`、AI 服务商设置和 `flow_qa` 能力，避免另建上传服务或平行解析器。新增实施设计、来源调研和执行计划，并加入 README 文档索引。
 - 新增正式迁移 `0013_knowledge_base.sql`：原件保留在 `content_assets`，知识来源保存提取全文、哈希、解析状态/告警，带章节/位置和 Unicode 字符范围的片段由 SQLite FTS5 trigram 触发器维护。关键词标题/章节加权；中文两字短词有显式回退；长文件分片有交叠。
-- 新增多文件知识库界面：可导入、列出、导出和移除资料，展示解析失败/ OCR 告警，执行全文搜索并查看引用摘录；原件被现有备忘或流程引用时，移除索引会保留原件。导入仍在本机解析，界面说明问答摘录的数据流与当前不随云同步的边界。
+- 新增多文件知识库界面：可导入、列出、导出和移除资料，展示解析失败/OCR 告警，执行全文搜索并查看引用摘录；原件被现有备忘或流程引用时，移除索引会保留原件。导入仍在本机解析；界面明确说明本机/云同步边界，以及发送给服务商的当前问题、最近必要对话与少量摘录。
+- 最终复核发现原隐私提示漏写问答历史上下文随请求发送；已修正界面说明为“当前问题、最近必要对话和少量相关摘录”，并加组件断言，避免实际请求与用户告知不一致。
 - 问答先调用已配置的 AI 服务把用户问题变为有限检索词，再由本机搜索用户资料及当前已保存流程。多个流程命中时先要求选定；本机生成本轮引用 ID，模型不能扩展来源编号；回答返回前核对来源 SHA/状态或流程版本。无证据不请求回答模型；服务错误及无效引用不会伪装成答案。明确将文件、流程正文、问题和历史视作数据，忽略其中试图覆盖模型规则或泄露信息的提示词。
 - DOCX/XLSX 内嵌图片接入只读本机 OCR：文字尽可能按 Word 图片锚点插入，未定位的工作簿图片附带文件名；失败显示告警并保留原件。补了实际 Windows OCR 图片/PDF 测试和嵌图 DOCX 顺序测试。
 - 完整备份格式升至 7，纳入知识来源、分块和原件；恢复时由 SQLite 触发器重建 FTS，备份验证关系、恢复顺序与计数，仍兼容旧格式。
@@ -3347,7 +3348,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 怎么验证的
 
-- 实际执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（349 项，46 个文件）、`pnpm build`、`pnpm lint`；Rust `cargo fmt --all -- --check`、`cargo test --lib`（537 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings`。生产构建成功，记录中的动态导入告警不阻断构建。
+- 实际执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（350 项，46 个文件）、`pnpm build`、`pnpm lint`；Rust `cargo fmt --all -- --check`、`cargo test --lib`（537 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings`。生产构建成功，记录中的动态导入告警不阻断构建。
 - Windows OCR 实际识别测试 `native_windows_ocr_reads_generated_png_and_scanned_pdf` 通过；新增 DOCX 嵌图测试实际识别 `ORDER` 并确认文字回到原图片锚点。另有无效嵌图测试验证 OCR 失败路径给出告警。
 - 后端覆盖正式迁移/FTS、中文全文及短词命中、原件字节不变、重复导入、不可读文件状态、索引失败事务回滚、删除后 FTS 清理及流程引用文件保留、实时流程版本/多流程澄清、AI 编号白名单和备份恢复后索引重建。前端覆盖流程引用跳转、候选流程选择、资料位置及导出原件。
 - 推送提交 `6729ed0` 后的 [GitHub Actions 37177819159](https://github.com/PLA0185/lumen/actions/runs/37177819159) 已通过：前端与 Rust 两个 job 均绿，Rust job 的格式、编译、测试及严格 Clippy 全部完成。runner 提示 GitHub Actions 声明的 Node.js 20 已弃用、当前强制使用 Node.js 24；这是非阻断 annotation。真实服务商与签名安装验收仍按上节说明未执行。
