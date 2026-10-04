@@ -835,4 +835,48 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn knowledge_fts_indexes_chinese_and_tracks_chunk_deletion() {
+        let dir = std::env::temp_dir().join(format!("lumen-knowledge-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.expect("初始化数据库");
+        let asset = crate::content_assets::store_bytes(&db, "发票指南.txt", b"source".to_vec())
+            .await
+            .unwrap();
+        let source_id = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query("INSERT INTO knowledge_sources (id, asset_id, title, mime, sha256, extracted_text, warnings_json, status, error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', '[]', 'ready', NULL, ?, ?)")
+            .bind(&source_id).bind(&asset.id).bind("美国发票指南").bind("text/plain")
+            .bind(&asset.sha256).bind(&now).bind(&now)
+            .execute(db.pool()).await.unwrap();
+        let chunk = sqlx::query("INSERT INTO knowledge_chunks (source_id, locator, heading, content, start_offset, end_offset) VALUES (?, ?, ?, ?, 0, 4)")
+            .bind(&source_id).bind("第 1 段").bind("美国发票").bind("美国发票流程")
+            .execute(db.pool()).await.unwrap();
+        let chunk_id = chunk.last_insert_rowid();
+        let phrase = r#""美国发票""#;
+        let hits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_chunks_fts WHERE knowledge_chunks_fts MATCH ?",
+        )
+        .bind(phrase)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(hits, 1, "中文 trigram 全文索引应能找到正文内容");
+
+        sqlx::query("DELETE FROM knowledge_chunks WHERE id = ?")
+            .bind(chunk_id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let hits: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_chunks_fts WHERE knowledge_chunks_fts MATCH ?",
+        )
+        .bind(phrase)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+        assert_eq!(hits, 0, "删除来源分块后全文索引不能残留幽灵结果");
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

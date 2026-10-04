@@ -40,6 +40,7 @@ pub mod flow_qa;
 mod flow_structure;
 pub mod focus;
 pub mod holiday_calendar;
+pub mod knowledge_base;
 pub mod memo_ai;
 pub mod memos;
 pub mod models;
@@ -309,6 +310,12 @@ pub fn run() {
             content_assets::content_asset_export,
             content_assets::content_image_export,
             document_import::content_asset_extract,
+            knowledge_base::knowledge_import,
+            knowledge_base::knowledge_list,
+            knowledge_base::knowledge_get,
+            knowledge_base::knowledge_search,
+            knowledge_base::knowledge_delete,
+            knowledge_base::knowledge_ask,
             commands::task_create,
             commands::task_update,
             commands::task_save,
