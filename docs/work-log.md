@@ -3350,7 +3350,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 实际执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（349 项，46 个文件）、`pnpm build`、`pnpm lint`；Rust `cargo fmt --all -- --check`、`cargo test --lib`（537 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings`。生产构建成功，记录中的动态导入告警不阻断构建。
 - Windows OCR 实际识别测试 `native_windows_ocr_reads_generated_png_and_scanned_pdf` 通过；新增 DOCX 嵌图测试实际识别 `ORDER` 并确认文字回到原图片锚点。另有无效嵌图测试验证 OCR 失败路径给出告警。
 - 后端覆盖正式迁移/FTS、中文全文及短词命中、原件字节不变、重复导入、不可读文件状态、索引失败事务回滚、删除后 FTS 清理及流程引用文件保留、实时流程版本/多流程澄清、AI 编号白名单和备份恢复后索引重建。前端覆盖流程引用跳转、候选流程选择、资料位置及导出原件。
-- GitHub Actions 在提交推送后按实际运行结果补记；真实服务商与签名安装验收仍按上节说明未执行。
+- 推送提交 `6729ed0` 后的 [GitHub Actions 37177819159](https://github.com/PLA0185/lumen/actions/runs/37177819159) 已通过：前端与 Rust 两个 job 均绿，Rust job 的格式、编译、测试及严格 Clippy 全部完成。runner 提示 GitHub Actions 声明的 Node.js 20 已弃用、当前强制使用 Node.js 24；这是非阻断 annotation。真实服务商与签名安装验收仍按上节说明未执行。
 
 ### 相关文档
 
