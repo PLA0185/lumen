@@ -45,6 +45,7 @@ pub mod memo_ai;
 pub mod memos;
 pub mod models;
 pub mod organize;
+pub mod paddle_ocr;
 pub mod pdf;
 pub mod recurrence;
 #[cfg(test)]

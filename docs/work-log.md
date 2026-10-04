@@ -3356,3 +3356,34 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [知识库检索调研](knowledge-base-research-2026-10-04.md)、[本机知识库设计](design-knowledge-base-2026-10-04.md)、[实施计划](superpowers/plans/2026-10-04-knowledge-base-query.md)、[README 文档索引](../README.md#文档索引)。
+
+## 第 64 轮 · 2026-10-04 · AI 优先 OCR、PaddleOCR 本机兜底与 0.4.25
+
+### 做了
+
+- 知识库导入的普通图片、扫描 PDF 页面、DOCX/XLSX 内嵌图片现在逐张优先调用已配置的多模态 AI；AI 未配置、当前模型不接受图片、请求失败或没有识别出文字时回退到随 Windows 安装包提供的本机 PaddleOCR PP-OCRv4。Windows Media OCR 实现已删除，Windows PDF 页面渲染仍保留。
+- 固定并随安装包提供中英 PP-OCRv4 检测、方向分类和识别模型。三份 ONNX 模型有 SHA-256 校验；ONNX Runtime CPU 静态链接进程序，不要求用户安装 Python、下载权重或配置 Windows OCR 语言包。OCR 文字按 PDF 页序、DOCX 图片锚点回填；全失败的扫描资料不能只凭页码伪装为可检索。
+- 图片识别请求只包含当前待识别的单张图片，不上传整份文档；更新隐私提示、解析范围、安装包说明及知识库设计/调研文档。调研文档补入 DeepSeek 官方 Vision 接口依据。
+- 知识库问答改用 AI 设置里的完整输出上限；设置最高值调整为 384000，并为受限 JSON 请求释放推理预算。修复导入重复显示 OCR 告警、结构化 IPC 错误显示为 `[object Object]`、资料列表刷新闪空及无关流程变更静默取消问答；修复侧栏当前项图标对比度和导航刻度过暗。
+- 用仓库指定的凭据脚本生成 0.4.25 x64 NSIS 安装包和签名文件，复制到仓库外 `D:/Codex/Lumen_0.4.25_x64-setup.exe`。隔离静默安装确认包内三份 OCR 模型都存在且 SHA-256 与源文件匹配，没有替换当前正式安装或发布 Release。
+- 清理本仓库 `src-tauri/target` 编译缓存，Cargo 报告移除 26890 个文件、31.3 GiB；其它 `lumen-verification-*` 目录和用户资料未动。
+- 修复大图回退后，在仓库外临时 Cargo 目录重新跑了完整 Rust 测试、严格 Clippy 和最终签名包；验证完成后该临时 target 又清理了 12.1 GiB，最终没有残留大型编译目录。
+
+### 没做到
+
+- 未使用真实服务商账号把图片发给 DeepSeek/OpenAI/Anthropic 做在线端到端识别；服务商请求结构、多模态 AI 优先与空结果/错误时 Paddle 回退由本地单测验证。已配置模型能否在线接受图片仍取决于服务商当前响应和用户选择的具体模型。
+- 没有把安装包覆盖安装到当前用户的正式应用目录，也没有发布 GitHub Release；可交付的签名安装包位于仓库外上述路径。
+- 本条写入时推送后的 GitHub Actions 结果尚未取得；收到 CI 结果后如有失败必须修复并补录，不以本地通过代替 CI。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（356 项，46 个文件）、`pnpm build`、`pnpm lint` 均实际执行；首次前端测试发现隐私文案断言未跟随更新，修正断言后重新运行全套 356 项通过。
+- `cargo fmt --all -- --check`、`cargo test --lib`（547 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行。Rust OCR 集成测试使用随应用的 Paddle 模型识别真实 PNG 与扫描 PDF；回退测试覆盖 AI 成功不调 Paddle、AI 空结果/失败转 Paddle、Paddle 失败不吞错；模型资源测试逐项核验 SHA-256。
+- 额外复审发现嵌图大于 AI 20 MiB 输入限制时会提前终止、不走 Paddle。回归测试先红（原错误为单文件大小限制），将 AI `ContentAsset` 构造移入 AI 分支后变绿，确认失败的 AI 准备会继续走本机图片解码和 Paddle 路径。
+- `pnpm check:version` 实际确认版本为 0.4.25。`updater-secret.ps1 -Build` 生成 x64 安装包及 `.sig`；NSIS 隔离安装退出码 0，安装所得三份模型各自 SHA-256 校验通过。
+- `git ls-files` 安全模式未发现密钥、数据库、日志、EXE、签名文件或构建输出；`git grep` 对加密私钥说明文字的预期命中仅有 `AGENTS.md`、本工作日志和整改报告，不含实际密钥块。
+- 最终 Vite 构建有既有动态导入告警；Cargo/MSVC 输出创建 `.lib/.exp` 的链接器信息；严格 Clippy 退出 0。Rust 验证和签名构建使用仓库外 `D:/Codex/lumen-ocr-20261004-target`，仓库内 `src-tauri/target` 仍保持清理状态。
+
+### 相关文档
+
+- [知识库检索调研](knowledge-base-research-2026-10-04.md)、[本机知识库设计](design-knowledge-base-2026-10-04.md)、[图片识别实施计划](superpowers/plans/2026-10-04-knowledge-image-recognition.md)、[文件导入说明](file-import-2026-10-01.md)、[发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。

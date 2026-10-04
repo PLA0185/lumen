@@ -75,4 +75,12 @@ export function contentInsertionRange(value: string, start: number, end: number)
   }
   return { start: from, end: to }
 }
-export const contentError = (e: unknown): string => e instanceof IpcError ? e.userMessage() : e instanceof Error ? e.message : String(e)
+export const contentError = (e: unknown): string => {
+  if (e instanceof IpcError) return e.userMessage()
+  if (e instanceof Error) return e.message
+  if (e && typeof e === 'object' && 'message' in e && typeof e.message === 'string') {
+    const hint = 'hint' in e && typeof e.hint === 'string' ? e.hint : null
+    return hint ? `${e.message}\n${hint}` : e.message
+  }
+  return String(e)
+}

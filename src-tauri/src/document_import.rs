@@ -8,13 +8,72 @@ use crate::{
 use calamine::Reader as _;
 use quick_xml::{events::Event, Reader};
 use serde::Serialize;
+use std::future::Future;
 use std::io::{Cursor, Read};
-use tauri::State;
+use tauri::{Manager, State};
 
 const MAX_TEXT: usize = 100_000;
 const MAX_EXPANDED: usize = 40 * 1024 * 1024;
 const MAX_PAGES: usize = 100;
 const MAX_CELLS: usize = 100_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OcrEngine {
+    MultimodalAi,
+    Paddle,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct OcrRecognition {
+    text: String,
+    engine: OcrEngine,
+}
+
+async fn recognize_with_fallback<AiFuture, PaddleFuture, Paddle>(
+    ai: AiFuture,
+    paddle: Paddle,
+) -> AppResult<OcrRecognition>
+where
+    AiFuture: Future<Output = AppResult<String>>,
+    PaddleFuture: Future<Output = AppResult<String>>,
+    Paddle: FnOnce() -> PaddleFuture,
+{
+    if let Ok(text) = ai.await {
+        if is_ocr_text(&text) {
+            return Ok(OcrRecognition {
+                text: text.trim().to_owned(),
+                engine: OcrEngine::MultimodalAi,
+            });
+        }
+    }
+    let text = paddle().await?;
+    if !is_ocr_text(&text) {
+        return Err(AppError::validation("AI 与 PaddleOCR 均未识别到文字"));
+    }
+    Ok(OcrRecognition {
+        text: text.trim().to_owned(),
+        engine: OcrEngine::Paddle,
+    })
+}
+
+fn is_ocr_text(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty() && text != "__NO_TEXT__"
+}
+
+fn has_document_text(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        if let Some(page) = line
+            .strip_prefix("第 ")
+            .and_then(|line| line.strip_suffix(" 页"))
+        {
+            !page.is_empty() && !page.chars().all(|character| character.is_ascii_digit())
+        } else {
+            !line.is_empty()
+        }
+    })
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,6 +98,17 @@ struct Parsed {
     warnings: Vec<String>,
     image_parts: Vec<String>,
     image_positions: Vec<(usize, String)>,
+    ocr_images: Vec<OcrImage>,
+}
+
+struct OcrImage {
+    name: String,
+    bytes: Vec<u8>,
+    marker: String,
+}
+
+fn ocr_marker() -> String {
+    format!("\n[[LUMEN_OCR_{}]]\n", uuid::Uuid::new_v4())
 }
 
 /// Only explicit, consecutively numbered top-level chapters are authoritative.
@@ -747,31 +817,22 @@ fn pdf(bytes: &[u8]) -> AppResult<Parsed> {
         check_text(&text)?;
         texts.insert(*number, text);
     }
-    let recognized = if ocr_pages.is_empty() {
+    let page_images = if ocr_pages.is_empty() {
         Vec::new()
     } else {
-        native_ocr(bytes, Some(&ocr_pages))?
+        render_pdf_pages(bytes, &ocr_pages)?
     };
-    for (number, text) in ocr_pages.iter().zip(recognized) {
-        if text.trim().is_empty() {
-            parsed.warnings.push(format!(
-                "第 {number} 页 OCR 未识别到文字；请核对原页图片及识别语言。"
-            ));
-        }
-        texts.insert(*number, text);
-    }
-    if texts.values().all(|text| text.trim().is_empty()) {
-        return Err(AppError::validation(
-            "PDF 未提取或识别到文字；请检查原文件内容、图片清晰度及 OCR 语言。原文件已保留",
-        ));
+    for (number, image) in ocr_pages.iter().zip(page_images) {
+        let marker = ocr_marker();
+        texts.insert(*number, marker.clone());
+        parsed.ocr_images.push(OcrImage {
+            name: format!("PDF 第 {number} 页"),
+            bytes: image,
+            marker,
+        });
     }
     for (number, text) in texts {
         append(&mut parsed.text, &format!("第 {number} 页\n{text}\n"))?;
-    }
-    if !ocr_pages.is_empty() {
-        parsed
-            .warnings
-            .push("无文字层的页面使用 Windows 本机 OCR；请核对识别结果。".into());
     }
     parsed
         .warnings
@@ -793,11 +854,18 @@ fn parse(asset: &ContentAsset) -> AppResult<Parsed> {
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" => excel(&bytes, true)?,
         "application/vnd.ms-excel" => excel(&bytes, false)?,
         "application/pdf" => pdf(&bytes)?,
-        mime if mime.starts_with("image/") => Parsed {
-            text: native_ocr(&bytes, None)?.join("\n"),
-            warnings: vec!["使用 Windows 本机 OCR；请核对识别结果。".into()],
-            ..Default::default()
-        },
+        mime if mime.starts_with("image/") => {
+            let marker = ocr_marker();
+            Parsed {
+                text: marker.clone(),
+                ocr_images: vec![OcrImage {
+                    name: asset.name.clone(),
+                    bytes,
+                    marker,
+                }],
+                ..Default::default()
+            }
+        }
         "application/msword" => {
             return Err(AppError::validation(
                 "旧版 DOC 本机识别尚未实现，请另存为 DOCX 后导入；原文件已保留",
@@ -814,32 +882,74 @@ fn parse(asset: &ContentAsset) -> AppResult<Parsed> {
 }
 
 pub fn extract_local(asset: &ContentAsset) -> AppResult<String> {
-    Ok(parse(asset)?.text)
+    let mut parsed = parse(asset)?;
+    let mut text = parsed.text.clone();
+    for image in parsed.ocr_images {
+        let result =
+            crate::paddle_ocr::recognize(&image.bytes, &crate::paddle_ocr::bundled_model_dir())?;
+        text = text.replace(&image.marker, &result);
+    }
+    check_text(&text)?;
+    parsed.text = text;
+    Ok(parsed.text)
 }
 
 /// Question answering must not persist extracted embedded images into business storage.
 pub async fn extract_asset_read_only(asset: ContentAsset) -> AppResult<Extraction> {
-    let extracted =
-        tokio::task::spawn_blocking(move || parse(&asset).and_then(read_only_extraction))
-            .await
-            .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
-    Ok(extracted)
+    extract_asset_read_only_with_ocr(asset, None, crate::paddle_ocr::bundled_model_dir()).await
 }
 
-fn read_only_extraction(parsed: Parsed) -> AppResult<Extraction> {
+pub async fn extract_asset_read_only_with_ocr(
+    asset: ContentAsset,
+    ai_config: Option<crate::ai::ProviderConfig>,
+    model_dir: std::path::PathBuf,
+) -> AppResult<Extraction> {
+    let parsed = tokio::task::spawn_blocking(move || parse(&asset))
+        .await
+        .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
+    read_only_extraction(parsed, ai_config, model_dir).await
+}
+
+async fn read_only_extraction(
+    parsed: Parsed,
+    ai_config: Option<crate::ai::ProviderConfig>,
+    model_dir: std::path::PathBuf,
+) -> AppResult<Extraction> {
     let Parsed {
         mut text,
         images,
         mut warnings,
         image_parts,
         image_positions,
+        ocr_images,
     } = parsed;
     let mut recognized = Vec::with_capacity(images.len());
     let mut recognized_chars = 0;
+    let mut ai_count = 0;
+    let mut paddle_count = 0;
+    for image in ocr_images {
+        match recognize_image(&image.name, &image.bytes, ai_config.as_ref(), &model_dir).await {
+            Ok(result) => {
+                match result.engine {
+                    OcrEngine::MultimodalAi => ai_count += 1,
+                    OcrEngine::Paddle => paddle_count += 1,
+                }
+                text = text.replace(&image.marker, &result.text);
+            }
+            Err(error) => {
+                warnings.push(format!("{}未能识别：{}；原件已保留。", image.name, error));
+                text = text.replace(&image.marker, "");
+            }
+        }
+    }
     for (name, bytes) in &images {
-        match native_ocr(bytes, None) {
-            Ok(lines) => {
-                let value = lines.join("\n").trim().to_owned();
+        match recognize_image(name, bytes, ai_config.as_ref(), &model_dir).await {
+            Ok(result) => {
+                match result.engine {
+                    OcrEngine::MultimodalAi => ai_count += 1,
+                    OcrEngine::Paddle => paddle_count += 1,
+                }
+                let value = result.text;
                 if value.is_empty() {
                     warnings.push(format!("内嵌图片 {name} 的 OCR 未识别到文字；原件已保留。"));
                     recognized.push(None);
@@ -927,7 +1037,24 @@ fn read_only_extraction(parsed: Parsed) -> AppResult<Extraction> {
         text.insert_str(offset, &label);
     }
     append(&mut text, &unpositioned_text)?;
+    if !has_document_text(&text) {
+        text.clear();
+    }
     check_text(&text)?;
+    if ai_count + paddle_count > 0 {
+        let mut summary = Vec::new();
+        if ai_count > 0 {
+            summary.push(format!("多模态 AI {ai_count} 张"));
+        }
+        if paddle_count > 0 {
+            summary.push(format!("本机 PaddleOCR 兜底 {paddle_count} 张"));
+        }
+        warnings.push(format!(
+            "图片文字识别完成：{}。请核对识别结果。",
+            summary.join("，")
+        ));
+    }
+    warnings.dedup();
     Ok(Extraction {
         text,
         images: Vec::new(),
@@ -935,10 +1062,58 @@ fn read_only_extraction(parsed: Parsed) -> AppResult<Extraction> {
         sections: Vec::new(),
     })
 }
+
+async fn recognize_image(
+    name: &str,
+    bytes: &[u8],
+    ai_config: Option<&crate::ai::ProviderConfig>,
+    model_dir: &std::path::Path,
+) -> AppResult<OcrRecognition> {
+    let ai = async {
+        let image = crate::content_assets::prepare_bytes(name, bytes.to_vec())?;
+        match ai_config {
+            Some(config) => crate::ai::recognize_image(config, image).await,
+            None => Err(AppError::validation("没有配置可用的多模态 AI")),
+        }
+    };
+    let bytes = bytes.to_vec();
+    let model_dir = model_dir.to_path_buf();
+    recognize_with_fallback(ai, move || async move {
+        tokio::task::spawn_blocking(move || crate::paddle_ocr::recognize(&bytes, &model_dir))
+            .await
+            .map_err(|error| AppError::internal(format!("PaddleOCR 工作线程失败：{error}")))?
+    })
+    .await
+}
 pub async fn prepare_extraction(asset: ContentAsset) -> AppResult<Extraction> {
     let mut parsed = tokio::task::spawn_blocking(move || parse(&asset))
         .await
         .map_err(|e| AppError::internal(format!("本机文件识别失败：{e}")))??;
+    if !parsed.ocr_images.is_empty() {
+        let model_dir = crate::paddle_ocr::bundled_model_dir();
+        for image in std::mem::take(&mut parsed.ocr_images) {
+            let bytes = image.bytes.clone();
+            let dir = model_dir.clone();
+            let text =
+                tokio::task::spawn_blocking(move || crate::paddle_ocr::recognize(&bytes, &dir))
+                    .await
+                    .map_err(|error| {
+                        AppError::internal(format!("PaddleOCR 工作线程失败：{error}"))
+                    })??;
+            parsed.text = parsed.text.replace(&image.marker, &text);
+        }
+    }
+    prepare_parsed_assets(parsed)
+}
+
+async fn prepare_extraction_assets_only(asset: ContentAsset) -> AppResult<Extraction> {
+    let parsed = tokio::task::spawn_blocking(move || parse(&asset))
+        .await
+        .map_err(|error| AppError::internal(format!("本机文件识别失败：{error}")))??;
+    prepare_parsed_assets(parsed)
+}
+
+fn prepare_parsed_assets(mut parsed: Parsed) -> AppResult<Extraction> {
     let mut images = Vec::new();
     for (name, bytes) in parsed.images {
         images.push(crate::content_assets::prepare_bytes(&name, bytes)?);
@@ -975,32 +1150,39 @@ pub async fn extract_asset(db: &Db, asset: ContentAsset) -> AppResult<Extraction
 
 #[tauri::command]
 pub async fn content_asset_extract(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Extraction> {
     let asset = get_asset(&state.db, &id).await?;
-    extract_asset(&state.db, asset).await
+    let config = crate::ai::current_config(&state.db).await?;
+    let model_dir = app
+        .path()
+        .resolve("ocr", tauri::path::BaseDirectory::Resource)
+        .unwrap_or_else(|_| crate::paddle_ocr::bundled_model_dir());
+    let mut extraction = extract_asset_read_only_with_ocr(asset.clone(), config, model_dir).await?;
+    let parsed = prepare_extraction_assets_only(asset).await?;
+    extraction.images = parsed.images;
+    crate::content_assets::persist_assets(&state.db, &extraction.images).await?;
+    Ok(extraction)
 }
 
 #[cfg(not(windows))]
-fn native_ocr(_bytes: &[u8], _pages: Option<&[u32]>) -> AppResult<Vec<String>> {
+fn render_pdf_pages(_bytes: &[u8], _pages: &[u32]) -> AppResult<Vec<Vec<u8>>> {
     Err(AppError::validation(
-        "本机图片/扫描 PDF OCR 需要 Windows；请提供带文字层的 PDF 或文本文件",
+        "扫描 PDF 页面转图目前需要 Windows；原文件已保留",
     ))
 }
 
 #[cfg(windows)]
-fn native_ocr(bytes: &[u8], pages: Option<&[u32]>) -> AppResult<Vec<String>> {
+fn render_pdf_pages(bytes: &[u8], pages: &[u32]) -> AppResult<Vec<Vec<u8>>> {
     use windows::{
         Data::Pdf::{PdfDocument, PdfPageRenderOptions},
-        Graphics::Imaging::{BitmapAlphaMode, BitmapDecoder, BitmapPixelFormat},
-        Media::Ocr::OcrEngine,
-        Storage::Streams::{DataWriter, InMemoryRandomAccessStream},
+        Storage::Streams::{DataReader, DataWriter, InMemoryRandomAccessStream},
         Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED},
     };
-    // Called by spawn_blocking, independent of Tauri's UI COM apartment.
     unsafe { RoInitialize(RO_INIT_MULTITHREADED) }
-        .map_err(|e| parser_error("Windows OCR 初始化", e))?;
+        .map_err(|e| parser_error("PDF 页面渲染初始化", e))?;
     struct Apartment;
     impl Drop for Apartment {
         fn drop(&mut self) {
@@ -1008,67 +1190,51 @@ fn native_ocr(bytes: &[u8], pages: Option<&[u32]>) -> AppResult<Vec<String>> {
         }
     }
     let _apartment = Apartment;
-    let run = || -> windows::core::Result<Vec<String>> {
+    let run = || -> windows::core::Result<Vec<Vec<u8>>> {
         let stream = InMemoryRandomAccessStream::new()?;
         let writer = DataWriter::CreateDataWriter(&stream.GetOutputStreamAt(0)?)?;
         writer.WriteBytes(bytes)?;
         writer.StoreAsync()?.get()?;
         writer.DetachStream()?;
         stream.Seek(0)?;
-        let engine = OcrEngine::TryCreateFromUserProfileLanguages()?;
-        let recognize = |stream: &InMemoryRandomAccessStream| -> windows::core::Result<String> {
-            stream.Seek(0)?;
-            let decoder = BitmapDecoder::CreateAsync(stream)?.get()?;
-            let width = decoder.PixelWidth()?;
-            let height = decoder.PixelHeight()?;
-            if width > OcrEngine::MaxImageDimension()?
-                || height > OcrEngine::MaxImageDimension()?
-                || u64::from(width) * u64::from(height) > 16_000_000
-            {
+        let pdf = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
+        let mut rendered = Vec::with_capacity(pages.len());
+        let mut total_bytes = 0usize;
+        for number in pages {
+            let page = pdf.GetPage(number - 1)?;
+            let size = page.Size()?;
+            let scale = (2000.0 / size.Width.max(size.Height)).min(2.0);
+            let options = PdfPageRenderOptions::new()?;
+            options.SetDestinationWidth((size.Width * scale).max(1.0) as u32)?;
+            options.SetDestinationHeight((size.Height * scale).max(1.0) as u32)?;
+            let raster = InMemoryRandomAccessStream::new()?;
+            page.RenderWithOptionsToStreamAsync(&raster, &options)?
+                .get()?;
+            page.Close()?;
+            let size = raster.Size()?;
+            if size == 0 || size > 20 * 1024 * 1024 {
                 return Err(windows::core::Error::new(
                     windows::core::HRESULT(0x80070057u32 as i32),
-                    "图片尺寸超过 OCR 限制，请缩小后导入",
+                    "PDF 单页渲染结果超过 20 MiB 限制",
                 ));
             }
-            let bitmap = decoder
-                .GetSoftwareBitmapConvertedAsync(BitmapPixelFormat::Bgra8, BitmapAlphaMode::Ignore)?
-                .get()?;
-            let result = engine.RecognizeAsync(&bitmap)?.get()?;
-            let mut text = String::new();
-            for line in result.Lines()? {
-                text.push_str(&line.Text()?.to_string_lossy());
-                text.push('\n');
+            total_bytes += size as usize;
+            if total_bytes > 20 * 1024 * 1024 {
+                return Err(windows::core::Error::new(
+                    windows::core::HRESULT(0x80070057u32 as i32),
+                    "扫描 PDF 总渲染结果超过 20 MiB 限制",
+                ));
             }
-            Ok(text)
-        };
-        if let Some(pages) = pages {
-            let pdf = PdfDocument::LoadFromStreamAsync(&stream)?.get()?;
-            let mut texts = Vec::new();
-            for number in pages {
-                let page = pdf.GetPage(number - 1)?;
-                let size = page.Size()?;
-                let scale = (2000.0 / size.Width.max(size.Height)).min(2.0);
-                let options = PdfPageRenderOptions::new()?;
-                options.SetDestinationWidth((size.Width * scale).max(1.0) as u32)?;
-                options.SetDestinationHeight((size.Height * scale).max(1.0) as u32)?;
-                let raster = InMemoryRandomAccessStream::new()?;
-                page.RenderWithOptionsToStreamAsync(&raster, &options)?
-                    .get()?;
-                texts.push(recognize(&raster)?);
-                page.Close()?;
-            }
-            Ok(texts)
-        } else {
-            Ok(vec![recognize(&stream)?])
+            raster.Seek(0)?;
+            let reader = DataReader::CreateDataReader(&raster.GetInputStreamAt(0)?)?;
+            reader.LoadAsync(size as u32)?.get()?;
+            let mut data = vec![0; size as usize];
+            reader.ReadBytes(&mut data)?;
+            rendered.push(data);
         }
+        Ok(rendered)
     };
-    let texts = run().map_err(|e| parser_error("Windows OCR（请检查已安装识别语言）", e))?;
-    if pages.is_none() && texts.iter().all(|text| text.trim().is_empty()) {
-        return Err(AppError::validation(
-            "Windows OCR 未识别到文字；请检查图片清晰度、识别语言或提供文字文件。原文件已保留",
-        ));
-    }
-    Ok(texts)
+    run().map_err(|e| parser_error("PDF 扫描页渲染", e))
 }
 
 #[cfg(test)]
@@ -1091,6 +1257,86 @@ pub(crate) mod tests {
             assert_eq!(extracted.text, text);
             assert!(extracted.sections.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn multimodal_ocr_runs_before_paddle_and_uses_paddle_after_empty_ai_result() {
+        let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let ai_calls = calls.clone();
+        let paddle_calls = calls.clone();
+        let result = recognize_with_fallback(
+            async move {
+                ai_calls.lock().unwrap().push("ai");
+                Ok("AI识别文字".into())
+            },
+            move || async move {
+                paddle_calls.lock().unwrap().push("paddle");
+                Ok("Paddle识别文字".into())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "AI识别文字");
+        assert_eq!(result.engine, OcrEngine::MultimodalAi);
+        assert_eq!(*calls.lock().unwrap(), ["ai"]);
+
+        calls.lock().unwrap().clear();
+        let ai_calls = calls.clone();
+        let paddle_calls = calls.clone();
+        let result = recognize_with_fallback(
+            async move {
+                ai_calls.lock().unwrap().push("ai");
+                Ok("__NO_TEXT__".into())
+            },
+            move || async move {
+                paddle_calls.lock().unwrap().push("paddle");
+                Ok("Paddle识别文字".into())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "Paddle识别文字");
+        assert_eq!(result.engine, OcrEngine::Paddle);
+        assert_eq!(*calls.lock().unwrap(), ["ai", "paddle"]);
+    }
+
+    #[tokio::test]
+    async fn multimodal_request_failure_uses_paddle_and_paddle_failure_is_not_hidden() {
+        let result = recognize_with_fallback(
+            async { Err(AppError::validation("AI 服务暂时不可用")) },
+            || async { Ok("本机识别结果".into()) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "本机识别结果");
+        assert_eq!(result.engine, OcrEngine::Paddle);
+
+        let result = recognize_with_fallback(async { Ok("__NO_TEXT__".into()) }, || async {
+            Err(AppError::validation("PaddleOCR 未识别到文字"))
+        })
+        .await
+        .unwrap_err();
+        assert!(result.message.contains("PaddleOCR 未识别到文字"));
+    }
+
+    #[tokio::test]
+    async fn oversized_embedded_image_still_reaches_local_ocr_fallback() {
+        let bytes = vec![0; MAX_ASSET_BYTES + 1];
+        let error = recognize_image(
+            "oversized.png",
+            &bytes,
+            None,
+            &crate::paddle_ocr::bundled_model_dir(),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.message.contains("无法解码 OCR 图片"), "{error}");
+    }
+
+    #[test]
+    fn scanned_pdf_page_headers_alone_do_not_count_as_searchable_text() {
+        assert!(!has_document_text("第 1 页\n\n第 2 页\n"));
+        assert!(has_document_text("第 1 页\n货件标签打印\n"));
     }
 
     #[tokio::test]
@@ -1761,27 +2007,16 @@ pub(crate) mod tests {
     }
     #[cfg(windows)]
     #[test]
-    fn native_windows_ocr_reads_generated_png_and_scanned_pdf() {
-        use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
-        unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.unwrap();
-        struct TestApartment;
-        impl Drop for TestApartment {
-            fn drop(&mut self) {
-                unsafe { RoUninitialize() };
-            }
-        }
-        let _apartment = TestApartment;
+    fn bundled_paddle_ocr_reads_a_real_printed_fixture() {
+        let (png, _, _, _) = printed_fixture();
+        let dir = crate::paddle_ocr::bundled_model_dir();
+        let text = crate::paddle_ocr::recognize(&png, &dir).unwrap();
+        assert!(text.contains("ORDER"), "{text:?}");
+    }
+    #[cfg(windows)]
+    #[test]
+    fn bundled_paddle_ocr_reads_generated_png_and_scanned_pdf() {
         let (png, pixels, width, height) = printed_fixture();
-        let language_count = windows::Media::Ocr::OcrEngine::AvailableRecognizerLanguages()
-            .unwrap()
-            .Size()
-            .unwrap();
-        if language_count == 0 {
-            let error = extract_local(&asset("printed.png", &png)).unwrap_err();
-            assert!(error.message.contains("Windows OCR") && error.message.contains("语言"));
-            eprintln!("本机没有安装 OCR 识别语言：已验证明确错误路径；本轮未验证识别文字。");
-            return;
-        }
         let image_text = extract_local(&asset("printed.png", &png)).unwrap();
         assert!(image_text.contains("ORDER"), "{image_text:?}");
         use lopdf::{dictionary, Object, Stream};

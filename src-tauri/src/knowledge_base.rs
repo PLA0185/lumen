@@ -12,8 +12,8 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use std::collections::HashSet;
-use tauri::State;
+use std::collections::{HashMap, HashSet};
+use tauri::{Manager, State};
 
 const MAX_QUERY_CHARS: usize = 500;
 const MAX_QUESTION_CHARS: usize = 2_000;
@@ -328,7 +328,25 @@ async fn list_impl(db: &Db) -> AppResult<Vec<KnowledgeSourceSummary>> {
     rows.into_iter().map(KnowledgeSourceRow::summary).collect()
 }
 
+#[cfg(test)]
 async fn import_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<KnowledgeImportResult> {
+    import_bytes_with_ocr(
+        db,
+        name,
+        bytes,
+        None,
+        crate::paddle_ocr::bundled_model_dir(),
+    )
+    .await
+}
+
+async fn import_bytes_with_ocr(
+    db: &Db,
+    name: &str,
+    bytes: Vec<u8>,
+    ai_config: Option<ai::ProviderConfig>,
+    model_dir: std::path::PathBuf,
+) -> AppResult<KnowledgeImportResult> {
     let asset = content_assets::prepare_bytes(name, bytes)?;
     let duplicate_id: Option<String> =
         sqlx::query_scalar("SELECT id FROM knowledge_sources WHERE sha256=?")
@@ -343,7 +361,9 @@ async fn import_bytes(db: &Db, name: &str, bytes: Vec<u8>) -> AppResult<Knowledg
     }
 
     let (text, warnings, status, parse_error, chunks) =
-        match document_import::extract_asset_read_only(asset.clone()).await {
+        match document_import::extract_asset_read_only_with_ocr(asset.clone(), ai_config, model_dir)
+            .await
+        {
             Ok(extraction) => {
                 if extraction.text.trim().is_empty() {
                     let mut warnings = extraction.warnings;
@@ -511,6 +531,7 @@ async fn search_flow_terms(
     let mut candidates = Vec::new();
     let mut seen_citations = HashSet::new();
     let mut seen_flows = HashSet::new();
+    let mut matched_steps = HashMap::<String, HashSet<String>>::new();
     for term in terms
         .iter()
         .map(|term| term.trim())
@@ -533,6 +554,12 @@ async fn search_flow_terms(
                     category: matched.category.clone(),
                     evidence: truncate_chars(&matched.evidence, MAX_EVIDENCE_CHARS),
                 });
+            }
+            if let Some(step_id) = matched.step_id.as_ref() {
+                matched_steps
+                    .entry(flow_id.to_owned())
+                    .or_default()
+                    .insert(step_id.clone());
             }
             for source in issued[before..].iter().filter(|source| {
                 source.flow_id.as_deref() == Some(flow_id) && source.step_id == matched.step_id
@@ -559,6 +586,64 @@ async fn search_flow_terms(
                     excerpt: truncate_chars(&source.excerpt, MAX_EVIDENCE_CHARS),
                     start_offset: None,
                 });
+            }
+        }
+    }
+
+    // A natural-language question often asks for the action after its matching step.
+    // Once one flow is unambiguous, include the complete matched step and its immediate
+    // successor so the answer model can cite both the location and the next action.
+    if candidates.len() == 1 {
+        let flow_id = &candidates[0].flow_id;
+        if let Some(matched) = matched_steps.get(flow_id) {
+            if !matched.is_empty() {
+                let before_expansion = context.citations()?.len();
+                let document = context.get_flow(Some(flow_id), None)?;
+                let mut contextual_steps = HashSet::new();
+                for (index, step) in document.steps.iter().enumerate() {
+                    if matched.contains(&step.id) {
+                        contextual_steps.insert(step.id.clone());
+                        if let Some(next) = document.steps.get(index + 1) {
+                            contextual_steps.insert(next.id.clone());
+                        }
+                    }
+                }
+                let issued = context.citations()?;
+                let expanded_evidence = &issued[before_expansion..];
+                let mut expanded = Vec::new();
+                for (index, step) in document.steps.iter().enumerate() {
+                    if !contextual_steps.contains(&step.id) {
+                        continue;
+                    }
+                    let locator = format!("步骤 {}", index + 1);
+                    for source in expanded_evidence.iter().filter(|source| {
+                        source.flow_id.as_deref() == Some(flow_id.as_str())
+                            && source.step_id.as_deref() == Some(step.id.as_str())
+                            && (source.locator == locator
+                                || source.locator.starts_with(&format!("{locator}；文字 ")))
+                    }) {
+                        expanded.push(KnowledgeCitation {
+                            id: source.id.clone(),
+                            source_kind: "flow".into(),
+                            source_id: flow_id.clone(),
+                            title: document.summary.title.clone(),
+                            category: Some(document.summary.category.clone()),
+                            asset_id: source.attachment_id.clone(),
+                            flow_id: Some(flow_id.clone()),
+                            step_id: source.step_id.clone(),
+                            revision: source.revision,
+                            content_hash: None,
+                            locator: source.locator.clone(),
+                            excerpt: truncate_chars(&source.excerpt, MAX_EVIDENCE_CHARS),
+                            start_offset: None,
+                        });
+                    }
+                }
+                if !expanded.is_empty() {
+                    citations
+                        .retain(|citation| citation.flow_id.as_deref() != Some(flow_id.as_str()));
+                    citations.extend(expanded);
+                }
             }
         }
     }
@@ -596,6 +681,220 @@ fn parse_search_plan(text: &str) -> AppResult<Vec<String>> {
         ));
     }
     Ok(terms)
+}
+
+const MAX_LOCAL_QUERY_TERMS: usize = 18;
+const MAX_MERGED_QUERY_TERMS: usize = 48;
+
+const QUERY_STOP_PHRASES: &[&str] = &[
+    "帮我查一下",
+    "帮我找一下",
+    "帮我看看",
+    "我想知道",
+    "接下来",
+    "下一步",
+    "然后",
+    "之后",
+    "以后",
+    "去哪里",
+    "在哪里",
+    "在哪儿",
+    "在哪",
+    "什么地方",
+    "怎么操作",
+    "怎么做",
+    "应该",
+    "需要",
+    "查一下",
+    "怎么",
+    "如何",
+    "怎样",
+    "什么",
+    "做什么",
+    "干啥",
+    "一下",
+    "的",
+    "要",
+    "去",
+    "在",
+    "吗",
+    "呢",
+    "该",
+];
+
+const QUERY_SYNONYM_GROUPS: &[&[&str]] = &[
+    &[
+        "重量",
+        "毛重",
+        "净重",
+        "称重",
+        "weight",
+        "weights",
+        "gross weight",
+        "net weight",
+    ],
+    &[
+        "体积",
+        "尺寸",
+        "长宽高",
+        "measurements",
+        "measurement",
+        "dimensions",
+        "dimension",
+        "package size",
+        "parcel size",
+        "cbm",
+        "cubic meter",
+    ],
+    &[
+        "运费",
+        "物流报价",
+        "物流费用",
+        "freight",
+        "shipping cost",
+        "shipping fee",
+        "shipping charge",
+        "transport cost",
+    ],
+    &[
+        "标签",
+        "标贴",
+        "貼標",
+        "贴标",
+        "货件标签",
+        "运单标签",
+        "FBA label",
+        "FBA labels",
+        "shipping label",
+        "shipping labels",
+        "shipment label",
+        "shipment labels",
+        "label",
+        "labels",
+    ],
+    &[
+        "打印",
+        "印刷",
+        "列印",
+        "print",
+        "printing",
+        "print label",
+        "print labels",
+        "download label",
+        "download labels",
+    ],
+];
+
+fn push_query_term(terms: &mut Vec<String>, seen: &mut HashSet<String>, term: &str, limit: usize) {
+    let term = term.trim();
+    if terms.len() >= limit || term.chars().count() < 2 || term.contains('\0') {
+        return;
+    }
+    let key = term.to_lowercase();
+    if seen.insert(key) {
+        terms.push(term.to_owned());
+    }
+}
+
+/// Extracts useful literal terms before the provider's query rewrite is applied.
+/// This deterministic lane keeps natural phrasing from becoming a single exact-match query.
+fn local_query_terms(query: &str) -> Vec<String> {
+    let mut normalized = query.to_lowercase();
+    for phrase in QUERY_STOP_PHRASES {
+        normalized = normalized.replace(phrase, " ");
+    }
+
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+    for token in normalized
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+    {
+        if token.is_ascii() {
+            if !matches!(
+                token,
+                "a" | "an"
+                    | "and"
+                    | "are"
+                    | "can"
+                    | "could"
+                    | "do"
+                    | "does"
+                    | "for"
+                    | "how"
+                    | "i"
+                    | "in"
+                    | "is"
+                    | "it"
+                    | "me"
+                    | "my"
+                    | "next"
+                    | "of"
+                    | "on"
+                    | "please"
+                    | "should"
+                    | "tell"
+                    | "the"
+                    | "then"
+                    | "to"
+                    | "what"
+                    | "where"
+                    | "which"
+                    | "would"
+            ) {
+                push_query_term(&mut terms, &mut seen, token, MAX_LOCAL_QUERY_TERMS);
+            }
+        } else {
+            let chars: Vec<char> = token.chars().collect();
+            push_query_term(&mut terms, &mut seen, token, MAX_LOCAL_QUERY_TERMS);
+            for width in [2, 3] {
+                for window in chars.windows(width) {
+                    let gram: String = window.iter().collect();
+                    push_query_term(&mut terms, &mut seen, &gram, MAX_LOCAL_QUERY_TERMS);
+                }
+            }
+        }
+        if terms.len() == MAX_LOCAL_QUERY_TERMS {
+            break;
+        }
+    }
+    terms
+}
+
+fn merged_search_terms(ai_terms: &[String], input: &KnowledgeAskInput) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+    for term in ai_terms {
+        push_query_term(&mut terms, &mut seen, term, MAX_MERGED_QUERY_TERMS);
+    }
+
+    let mut local_terms = Vec::new();
+    for entry in input
+        .history
+        .iter()
+        .rev()
+        .filter(|entry| entry.role == "user")
+        .take(3)
+    {
+        local_terms.extend(local_query_terms(&entry.text));
+    }
+    local_terms.extend(local_query_terms(&input.question));
+    for term in &local_terms {
+        push_query_term(&mut terms, &mut seen, term, MAX_MERGED_QUERY_TERMS);
+    }
+
+    for group in QUERY_SYNONYM_GROUPS {
+        if terms.iter().any(|query_term| {
+            group
+                .iter()
+                .any(|synonym| query_term.contains(&synonym.to_lowercase()))
+        }) {
+            for synonym in *group {
+                push_query_term(&mut terms, &mut seen, synonym, MAX_MERGED_QUERY_TERMS);
+            }
+        }
+    }
+    terms
 }
 
 fn parse_ai_answer(
@@ -702,7 +1001,7 @@ async fn analyze_query(
                 .to_string(),
         }],
         json_output: true,
-        max_output_tokens: Some(700),
+        max_output_tokens: Some(config.max_output_tokens),
         media: vec![],
     };
     let response = ai::chat(config, &request).await?;
@@ -756,7 +1055,7 @@ async fn answer_from_evidence(
         ),
         messages,
         json_output: true,
-        max_output_tokens: Some(config.max_output_tokens.min(2_500)),
+        max_output_tokens: Some(config.max_output_tokens),
         media: vec![],
     };
     let response = ai::chat(config, &request).await?;
@@ -779,7 +1078,8 @@ async fn ask_impl(db: &Db, input: KnowledgeAskInput) -> AppResult<KnowledgeAskRe
             ));
         }
     }
-    let terms = analyze_query(&config, &input).await?;
+    let ai_terms = analyze_query(&config, &input).await?;
+    let terms = merged_search_terms(&ai_terms, &input);
     let document_citations = search_files(db, &terms, MAX_SEARCH_RESULTS).await?;
     let (flow_citations, flow_candidates, context) =
         search_flow_terms(db, &terms, input.selected_flow_id.as_deref()).await?;
@@ -898,6 +1198,7 @@ async fn delete_impl(db: &Db, id: &str) -> AppResult<bool> {
 
 #[tauri::command]
 pub async fn knowledge_import(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     name: String,
     data_base64: String,
@@ -908,7 +1209,12 @@ pub async fn knowledge_import(
     let bytes = STANDARD
         .decode(data_base64)
         .map_err(|_| AppError::validation("文件编码无效"))?;
-    import_bytes(&state.db, &name, bytes).await
+    let config = ai::current_config(&state.db).await?;
+    let model_dir = app
+        .path()
+        .resolve("ocr", tauri::path::BaseDirectory::Resource)
+        .unwrap_or_else(|_| crate::paddle_ocr::bundled_model_dir());
+    import_bytes_with_ocr(&state.db, &name, bytes, config, model_dir).await
 }
 
 #[tauri::command]
@@ -933,8 +1239,14 @@ pub async fn knowledge_search(
     if query.is_empty() {
         return Ok(KnowledgeSearchResult { citations: vec![] });
     }
-    let documents = search_files(&state.db, std::slice::from_ref(&query), 10).await?;
-    let (flows, _, _) = search_flow_terms(&state.db, std::slice::from_ref(&query), None).await?;
+    let input = KnowledgeAskInput {
+        question: query,
+        history: vec![],
+        selected_flow_id: None,
+    };
+    let terms = merged_search_terms(&[], &input);
+    let documents = search_files(&state.db, &terms, 10).await?;
+    let (flows, _, _) = search_flow_terms(&state.db, &terms, None).await?;
     Ok(KnowledgeSearchResult {
         citations: documents
             .into_iter()
@@ -1162,6 +1474,187 @@ mod tests {
         let duplicate = import_bytes(&db, "renamed.md", stored).await.unwrap();
         assert!(duplicate.duplicate);
         assert_eq!(duplicate.source.id, result.source.id);
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn natural_label_questions_retrieve_matching_source_across_wording_variants() {
+        let (db, dir) = test_db().await;
+        let print_detail =
+            "进入 Seller Central 的货件处理页面，选择货件并点击 Print shipping labels。";
+        let next_detail = "打印完成后，把每张 FBA 标贴贴在对应纸箱上，核对箱号，再预约承运人取件。";
+        import_bytes(
+            &db,
+            "Amazon FBA 发货 SOP.md",
+            format!("# FBA 货件标签\n{print_detail}\n{next_detail}")
+                .as_bytes()
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+        let mut flow_input = flow_input("Amazon FBA 发货 SOP", print_detail);
+        flow_input.steps.push(FlowStep {
+            id: "step-2".into(),
+            title: "贴标并安排交接".into(),
+            owner: String::new(),
+            detail: next_detail.into(),
+            layout: None,
+            group: Some(FlowGroup {
+                id: "chapter-1".into(),
+                title: "出口流程".into(),
+                path: vec!["发货".into()],
+            }),
+        });
+        let flow = memos::save_impl(&db, flow_input).await.unwrap();
+
+        for (question, ai_terms) in [
+            ("FBA 标贴要去哪里打印？", vec![]),
+            ("FBA 标签在哪打印？", vec![]),
+            ("shipping label 在哪里打？", vec![]),
+            ("标签打好以后下一步做什么？", vec![]),
+            ("FBA shipping label 的打印入口在哪里", vec![]),
+            ("把箱子上的 FBA 贴标在什么页面处理？", vec![]),
+            ("箱唛要去哪里打印？", vec!["shipping label".to_owned()]),
+            ("where do I print the shipment label and what next", vec![]),
+        ] {
+            let input = KnowledgeAskInput {
+                question: question.to_owned(),
+                history: vec![],
+                selected_flow_id: None,
+            };
+            let terms = merged_search_terms(&ai_terms, &input);
+            let citations = search_files(&db, &terms, 10).await.unwrap();
+            assert!(
+                !citations.is_empty(),
+                "自然问法 {question:?} 应召回含标签打印步骤的已导入资料"
+            );
+            assert!(
+                citations.iter().any(|citation| {
+                    citation.title == "Amazon FBA 发货 SOP.md"
+                        && citation.excerpt.contains("Seller Central")
+                        && citation.excerpt.contains("预约承运人取件")
+                }),
+                "{question:?} 应给出可同时核对打印位置和后续动作的原文片段；实际来源：{:?}",
+                citations
+                    .iter()
+                    .map(|citation| (&citation.title, &citation.excerpt))
+                    .collect::<Vec<_>>()
+            );
+
+            let (flow_citations, candidates, _) =
+                search_flow_terms(&db, &terms, None).await.unwrap();
+            assert_eq!(candidates.len(), 1, "{question:?} 应命中唯一对应流程");
+            assert_eq!(candidates[0].flow_id, flow.summary.id);
+            let flow_evidence = flow_citations
+                .iter()
+                .map(|citation| citation.excerpt.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                flow_evidence.contains("Seller Central")
+                    && flow_evidence.contains("预约承运人取件"),
+                "{question:?} 的流程证据应同时包含打印位置和原文下一步"
+            );
+        }
+
+        let followup = KnowledgeAskInput {
+            question: "那打印完了下一步呢？".into(),
+            history: vec![KnowledgeHistoryEntry {
+                role: "user".into(),
+                text: "FBA 标贴要去哪里打印？".into(),
+            }],
+            selected_flow_id: None,
+        };
+        let terms = merged_search_terms(&[], &followup);
+        assert!(!search_files(&db, &terms, 10).await.unwrap().is_empty());
+        let (citations, candidates, _) = search_flow_terms(&db, &terms, None).await.unwrap();
+        assert_eq!(candidates.len(), 1, "追问要沿用用户上一条问题的对象");
+        assert!(
+            citations
+                .iter()
+                .any(|citation| { citation.excerpt.contains("预约承运人取件") }),
+            "追问应带回流程中的后续步骤"
+        );
+
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn natural_shipping_questions_retrieve_the_current_and_next_fba_steps() {
+        let (db, dir) = test_db().await;
+        let mut input = flow_input("Amazon FBA 出货 SOP", "准备发货计划并核对商品信息。");
+        input.steps = vec![
+            ("step-1", "下载出货计划", "下载并核对亚马逊出货计划。"),
+            ("step-2", "创建亚马逊货件", "在 Seller Central 创建 FBA 货件。"),
+            ("step-3", "填写工厂发货表", "确认 SKU、数量和发货地址。"),
+            (
+                "step-4",
+                "询价并确定渠道",
+                "确认箱数、货件重量、长宽高和总体积；收到物流运费报价后比较渠道，确认运输方式并记录费用。",
+            ),
+            (
+                "step-5",
+                "打印 FBA 标签",
+                "在 Seller Central 货件处理页面选择货件并点击 Print shipping labels，核对箱号后把标签贴在对应纸箱。",
+            ),
+        ]
+        .into_iter()
+        .map(|(id, title, detail)| FlowStep {
+            id: id.into(),
+            title: title.into(),
+            owner: String::new(),
+            detail: detail.into(),
+            layout: None,
+            group: Some(FlowGroup {
+                id: "shipment".into(),
+                title: "3. 亚马逊发货".into(),
+                path: vec!["3.1 货件创建".into()],
+            }),
+        })
+        .collect();
+        memos::save_impl(&db, input).await.unwrap();
+
+        for question in [
+            "工厂刚把重量、体积和运费发给我，接下来做什么？",
+            "货代发来尺寸、毛重和物流报价后，下一步怎么处理？",
+            "我拿到了装箱资料和运费报价，按流程先做什么？",
+            "重量和体积确认以后，下一步该干啥？",
+            "shipping measurements and freight quote arrived, what should I do next?",
+        ] {
+            let request = KnowledgeAskInput {
+                question: question.into(),
+                history: vec![],
+                selected_flow_id: None,
+            };
+            let terms = merged_search_terms(&[], &request);
+            let (citations, candidates, _) = search_flow_terms(&db, &terms, None).await.unwrap();
+            assert_eq!(
+                candidates.len(),
+                1,
+                "自然问法 {question:?} 应命中唯一出货流程"
+            );
+            let evidence = citations
+                .iter()
+                .map(|citation| (citation.locator.as_str(), citation.excerpt.as_str()))
+                .collect::<Vec<_>>();
+            assert!(
+                evidence.iter().any(|(locator, text)| {
+                    locator.contains("步骤 4")
+                        && text.contains("货件重量")
+                        && text.contains("运费报价")
+                }),
+                "{question:?} 应找到核对重量、体积和运费的当前步骤：{evidence:?}"
+            );
+            assert!(
+                evidence.iter().any(|(locator, text)| {
+                    locator.contains("步骤 5") && text.contains("Print shipping labels")
+                }),
+                "{question:?} 应同时提供原流程中的下一步标签入口：{evidence:?}"
+            );
+        }
+
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }

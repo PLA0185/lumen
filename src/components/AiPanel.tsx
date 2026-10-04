@@ -355,7 +355,7 @@ export function AiPanel() {
                   type="number"
                   className="input"
                   min={1}
-                  max={32000}
+                  max={384000}
                   value={cfg.maxOutputTokens}
                   onChange={(e) =>
                     patch({ maxOutputTokens: Number(e.target.value) || defaults?.maxOutputTokens || cfg.maxOutputTokens })
@@ -364,7 +364,7 @@ export function AiPanel() {
               </label>
             </div>
             <p className="setgroup__hint">
-              新配置默认 8192，可按长计划、月总结需要提高至 16384 或 32000；上限不是每次必定使用的数量。DeepSeek 使用非思考模式，避免推理耗尽预算而无正文。API 费用由你自己的服务商账户产生，
+              新配置默认 8192，最高可设 384000；请按当前模型支持的输出上限填写（DeepSeek API 当前最高 384000，仍受上下文总长度约束，其他服务商以各自模型文档为准）。上限不是每次必定使用的数量；知识库问答使用该上限，关闭可选推理以给回答留足预算。API 费用由你自己的服务商账户产生，
               Lumen 无法代你计费，也无法限制你的账户支出。
             </p>
 

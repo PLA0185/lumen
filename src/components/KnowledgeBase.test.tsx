@@ -7,7 +7,17 @@ import * as api from '../lib/knowledge-base-ipc'
 import * as assets from '../lib/content-assets'
 import { save } from '@tauri-apps/plugin-dialog'
 
-vi.mock('../lib/data-change', () => ({ onDataChanged: () => () => {} }))
+const dataChanges = vi.hoisted(() => ({ listeners: new Map<string, Set<() => void>>() }))
+vi.mock('../lib/data-change', () => ({
+  onDataChanged: (domains: string[], callback: () => void) => {
+    for (const domain of domains) {
+      const listeners = dataChanges.listeners.get(domain) ?? new Set<() => void>()
+      listeners.add(callback)
+      dataChanges.listeners.set(domain, listeners)
+    }
+    return () => { for (const listeners of dataChanges.listeners.values()) listeners.delete(callback) }
+  },
+}))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }))
 vi.mock('../lib/knowledge-base-ipc', () => ({
   knowledgeAsk: vi.fn(),
@@ -44,7 +54,8 @@ async function mount(onOpenFlow = vi.fn()) {
 it('在提问前明确说明最近对话也会发送给 AI 服务商', async () => {
   await mount()
   expect(document.body.textContent).toContain('当前问题、最近必要对话和少量相关摘录会发送')
-  expect(document.body.textContent).toContain('导入时不会上传整份文件')
+  expect(document.body.textContent).toContain('导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别')
+  expect(document.body.textContent).toContain('失败后改用本机 PaddleOCR，不会上传整份文件')
 })
 
 async function enterQuestion(value: string) {
@@ -55,6 +66,10 @@ async function enterQuestion(value: string) {
   })
 }
 
+async function publishDataChange(domain: string) {
+  await act(async () => { for (const listener of dataChanges.listeners.get(domain) ?? []) listener() })
+}
+
 afterEach(() => {
   act(() => root?.unmount())
   root = undefined
@@ -62,6 +77,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.mocked(save).mockReset()
   vi.clearAllMocks()
+  dataChanges.listeners.clear()
 })
 
 it('回答展示真实引用，并能从流程引用跳转到具体节点', async () => {
@@ -114,4 +130,84 @@ it('资料引用显示解析位置并允许导出原件核对', async () => {
   expect(document.body.textContent).toContain('第 2 页；发票处理')
   await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '导出引用原件')!.click())
   expect(exportAsset).toHaveBeenCalledWith('asset-1', 'C:/Temp/美国发票指南.pdf')
+})
+
+it('导入成功提示不复述资料卡中的解析告警，并合并重复的原件保留提示', async () => {
+  const warning = '内嵌图片 image6.png 的 OCR 未完成：Windows OCR 未识别到文字。原文件已保留；原件已保留。'
+  const source: api.KnowledgeSourceSummary = {
+    id: 'source-3', assetId: 'asset-3', title: 'TK-WM出货SOP.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    byteSize: 2048, sha256: 'abc', status: 'ready', warnings: [warning], error: null,
+    createdAt: '2026-10-04', updatedAt: '2026-10-04',
+  }
+  vi.mocked(api.knowledgeImportFile).mockResolvedValue({ source, duplicate: false })
+  await mount()
+  vi.mocked(api.knowledgeList).mockResolvedValue([source])
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File(['SOP'], source.title)] })
+  await act(async () => {
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    await vi.waitFor(() => expect(api.knowledgeList).toHaveBeenCalledTimes(2))
+  })
+
+  expect(document.querySelector('.knowledge-message')?.textContent).toBe(`已解析「${source.title}」并加入检索。`)
+  expect(document.querySelector('.knowledge-sources__warning')?.textContent)
+    .toBe('内嵌图片 image6.png 的 OCR 未完成：Windows OCR 未识别到文字。原文件已保留。')
+  expect(document.body.textContent?.match(/原件已保留|原文件已保留/g)).toHaveLength(1)
+})
+
+it('流程内容变化只刷新流程检索，不反复重载资料列表', async () => {
+  await mount()
+  expect(api.knowledgeList).toHaveBeenCalledTimes(1)
+
+  await publishDataChange('memos')
+
+  expect(api.knowledgeList).toHaveBeenCalledTimes(1)
+  expect(document.body.textContent).not.toContain('正在读取资料列表…')
+})
+
+it('刷新资料清单时保留已显示内容，不闪回初始读取状态', async () => {
+  await mount()
+  let finishReload!: (rows: api.KnowledgeSourceSummary[]) => void
+  vi.mocked(api.knowledgeList).mockImplementationOnce(() => new Promise(resolve => { finishReload = resolve }))
+
+  await publishDataChange('knowledge')
+
+  expect(document.body.textContent).not.toContain('正在读取资料列表…')
+  const source: api.KnowledgeSourceSummary = {
+    id: 'source-2', assetId: 'asset-2', title: '出货标签指南.pdf', mime: 'application/pdf',
+    byteSize: 2048, sha256: 'abc', status: 'ready', warnings: [], error: null,
+    createdAt: '2026-10-04', updatedAt: '2026-10-04',
+  }
+  await act(async () => finishReload([source]))
+  expect(document.body.textContent).toContain('出货标签指南.pdf')
+})
+
+it('提问等待期间显示状态，AI 调用失败时明确展示错误', async () => {
+  await mount()
+  let failAsk!: (reason: Error) => void
+  vi.mocked(api.knowledgeAsk).mockImplementationOnce(() => new Promise((_, reject) => { failAsk = reject }))
+  await enterQuestion('工厂刚发来重量和体积，下一步做什么？')
+  await act(async () => document.querySelector<HTMLButtonElement>('form button[type="submit"]')!.click())
+  expect(api.knowledgeAsk).toHaveBeenCalledTimes(1)
+  expect(document.body.textContent).toContain('正在检索并核对…')
+
+  await act(async () => failAsk(new Error('AI 请求超时')))
+  expect(document.body.textContent).toContain('AI 请求超时')
+})
+
+it('资料变化事件不会静默取消正在进行的问答', async () => {
+  await mount()
+  let finishAsk!: (result: api.KnowledgeAskResult) => void
+  vi.mocked(api.knowledgeAsk).mockImplementationOnce(() => new Promise(resolve => { finishAsk = resolve }))
+  await enterQuestion('工厂发来重量体积和运费，接下来做什么？')
+  await act(async () => document.querySelector<HTMLButtonElement>('form button[type="submit"]')!.click())
+
+  await publishDataChange('memos')
+  expect(document.body.textContent).toContain('正在检索并核对…')
+
+  await act(async () => finishAsk({
+    status: 'answered', answer: '按流程先核对货件资料。', searchTerms: ['货件资料'],
+    citations: [flowCitation], flowCandidates: [], message: null, providerNotice: '',
+  }))
+  expect(document.body.textContent).toContain('按流程先核对货件资料。')
 })

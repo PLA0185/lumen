@@ -387,7 +387,7 @@ select {
 }
 
 .nav-item[aria-current='page'] .nav-item__icon {
-  color: var(--c-accent);
+  color: var(--c-accent-text);
 }
 
 .nav-item__label {
@@ -4625,7 +4625,7 @@ body {
 .flow-canvas__nav-step:hover .flow-canvas__nav-mark, .flow-canvas__nav-step:focus-visible .flow-canvas__nav-mark { height: max(20px, var(--flow-nav-height, 7px)); opacity: 1; }
 .flow-canvas__nav-step:has(+ .flow-canvas__nav-step:hover) .flow-canvas__nav-mark, .flow-canvas__nav-step:hover + .flow-canvas__nav-step .flow-canvas__nav-mark { height: max(13px, var(--flow-nav-height, 7px)); opacity: .8; }
 .flow-canvas__nav:has(.flow-canvas__nav-step[aria-current="step"]):not(:has(.flow-canvas__nav-step:is(:hover, :focus-visible))) .flow-canvas__nav-step:not([aria-current="step"]) .flow-canvas__nav-mark,
-.flow-canvas__nav:has(.flow-canvas__nav-step:is(:hover, :focus-visible)) .flow-canvas__nav-step:not(:is(:hover, :focus-visible)) .flow-canvas__nav-mark { opacity: .22; filter: saturate(.45); }
+.flow-canvas__nav:has(.flow-canvas__nav-step:is(:hover, :focus-visible)) .flow-canvas__nav-step:not(:is(:hover, :focus-visible)) .flow-canvas__nav-mark { opacity: .42; filter: saturate(.75); }
 .flow-canvas__nav-step:is(:hover, :focus-visible) .flow-canvas__nav-mark,
 .flow-canvas__nav-step[aria-current="step"] .flow-canvas__nav-mark { filter: drop-shadow(0 0 4px currentColor); }
 .flow-canvas__nav-label { visibility: hidden; opacity: 0; transform: translateY(-4px); transition: opacity .16s ease, transform .16s ease, visibility .16s; position: absolute; z-index: 6; top: calc(100% + 20px); width: max-content; max-width: 300px; padding: 8px 10px; border: 1px solid var(--c-border); border-radius: 7px; background: var(--c-surface); color: var(--c-text); font-size: var(--font-sm); line-height: 1.5; text-wrap: balance; box-shadow: 0 5px 20px #0005; pointer-events: none; }

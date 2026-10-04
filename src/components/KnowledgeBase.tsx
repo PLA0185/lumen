@@ -20,6 +20,14 @@ function formatBytes(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
+function formatSourceWarning(warnings: string[], error: string | null) {
+  const messages = error ? [error] : warnings
+  return [...new Set(messages.map(message => message.replace(
+    /((?:原文件|原件)已保留)(?:[；。]\s*(?:原文件|原件)已保留)+/g,
+    '$1',
+  )))].join('；')
+}
+
 function Evidence({ citation, onOpenFlow }: {
   citation: KnowledgeCitation
   onOpenFlow: (flowId: string, stepId: string) => void
@@ -74,27 +82,31 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   const searchRequest = useRef(0)
   const askRequest = useRef(0)
   const listRequest = useRef(0)
+  const hasLoadedList = useRef(false)
 
   const reload = useCallback(async () => {
     const request = ++listRequest.current
-    setLoading(true)
+    if (!hasLoadedList.current) setLoading(true)
     try {
       const rows = await knowledgeList()
-      if (request === listRequest.current) { setSources(rows); setListError('') }
+      if (request === listRequest.current) { setSources(rows); setListError(''); hasLoadedList.current = true }
     } catch (error) {
       if (request === listRequest.current) setListError(contentError(error))
     } finally { if (request === listRequest.current) setLoading(false) }
   }, [])
   useEffect(() => { void reload() }, [reload])
-  useEffect(() => onDataChanged(['knowledge', 'memos'], () => {
-    void reload()
-    askRequest.current += 1
+  const invalidateAnswers = useCallback(() => {
+    // The backend revalidates issued citations before returning; unrelated edits must not silently cancel an active query.
     setAnswer(null)
     setAskError('')
     setSearchResults([])
-    setAsking(false)
     setSearchRevision(value => value + 1)
-  }), [reload])
+  }, [])
+  useEffect(() => onDataChanged(['knowledge'], () => {
+    void reload()
+    invalidateAnswers()
+  }), [invalidateAnswers, reload])
+  useEffect(() => onDataChanged(['memos'], invalidateAnswers), [invalidateAnswers])
 
   useEffect(() => {
     const q = searchText.trim()
@@ -126,8 +138,8 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
         messages.push(result.duplicate
           ? `「${file.name}」内容已存在，沿用已有索引。`
           : result.source.status === 'ready'
-            ? `已解析「${file.name}」并加入检索。${result.source.warnings.length ? ` 提示：${result.source.warnings.join('；')}` : ''}`
-            : `已保留「${file.name}」原件，但未能解析：${result.source.error ?? '解析器未返回原因'}`)
+            ? `已解析「${file.name}」并加入检索。`
+            : `已保留「${file.name}」原件；解析失败，请查看资料卡中的原因。`)
       } catch (error) { messages.push(`「${file.name}」导入失败：${contentError(error)}`) }
     }
     setImportMessage(messages.join('\n'))
@@ -194,7 +206,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
-    <p className="knowledge-base__privacy">知识库资料保存在本机，不参与云同步。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入时不会上传整份文件。</p>
+    <p className="knowledge-base__privacy">知识库资料保存在本机，不参与云同步。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p>
     <div className="knowledge-base__grid">
       <section className="knowledge-panel" aria-label="资料库">
         <header><h3>已加入的资料</h3><span>{sources.length} 项</span></header>
@@ -210,12 +222,12 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
               <button type="button" className="btn btn--ghost btn--sm" disabled={!!exportingId} onClick={() => void exportSource(source)}>{exportingId === source.id ? '导出中…' : '导出原件'}</button>
               <button type="button" className="btn btn--ghost btn--sm" aria-label={`移除 ${source.title}`} disabled={busyDelete === source.id} onClick={() => void removeSource(source)}>移除</button>
             </div>
-            {(source.error || source.warnings.length > 0) && <p className="knowledge-sources__warning">{source.error ?? source.warnings.join('；')}</p>}
+            {(source.error || source.warnings.length > 0) && <p className="knowledge-sources__warning">{formatSourceWarning(source.warnings, source.error)}</p>}
           </li>)}
         </ul>
         {importing && <p role="status">正在解析并建立本机检索索引…</p>}
         {importMessage && <pre className="knowledge-message" role="status">{importMessage}</pre>}
-        <details className="knowledge-base__scope"><summary>解析范围与限制</summary><p>使用应用现有解析器保留原件并抽取文本。PDF 扫描件和图片依赖本机 OCR；暂不支持的格式会保留原件并标明失败，不会假装已入索引。来源会显示解析片段和页码/章节位置，可导出原件核对；知识库为本机数据，目前不随云同步。</p></details>
+        <details className="knowledge-base__scope"><summary>解析范围与限制</summary><p>使用应用现有解析器保留原件并抽取文本。图片、扫描 PDF 页面及 Office 内嵌图片优先由已配置的多模态 AI 逐张转录，失败时使用随应用提供的本机 PaddleOCR；Windows OCR 已移除。暂不支持的格式会保留原件并标明失败，不会假装已入索引。来源会显示解析片段和页码/章节位置，可导出原件核对；知识库为本机数据，目前不随云同步。</p></details>
       </section>
 
       <section className="knowledge-panel knowledge-panel--ask" aria-label="知识库问答">

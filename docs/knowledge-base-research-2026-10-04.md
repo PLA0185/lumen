@@ -12,7 +12,9 @@
 
 ## 与 Lumen 现状融合
 
-Lumen 已有本机解析器 `document_import`，实际覆盖 UTF-8 文本/Markdown/CSV/JSON/XML/HTML/log、DOCX、XLSX/XLS、PDF（含 Windows 扫描页 OCR）及 PNG/JPEG/WEBP/GIF 图片 OCR；DOCX/XLSX 的内嵌图片文字也在本机 OCR，识别文字保留在正文锚点或工作簿图片标记处。超过解析器边界、加密或不支持的内容会返回错误或警告。旧 DOC、PPTX、RTF、ODT 当前没有本机提取实现，不能把识别 MIME 类型误说成已支持解析。知识库导入复用同一解析器与原件校验；不改变既有流程附件的提取和图片存储路径。
+Lumen 的 `document_import` 覆盖 UTF-8 文本/Markdown/CSV/JSON/XML/HTML/log、DOCX、XLSX/XLS、PDF 及常见图片。图片、扫描 PDF 页和 Office 内嵌图片的 OCR 优先使用当前已配置的多模态 AI，未配置、失败或空结果时回退到随 Windows 应用打包的 PaddleOCR PP-OCRv4；Windows OCR 已删除。AI 只收到逐张待识别图片，不上传原始整份资料。识别文字按原文锚点、工作簿图片标记或 PDF 页位置回填。两引擎都失败的内容保留原件并显示警告，不会伪装成可检索文本。超过解析器边界、加密或不支持的内容会返回错误或警告。旧 DOC、PPTX、RTF、ODT 当前没有本机提取实现，不能把识别 MIME 类型误说成已支持解析。
+
+多模态能力按当前选用的服务商和模型判断，不把“支持聊天”当作“支持图像”。DeepSeek 官方 Vision 文档明确列出 `deepseek-flash` 可通过 Chat Completions 接收图片；这也是 Lumen 当前 DeepSeek 默认模型名。没有配置可用 AI、模型拒绝图片或请求失败时仍会落到本机 PaddleOCR。[DeepSeek Vision 指南](https://api-docs.deepseek.com/guides/vision/)
 
 流程图以 `memo_documents` 为权威来源，查询时读当前未删除的流程及步骤；不复制一份可过期的流程索引。独立资料通过 `content_assets` 保留原件，以独立知识来源记录提取文本、解析告警和可定位分块。迁移前仍走现有 WAL 一致性快照。
 
