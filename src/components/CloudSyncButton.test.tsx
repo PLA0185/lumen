@@ -58,3 +58,11 @@ it('云同步设置保存默认内容和方向，不重连也不需要重新填�
   expect(connect).not.toHaveBeenCalled()
   expect(document.body.textContent).toContain('默认同步类型已保存')
 })
+it('云同步设置把自动同步开关和上传队列状态分开说明', async () => {
+  vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: { ...connected.config, enabled: true } })
+  vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<CloudSettings />))
+  expect(document.body.textContent).toContain('自动同步开关：已开启')
+  expect(document.body.textContent).toContain('待上传云端：2 项变更（尚未上传）')
+})
