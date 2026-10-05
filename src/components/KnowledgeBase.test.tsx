@@ -42,11 +42,11 @@ const documentCitation: api.KnowledgeCitation = {
 let root: Root | undefined
 let host: HTMLDivElement | undefined
 
-async function mount(onOpenFlow = vi.fn()) {
+async function mount(onOpenFlow = vi.fn(), initialSources: api.KnowledgeSourceSummary[] = []) {
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
-  vi.mocked(api.knowledgeList).mockResolvedValue([])
+  vi.mocked(api.knowledgeList).mockResolvedValue(initialSources)
   await act(async () => root!.render(<KnowledgeBase onOpenFlow={onOpenFlow} />))
   return onOpenFlow
 }
@@ -91,6 +91,9 @@ it('回答展示真实引用，并能从流程引用跳转到具体节点', asyn
 
   expect(document.body.textContent).toContain('先核对抬头，再提交。')
   expect(document.body.textContent).toContain('核对抬头后提交税务系统。')
+  expect(document.querySelector<HTMLDetailsElement>('.knowledge-answer__notice')?.open).toBe(false)
+  expect(document.querySelector<HTMLDetailsElement>('.knowledge-answer__evidence')?.open).toBe(false)
+  expect(document.querySelector<HTMLDetailsElement>('.knowledge-evidence__excerpt')?.open).toBe(false)
   await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '打开并定位到流程节点')!.click())
   expect(openFlow).toHaveBeenCalledWith('flow-1', 'step-3')
 })
@@ -112,9 +115,54 @@ it('命中多个流程时要求选择，选择后把明确的流程编号交给�
   expect(document.body.textContent).toContain('请选择要查询的流程')
   await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent?.includes('发票流程'))!.click())
   expect(api.knowledgeAsk).toHaveBeenNthCalledWith(2, {
-    question: '發票怎么做', history: [], selectedFlowId: 'flow-1',
+    question: '發票怎么做', history: [], selectedFlowId: 'flow-1', selectedSourceIds: [],
   })
   expect(document.body.textContent).toContain('按发票流程第 3 步核对抬头。')
+})
+
+it('默认检索全部来源，也支持限定一个或多个上传文件', async () => {
+  const sourceA: api.KnowledgeSourceSummary = {
+    id: 'source-a', assetId: 'asset-a', title: '美国发票.pdf', mime: 'application/pdf', byteSize: 100,
+    sha256: 'hash-a', status: 'ready', warnings: [], error: null, createdAt: '', updatedAt: '',
+  }
+  const sourceB: api.KnowledgeSourceSummary = {
+    ...sourceA, id: 'source-b', assetId: 'asset-b', title: '英国发票.pdf', sha256: 'hash-b',
+  }
+  await mount(vi.fn(), [sourceA, sourceB])
+  vi.mocked(api.knowledgeAsk).mockResolvedValue({
+    status: 'answered', answer: '先核对发票信息。', searchTerms: ['发票'],
+    citations: [documentCitation], flowCandidates: [], message: null, providerNotice: '',
+  })
+  vi.mocked(api.knowledgeSearch).mockResolvedValue({ citations: [] })
+
+  const scope = document.querySelector<HTMLSelectElement>('#knowledge-scope')!
+  expect(scope.value).toBe('all')
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(scope, 'selected')
+    scope.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const checkSource = async (id: string) => {
+    const checkbox = document.querySelector<HTMLInputElement>(`input[name="knowledge-source"][value="${id}"]`)!
+    await act(async () => checkbox.click())
+  }
+  await checkSource('source-a')
+  await checkSource('source-b')
+  expect([...document.querySelectorAll<HTMLInputElement>('input[name="knowledge-source"]')].map(input => input.checked))
+    .toEqual([true, true])
+  await enterQuestion('发票下一步怎么做？')
+  await act(async () => document.querySelector<HTMLButtonElement>('form button[type="submit"]')!.click())
+
+  expect(api.knowledgeAsk).toHaveBeenCalledWith({
+    question: '发票下一步怎么做？', history: [], selectedFlowId: null,
+    selectedSourceIds: ['source-a', 'source-b'],
+  })
+
+  const directSearch = document.querySelector<HTMLInputElement>('#knowledge-search')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(directSearch, '税号')
+    directSearch.dispatchEvent(new Event('input', { bubbles: true }))
+    await vi.waitFor(() => expect(api.knowledgeSearch).toHaveBeenCalledWith('税号', ['source-a', 'source-b']))
+  })
 })
 
 it('资料引用显示解析位置并允许导出原件核对', async () => {

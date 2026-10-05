@@ -61,12 +61,14 @@ interface KnowledgeImportProgressEvent extends KnowledgeImportProgress {
 }
 
 export const knowledgeList = () => invokeData<KnowledgeSourceSummary[]>('knowledge_list')
-export const knowledgeSearch = (query: string) => invokeData<KnowledgeSearchResult>('knowledge_search', { query })
+export const knowledgeSearch = (query: string, selectedSourceIds: string[] = []) =>
+  invokeData<KnowledgeSearchResult>('knowledge_search', { query, selectedSourceIds })
 export const knowledgeDelete = (id: string) => invokeData<boolean>('knowledge_delete', { id })
 export const knowledgeAsk = (input: {
   question: string
   history: KnowledgeHistoryEntry[]
   selectedFlowId: string | null
+  selectedSourceIds: string[]
 }) => invokeData<KnowledgeAskResult>('knowledge_ask', { input })
 
 export async function knowledgeImportFile(file: File, onProgress?: (progress: KnowledgeImportProgress) => void) {

@@ -73,7 +73,10 @@ function Evidence({ citation, onOpenFlow }: {
       {citation.category && <span>{citation.category}</span>}
       <span>{citation.locator}</span>
     </div>
-    <p>{citation.excerpt}</p>
+    <details className="knowledge-evidence__excerpt">
+      <summary>查看引用摘录</summary>
+      <p>{citation.excerpt}</p>
+    </details>
     {citation.sourceKind === 'document' && citation.assetId && <button type="button" className="btn btn--ghost btn--sm" disabled={exporting} onClick={() => void exportOriginal()}>{exporting ? '导出中…' : '导出引用原件'}</button>}
     {exportError && <p className="knowledge-sources__warning" role="alert">原件导出失败：{exportError}</p>}
     {citation.sourceKind === 'flow' && citation.flowId && citation.stepId &&
@@ -98,6 +101,9 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   const [searchError, setSearchError] = useState('')
   const [searchRevision, setSearchRevision] = useState(0)
   const [question, setQuestion] = useState('')
+  const [sourceScope, setSourceScope] = useState<'all' | 'selected'>('all')
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
+  const [answerSourceLabel, setAnswerSourceLabel] = useState('')
   const [answer, setAnswer] = useState<KnowledgeAskResult | null>(null)
   const [history, setHistory] = useState<KnowledgeHistoryEntry[]>([])
   const [asking, setAsking] = useState(false)
@@ -107,13 +113,20 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   const askRequest = useRef(0)
   const listRequest = useRef(0)
   const hasLoadedList = useRef(false)
+  const searchableSources = sources.filter(source => source.status === 'ready')
 
   const reload = useCallback(async () => {
     const request = ++listRequest.current
     if (!hasLoadedList.current) setLoading(true)
     try {
       const rows = await knowledgeList()
-      if (request === listRequest.current) { setSources(rows); setListError(''); hasLoadedList.current = true }
+      if (request === listRequest.current) {
+        setSources(rows)
+        const availableIds = new Set(rows.filter(row => row.status === 'ready').map(row => row.id))
+        setSelectedSourceIds(current => current.filter(id => availableIds.has(id)))
+        setListError('')
+        hasLoadedList.current = true
+      }
     } catch (error) {
       if (request === listRequest.current) setListError(contentError(error))
     } finally { if (request === listRequest.current) setLoading(false) }
@@ -134,21 +147,24 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   useEffect(() => {
     const q = searchText.trim()
     const request = ++searchRequest.current
-    if (!q) { setSearchResults([]); setSearchError(''); setSearching(false); return }
+    const scopedSourceIds = sourceScope === 'selected' ? selectedSourceIds : []
+    if (!q || (sourceScope === 'selected' && scopedSourceIds.length === 0)) {
+      setSearchResults([]); setSearchError(''); setSearching(false); return
+    }
     setSearchResults([])
     setSearchError('')
     setSearching(true)
     const timer = window.setTimeout(async () => {
       setSearching(true); setSearchError('')
       try {
-        const result = await knowledgeSearch(q)
+        const result = await knowledgeSearch(q, scopedSourceIds)
         if (request === searchRequest.current) setSearchResults(result.citations)
       } catch (error) {
         if (request === searchRequest.current) setSearchError(contentError(error))
       } finally { if (request === searchRequest.current) setSearching(false) }
     }, 250)
     return () => window.clearTimeout(timer)
-  }, [searchText, searchRevision])
+  }, [searchText, searchRevision, sourceScope, selectedSourceIds])
 
   const importSelected = async (files: FileList | null) => {
     if (!files?.length) return
@@ -212,14 +228,21 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
     if (!q || asking) return
     const request = ++askRequest.current
     setAsking(true); setAskError(''); setAnswer(null)
+    const requestedSourceIds = sourceScope === 'selected' ? selectedSourceIds : []
     try {
       const recentHistory = history.slice(-6)
       const contextHistory = flowId && recentHistory.at(-1)?.role === 'user' && recentHistory.at(-1)?.text === q
         ? recentHistory.slice(0, -1)
         : recentHistory
-      const result = await knowledgeAsk({ question: q, history: contextHistory, selectedFlowId: flowId })
+      const result = await knowledgeAsk({
+        question: q,
+        history: contextHistory,
+        selectedFlowId: flowId,
+        selectedSourceIds: requestedSourceIds,
+      })
       if (request !== askRequest.current) return
       setAnswer(result)
+      setAnswerSourceLabel(requestedSourceIds.length ? `${requestedSourceIds.length} 个指定文件` : '全部资料和流程')
       setHistory(current => {
         const turns = current.at(-1)?.role === 'user' && current.at(-1)?.text === q
           ? current
@@ -271,23 +294,64 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
         <header><h3>问下一步怎么做</h3><span>依据来源回答</span></header>
         <form onSubmit={event => { event.preventDefault(); void ask() }}>
           <textarea value={question} maxLength={2000} onChange={event => setQuestion(event.target.value)} placeholder="例如：领导让我安排美国发票，接下来按哪个流程、做哪一步？" aria-label="提问" />
-          <button className="btn btn--primary" type="submit" disabled={asking || !question.trim()}>{asking ? '正在检索并核对…' : '检索并回答'}</button>
+          <button className="btn btn--primary" type="submit" disabled={asking || !question.trim() || (sourceScope === 'selected' && selectedSourceIds.length === 0)}>{asking ? '正在检索并核对…' : '检索并回答'}</button>
         </form>
+        <div className="knowledge-scope-picker">
+          <label htmlFor="knowledge-scope">检索范围</label>
+          <select id="knowledge-scope" value={sourceScope} onChange={event => {
+            setHistory([])
+            if (answer?.status === 'clarify') setAnswer(null)
+            setSourceScope(event.target.value as 'all' | 'selected')
+          }}>
+            <option value="all">全部来源（资料 + 流程）</option>
+            <option value="selected">指定文件（仅检索所选文件）</option>
+          </select>
+          {sourceScope === 'selected' && <fieldset className="knowledge-scope-picker__files">
+            <legend>选择文件（可多选）</legend>
+            {searchableSources.length === 0
+              ? <p className="knowledge-empty">暂无可检索文件。可切换回“全部来源”检索已保存流程。</p>
+              : searchableSources.map(source => <label className="knowledge-scope-picker__file" key={source.id} title={source.title}>
+                <input
+                  type="checkbox"
+                  name="knowledge-source"
+                  value={source.id}
+                  checked={selectedSourceIds.includes(source.id)}
+                  disabled={selectedSourceIds.length >= 100 && !selectedSourceIds.includes(source.id)}
+                  onChange={event => {
+                    const checked = event.currentTarget.checked
+                    setHistory([])
+                    if (answer?.status === 'clarify') setAnswer(null)
+                    setSelectedSourceIds(current => checked
+                      ? [...current, source.id]
+                      : current.filter(id => id !== source.id))
+                  }}
+                />
+                <span>{source.title}</span>
+              </label>)}
+            {searchableSources.length > 0 && <small>已选 {selectedSourceIds.length} 个文件（最多 100 个）</small>}
+          </fieldset>}
+          {sourceScope === 'selected' && selectedSourceIds.length === 0 && <small className="knowledge-scope-picker__hint">至少选择一个文件后才能检索。</small>}
+        </div>
         <div className="knowledge-direct-search">
           <label htmlFor="knowledge-search">只检索来源</label>
           <input id="knowledge-search" type="search" value={searchText} onChange={event => setSearchText(event.target.value)} placeholder="关键词、单据名或流程步骤" />
           {searching && <span role="status">检索中…</span>}
           {searchError && <p className="alert alert--error" role="alert">{searchError}</p>}
-          {searchText.trim() && !searching && !searchError && searchResults.length === 0 && <p className="knowledge-empty">没有找到匹配的来源。</p>}
+          {searchText.trim() && sourceScope === 'selected' && selectedSourceIds.length === 0 && <p className="knowledge-empty">先选择要检索的文件。</p>}
+          {searchText.trim() && !searching && !searchError && !(sourceScope === 'selected' && selectedSourceIds.length === 0) && searchResults.length === 0 && <p className="knowledge-empty">没有找到匹配的来源。</p>}
           {searchResults.map(citation => <Evidence key={citation.id} citation={citation} onOpenFlow={onOpenFlow} />)}
         </div>
         {askError && <p className="alert alert--error" role="alert">{askError}</p>}
         {answer && <div className="knowledge-answer" aria-live="polite">
-          <p className="knowledge-answer__notice">{answer.providerNotice}</p>
+          {answerSourceLabel && <p className="knowledge-answer__scope">本次检索范围：{answerSourceLabel}</p>}
+          {answer.providerNotice && <details className="knowledge-answer__notice"><summary>AI 服务与隐私说明</summary><p>{answer.providerNotice}</p></details>}
           {answer.message && <p role="status">{answer.message}</p>}
           {answer.status === 'clarify' && <div className="knowledge-candidates"><strong>请选择要查询的流程</strong>{answer.flowCandidates.map(candidate => <button type="button" className="knowledge-candidate" key={candidate.flowId} disabled={asking} onClick={() => void ask(candidate.flowId)}><strong>{candidate.title}</strong><span>{candidate.category} · {candidate.evidence}</span></button>)}</div>}
           {answer.answer && <div className="knowledge-answer__text">{answer.answer}</div>}
-          {answer.citations.length > 0 && <div className="knowledge-answer__evidence"><h4>回答依据</h4>{answer.citations.map(citation => <Evidence key={citation.id} citation={citation} onOpenFlow={onOpenFlow} />)}</div>}
+          {answer.citations.length > 0 && <details className="knowledge-answer__evidence">
+            <summary>回答依据 · {answer.citations.length} 条，{new Set(answer.citations.map(citation => citation.title)).size} 个来源</summary>
+            <div className="knowledge-answer__evidence-list">{answer.citations.map(citation => <Evidence key={citation.id} citation={citation} onOpenFlow={onOpenFlow} />)}</div>
+          </details>}
           {answer.searchTerms.length > 0 && <details><summary>本次检索词</summary><p>{answer.searchTerms.join('、')}</p></details>}
         </div>}
       </section>
