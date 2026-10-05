@@ -3462,3 +3462,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.26 发布说明](../RELEASE_NOTES.md)、[第 66 轮记录](work-log.md#第-66-轮--2026-10-05--分类候选项目页对齐与-0426)。
+
+
+## 第 68 轮 · 2026-10-05 · 精简知识库回答、指定检索来源并澄清云同步状态
+
+### 做了
+
+- 知识库问答要求先给简短结论，需要操作时按行列步骤（通常不超过 4 步）；AI 服务/隐私说明、回答依据和每条长摘录默认收起，仍可展开核对来源。
+- 增加检索范围选择：默认检索全部资料和已保存流程；也可选一个或多个可检索文件。问答和“只检索来源”都在后端查询层限定所选文件，最多 100 个；切换范围或文件选择会清除旧对话上下文，避免其他范围里的事实串入新回答。
+- 云同步设置拆开显示“自动同步开关”和“待上传云端”队列，并明确标注待上传变更尚未上传；“开关已开启”只表示允许后台同步，不再让它看起来像云端已收到数据。
+- 版本升至 0.4.27。生成签名 NSIS 包并覆盖原安装路径 `C:/Users/linxi/AppData/Local/Temp/Lumen-OCR-PackageVerify-Final-2ac92178b68d4e4a933d93bcc0e85d41`；注册项和程序文件版本均为 0.4.27，应用启动后窗口响应正常。三份已安装 PaddleOCR 模型的 SHA-256 均与仓库资源一致。
+- 将安装包和签名保存在仓库外的 `D:/Codex/Lumen_0.4.27_x64-setup.exe` 及对应 `.sig`。清理本轮 Rust 构建目录，释放 16.6 GiB。
+
+### 没做到
+
+- 未使用真实 AI 服务商对本机资料进行在线问答；已验证检索过滤、问答提示和界面组件行为，但真实模型在用户资料上的回答质量仍未实测。
+- WebView2 的 CDP 调试端口未开启，因此没有在已安装窗口里用真实鼠标操作逐项验收检索范围控件和同步状态文案；已验证安装版启动，并由前端回归测试覆盖文案与控件渲染。
+- 本轮没有人工触发网盘上传或核对远端回执，不能据此断言云端此刻收到多少数据；设置页显示的队列仍应以“待上传”状态为准。没有运行真实 WebDAV 同步验收，以免把本机业务数据作为测试流量上传。
+
+### 怎么验证的
+
+- 实际执行 `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（47 个测试文件、363 项通过）、`pnpm build`、`pnpm lint`，均退出 0。Vite 仍提示已有的 `INEFFECTIVE_DYNAMIC_IMPORT` 分块警告。
+- 实际执行 `cargo fmt --all -- --check`、`cargo test --lib`（550 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings`，均退出 0；本轮新增的指定来源过滤和短回答规则用例包含在 Rust 测试中。
+- `pnpm check:version` 确认三个版本文件一致为 0.4.27；`git diff --check` 通过。签名脚本状态检查确认本机密钥可用，安装包与 436 字节更新签名均已生成。
+- 静默覆盖安装退出码为 0；安装注册项和 `lumen.exe` 的文件/产品版本均核为 0.4.27。程序从原目录启动，主窗口标题为 Lumen 且 `Responding=True`。三个 PaddleOCR 模型均逐一做 SHA-256 比对并匹配。
+- GitHub Actions 对本轮提交的结果**尚未验证**，需推送后等待 CI；本机通过不能替代 CI 结果。
+
+### 相关文档
+
+- [0.4.27 发布说明](../RELEASE_NOTES.md)、[知识库问答组件](../src/components/KnowledgeBase.tsx)、[知识库检索后端](../src-tauri/src/knowledge_base.rs)、[知识库问答回归测试](../src/components/KnowledgeBase.test.tsx)、[云同步设置](../src/components/CloudSettings.tsx)、[云同步状态回归测试](../src/components/CloudSyncButton.test.tsx)。
