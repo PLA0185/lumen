@@ -3491,3 +3491,30 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.27 发布说明](../RELEASE_NOTES.md)、[知识库问答组件](../src/components/KnowledgeBase.tsx)、[知识库检索后端](../src-tauri/src/knowledge_base.rs)、[知识库问答回归测试](../src/components/KnowledgeBase.test.tsx)、[云同步设置](../src/components/CloudSettings.tsx)、[云同步状态回归测试](../src/components/CloudSyncButton.test.tsx)。
+
+## 第 69 轮 · 2026-10-05 · 知识库资料加入云同步
+
+### 做了
+
+- 版本升至 0.4.28。WebDAV 同步选择“全部业务数据”时，知识库资料原件与解析正文会纳入现有加密同步；任务范围和备忘/流程范围不上传、不下载知识库资料。已保存流程仍按原“备忘与流程”范围同步并参与检索。
+- 知识库使用单独的加密设备 head 和分离的事件包链，没有改旧 `head.json` 格式。按 SHA-256 稳定映射同一资料及原件；接收端校验原件哈希和长度，在本机事务里重建分块及 FTS5 索引，不重跑 AI/OCR。
+- 资料删除沿用同步墓碑。仍被流程引用的原件继续保留；未上传的来源/删除版本所需原件会等墓碑上传后再清理，避免同步永久失败。
+- 更新知识库与同步设置说明，加入兼容性、加密及同步范围说明；新增同步设计和分步实施文档，更新 README 文档索引与 0.4.28 发布说明。
+- 生成 0.4.28 x64 签名 NSIS 安装包及 updater 签名，保存在仓库外的 `D:/Codex/Lumen_0.4.28_x64-setup.exe` 和 `.sig`。构建后清理 Cargo 产物，释放 14.3 GiB。
+
+### 没做到
+
+- 未用真实坚果云/WebDAV 账号做双电脑在线同步；本轮同步、加密和故障测试全部使用本地 WebDAV 测试服务，不会把用户资料上传到真实云端。因此真实账号权限、网盘限额和两台实机的连接状态未验证。
+- 当前仍有 0.4.27 的 Lumen 窗口运行。为避免打断或覆盖它，本轮没有安装 0.4.28；安装包已生成，需关闭当前应用后再安装。
+- 本轮提交推送后的 GitHub Actions 尚未验证；本地门禁结果不代替 CI。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.28）、`pnpm typecheck`、`pnpm test`（47 个文件、363 项）、`pnpm build`、`pnpm lint` 均实际执行并退出 0。构建保留既有 Vite `INEFFECTIVE_DYNAMIC_IMPORT` 告警。
+- `cargo fmt --all -- --check`、`cargo test --lib`（556 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并退出 0。知识库云同步模块单独回归 28 项通过；覆盖双库同步、原件/正文/FTS 接收、同 SHA 重复导入、九种范围/方向组合、删除墓碑与流程引用、缺失原件拒绝应用以及恢复范围边界。
+- `git diff --check` 通过；AGENTS.md 指定的跟踪产物检查没有命中。私钥说明关键字只命中 `AGENTS.md`、整改报告和工作记录；检查未发现私钥块。
+- 签名脚本构建退出 0；安装包版本元数据是 0.4.28，安装包为 24,604,099 字节，updater `.sig` 为 436 字节。未运行安装器。
+
+### 相关文档
+
+- [知识库云同步设计](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)、[知识库云同步实施计划](superpowers/plans/2026-10-05-knowledge-base-cloud-sync.md)、[知识库设计](design-knowledge-base-2026-10-04.md)、[发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
