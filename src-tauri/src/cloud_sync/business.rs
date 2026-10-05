@@ -3,7 +3,7 @@
 use super::*;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-pub const TABLES: [&str; 18] = [
+pub const TABLES: [&str; 19] = [
     "projects",
     "categories",
     "tags",
@@ -22,7 +22,19 @@ pub const TABLES: [&str; 18] = [
     "focus_sessions",
     "goals",
     "settings",
+    "knowledge_sources",
 ];
+const KNOWLEDGE_TABLE: &str = "knowledge_sources";
+const ALIAS_TABLES: [&str; 7] = [
+    "projects",
+    "categories",
+    "tags",
+    "tasks",
+    "subtasks",
+    "knowledge_sources",
+    "content_assets",
+];
+const NORMALIZED_SYNC_TIMESTAMP: &str = "2000-01-01T00:00:00Z";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -170,7 +182,50 @@ async fn validate_event(conn: &mut SqliteConnection, event: &Event) -> AppResult
                 return Err(AppError::validation("云端附件路径无效"));
             }
         }
+        if event.table == KNOWLEDGE_TABLE {
+            validate_knowledge_source(row)?;
+        }
     }
+    Ok(())
+}
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+fn validate_knowledge_source(row: &Value) -> AppResult<()> {
+    let title = row
+        .get("title")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::validation("知识库来源标题无效"))?;
+    let asset_id = row
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::validation("知识库原件编号缺失"))?;
+    let sha256 = row
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::validation("知识库原件摘要缺失"))?;
+    let extracted = row
+        .get("extracted_text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::validation("知识库解析正文无效"))?;
+    let warnings = row
+        .get("warnings_json")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::validation("知识库解析告警无效"))?;
+    if title.trim().is_empty()
+        || title.chars().count() > 255
+        || extracted.chars().count() > 100_000
+        || warnings.len() > 1024 * 1024
+        || serde_json::from_str::<Vec<String>>(warnings).is_err()
+        || !valid_sha256(sha256)
+        || !matches!(
+            row.get("status").and_then(Value::as_str),
+            Some("ready" | "unreadable")
+        )
+    {
+        return Err(AppError::validation("知识库同步记录超出支持范围或格式无效"));
+    }
+    id_ok(asset_id)?;
     Ok(())
 }
 async fn insert_validated(
@@ -227,9 +282,9 @@ async fn insert_validated(
     dirty_head(conn).await?;
     Ok(())
 }
-pub async fn capture(db: &Db) -> AppResult<()> {
+pub async fn capture_scope(db: &Db, include_knowledge: bool) -> AppResult<()> {
     let mut tx = db.pool().begin().await?;
-    capture_from(&mut tx, db.data_dir()).await?;
+    capture_from(&mut tx, db.data_dir(), include_knowledge).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -242,7 +297,14 @@ fn stable_id(value: &str) -> String {
 type Aliases = std::collections::HashMap<(String, String), String>;
 async fn aliases(conn: &mut SqliteConnection) -> AppResult<Aliases> {
     let mut out = Aliases::new();
-    for table in ["projects", "categories", "tags", "tasks", "subtasks"] {
+    for table in [
+        "projects",
+        "categories",
+        "tags",
+        "tasks",
+        "subtasks",
+        KNOWLEDGE_TABLE,
+    ] {
         let rows = crate::backup::dump_table_from(conn, table).await?;
         for row in rows {
             let id = row
@@ -265,7 +327,13 @@ async fn aliases(conn: &mut SqliteConnection) -> AppResult<Aliases> {
                         .bind(record)
                         .fetch_one(&mut *conn)
                         .await?;
-                let candidate = if from_cloud {
+                let candidate = if table == KNOWLEDGE_TABLE {
+                    let hash = row
+                        .get("sha256")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| AppError::validation("知识库资料缺少内容摘要"))?;
+                    stable_id(&format!("lumen-knowledge-source:{hash}"))
+                } else if from_cloud {
                     id.to_owned()
                 } else if matches!(table, "projects" | "categories" | "tags")
                     && row.get("deleted_at").is_some_and(Value::is_null)
@@ -318,6 +386,35 @@ async fn aliases(conn: &mut SqliteConnection) -> AppResult<Aliases> {
             out.insert((table.into(), id.into()), canonical);
         }
     }
+    let sources = crate::backup::dump_table_from(conn, KNOWLEDGE_TABLE).await?;
+    for row in sources {
+        let local_id = row
+            .get("asset_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::validation("知识库原件编号缺失"))?;
+        let hash = row
+            .get("sha256")
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::validation("知识库资料缺少内容摘要"))?;
+        let canonical = stable_id(&format!("lumen-knowledge-asset:{hash}"));
+        let saved: Option<String> = sqlx::query_scalar(
+            "SELECT canonical_id FROM cloud_aliases WHERE table_name='content_assets' AND local_id=?",
+        )
+        .bind(local_id)
+        .fetch_optional(&mut *conn)
+        .await?;
+        if saved.as_ref().is_some_and(|value| value != &canonical) {
+            return Err(AppError::conflict("知识库原件的云端编号与内容摘要不一致"));
+        }
+        if saved.is_none() {
+            sqlx::query("INSERT INTO cloud_aliases(table_name,local_id,canonical_id) VALUES('content_assets',?,?)")
+                .bind(local_id)
+                .bind(&canonical)
+                .execute(&mut *conn)
+                .await?;
+        }
+        out.insert(("content_assets".into(), local_id.into()), canonical);
+    }
     Ok(out)
 }
 fn normalize(table: &str, row: &mut Value, aliases: &Aliases) {
@@ -331,16 +428,30 @@ fn normalize(table: &str, row: &mut Value, aliases: &Aliases) {
         ("project_id", "projects"),
         ("category_id", "categories"),
         ("tag_id", "tags"),
+        ("asset_id", "content_assets"),
     ] {
+        if column == "asset_id" && table != KNOWLEDGE_TABLE {
+            continue;
+        }
         if let Some(id) = obj.get(column).and_then(Value::as_str) {
             if let Some(canonical) = aliases.get(&(target.into(), id.into())) {
                 obj.insert(column.into(), Value::String(canonical.clone()));
             }
         }
     }
+    if table == KNOWLEDGE_TABLE {
+        obj.insert(
+            "created_at".into(),
+            Value::String(NORMALIZED_SYNC_TIMESTAMP.into()),
+        );
+        obj.insert(
+            "updated_at".into(),
+            Value::String(NORMALIZED_SYNC_TIMESTAMP.into()),
+        );
+    }
 }
 async fn local_id(conn: &mut SqliteConnection, table: &str, canonical: &str) -> AppResult<String> {
-    if !TABLES.contains(&table) {
+    if !TABLES.contains(&table) && !ALIAS_TABLES.contains(&table) {
         return Err(AppError::validation("云端包含不支持的业务类型"));
     }
     // Rebuilding a generated occurrence leaves its old alias in durable history.
@@ -365,7 +476,11 @@ async fn localize(conn: &mut SqliteConnection, table: &str, row: &Value) -> AppR
         ("project_id", "projects"),
         ("category_id", "categories"),
         ("tag_id", "tags"),
+        ("asset_id", "content_assets"),
     ] {
+        if column == "asset_id" && table != KNOWLEDGE_TABLE {
+            continue;
+        }
         if let Some(id) = obj.get(column).and_then(Value::as_str).map(str::to_owned) {
             obj.insert(
                 column.into(),
@@ -376,13 +491,20 @@ async fn localize(conn: &mut SqliteConnection, table: &str, row: &Value) -> AppR
     Ok(value)
 }
 
-async fn capture_from(tx: &mut SqliteConnection, dir: &std::path::Path) -> AppResult<()> {
+async fn capture_from(
+    tx: &mut SqliteConnection,
+    dir: &std::path::Path,
+    include_knowledge: bool,
+) -> AppResult<()> {
     // Acquire a write reservation before reading; otherwise another writer can invalidate the snapshot.
     sqlx::query("UPDATE memo_sync_runtime SET request_count=request_count WHERE singleton=1")
         .execute(&mut *tx)
         .await?;
     let mapping = aliases(tx).await?;
     for table in TABLES {
+        if table == KNOWLEDGE_TABLE && !include_knowledge {
+            continue;
+        }
         let pk = primary(tx, table).await?;
         let rows = crate::backup::dump_table_from(tx, table).await?;
         let mut present = HashSet::new();
@@ -469,8 +591,13 @@ async fn capture_from(tx: &mut SqliteConnection, dir: &std::path::Path) -> AppRe
 pub(super) async fn rebase_restore(
     conn: &mut SqliteConnection,
     dir: &std::path::Path,
+    include_knowledge: bool,
 ) -> AppResult<()> {
-    let tombstones=sqlx::query("SELECT id,table_name,key_json,selected_event FROM cloud_records WHERE base_json IS NULL AND selected_event IS NOT NULL").fetch_all(&mut *conn).await?;
+    let tombstones=sqlx::query("SELECT id,table_name,key_json,selected_event FROM cloud_records WHERE base_json IS NULL AND selected_event IS NOT NULL AND (? OR table_name<>?)")
+        .bind(include_knowledge)
+        .bind(KNOWLEDGE_TABLE)
+        .fetch_all(&mut *conn)
+        .await?;
     for row in tombstones {
         let event = Event {
             version: 1,
@@ -492,10 +619,12 @@ pub(super) async fn rebase_restore(
             .execute(&mut *conn)
             .await?;
     }
-    sqlx::query("UPDATE cloud_records SET base_json=NULL")
+    sqlx::query("UPDATE cloud_records SET base_json=NULL WHERE (? OR table_name<>?)")
+        .bind(include_knowledge)
+        .bind(KNOWLEDGE_TABLE)
         .execute(&mut *conn)
         .await?;
-    capture_from(conn, dir).await
+    capture_from(conn, dir, include_knowledge).await
 }
 
 fn media_ids(row: &Value) -> Vec<String> {
@@ -511,6 +640,152 @@ fn media_ids(row: &Value) -> Vec<String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KnowledgeAsset {
+    sha256: String,
+    byte_size: i64,
+    data_base64: String,
+}
+fn knowledge_asset_id(hash: &str) -> String {
+    stable_id(&format!("lumen-knowledge-asset:{hash}"))
+}
+async fn upload_knowledge_asset(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    row: &Value,
+) -> AppResult<()> {
+    validate_knowledge_source(row)?;
+    let canonical = row["asset_id"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库原件编号缺失"))?;
+    let hash = row["sha256"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库原件摘要缺失"))?;
+    if canonical != knowledge_asset_id(hash) {
+        return Err(AppError::validation("知识库原件云端编号与摘要不匹配"));
+    }
+    let mut conn = db.pool().acquire().await?;
+    let local = local_id(&mut conn, "content_assets", canonical).await?;
+    let asset = content_assets::get_asset(db, &local).await?;
+    if asset.sha256 != hash {
+        return Err(AppError::conflict("本机知识库原件与同步摘要不一致"));
+    }
+    let portable = KnowledgeAsset {
+        sha256: asset.sha256,
+        byte_size: asset.byte_size,
+        data_base64: asset.data_base64,
+    };
+    upload_immutable(
+        dav,
+        db,
+        c,
+        key,
+        &bucket("assets", canonical)?,
+        &portable,
+        40 * 1024 * 1024,
+    )
+    .await
+}
+async fn ensure_asset_alias(
+    conn: &mut SqliteConnection,
+    local: &str,
+    canonical: &str,
+) -> AppResult<()> {
+    let saved: Option<String> = sqlx::query_scalar(
+        "SELECT canonical_id FROM cloud_aliases WHERE table_name='content_assets' AND local_id=?",
+    )
+    .bind(local)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if saved.as_deref().is_some_and(|value| value != canonical) {
+        return Err(AppError::conflict("知识库原件已关联到另一份云端资料"));
+    }
+    if saved.is_none() {
+        sqlx::query("INSERT INTO cloud_aliases(table_name,local_id,canonical_id) VALUES('content_assets',?,?)")
+            .bind(local)
+            .bind(canonical)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
+}
+async fn import_knowledge_asset(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    row: &Value,
+) -> AppResult<()> {
+    validate_knowledge_source(row)?;
+    let hash = row["sha256"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库原件摘要缺失"))?;
+    let canonical = row["asset_id"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库原件编号缺失"))?;
+    if canonical != knowledge_asset_id(hash) {
+        return Err(AppError::validation("知识库原件云端编号与摘要不匹配"));
+    }
+    let local: Option<String> =
+        sqlx::query_scalar("SELECT id FROM content_assets WHERE sha256=? ORDER BY id LIMIT 1")
+            .bind(hash)
+            .fetch_optional(db.pool())
+            .await?;
+    if let Some(local) = local {
+        content_assets::get_asset(db, &local).await?;
+        let mut tx = db.pool().begin().await?;
+        ensure_asset_alias(&mut tx, &local, canonical).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+    let path = bucket("assets", canonical)?;
+    let bytes = dav
+        .read(db, &path, 40 * 1024 * 1024)
+        .await?
+        .ok_or_else(|| AppError::validation("云端知识库原件缺失，没有应用该版本"))?;
+    let portable: KnowledgeAsset = decrypt(key, &aad(c, &path), &bytes)?;
+    if portable.sha256 != hash
+        || portable.data_base64.len() > content_assets::MAX_ASSET_BYTES.div_ceil(3) * 4
+    {
+        return Err(AppError::validation("云端知识库原件摘要或长度无效"));
+    }
+    let decoded = STANDARD
+        .decode(&portable.data_base64)
+        .map_err(|_| AppError::validation("云端知识库原件编码损坏"))?;
+    if decoded.len() > content_assets::MAX_ASSET_BYTES
+        || decoded.len() as i64 != portable.byte_size
+        || hex::encode(Sha256::digest(&decoded)) != hash
+    {
+        return Err(AppError::validation("云端知识库原件校验失败"));
+    }
+    let title = row["title"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库来源标题无效"))?;
+    let mime = row["mime"]
+        .as_str()
+        .ok_or_else(|| AppError::validation("知识库来源类型无效"))?;
+    let asset = ContentAsset {
+        id: canonical.into(),
+        name: title.into(),
+        mime: mime.into(),
+        data_base64: portable.data_base64,
+        byte_size: portable.byte_size,
+        sha256: hash.into(),
+        created_at: stamp(),
+    };
+    content_assets::decode_asset(&asset)?;
+    let mut tx = db.pool().begin().await?;
+    sqlx::query("INSERT INTO content_assets (id,name,mime,data_base64,byte_size,sha256,created_at) VALUES (?,?,?,?,?,?,?)")
+        .bind(&asset.id).bind(&asset.name).bind(&asset.mime).bind(&asset.data_base64)
+        .bind(asset.byte_size).bind(&asset.sha256).bind(&asset.created_at)
+        .execute(&mut *tx).await?;
+    ensure_asset_alias(&mut tx, canonical, canonical).await?;
+    tx.commit().await?;
+    Ok(())
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -720,9 +995,35 @@ struct Packet {
     parents: Vec<String>,
     events: Vec<Event>,
 }
-async fn packet_heads(conn: &mut SqliteConnection, published: bool) -> AppResult<Vec<String>> {
-    Ok(sqlx::query_scalar("SELECT p.id FROM cloud_packets p WHERE (?=0 OR uploaded=1) AND NOT EXISTS(SELECT 1 FROM cloud_packet_parents link JOIN cloud_packets child ON child.id=link.packet_id WHERE link.parent_id=p.id AND (?=0 OR child.uploaded=1)) ORDER BY p.id")
-        .bind(published).bind(published).fetch_all(conn).await?)
+fn packet_is_knowledge(packet: &Packet) -> AppResult<bool> {
+    let first = packet
+        .events
+        .first()
+        .ok_or_else(|| AppError::validation("业务批次没有事件"))?;
+    let knowledge = first.table == KNOWLEDGE_TABLE;
+    if packet
+        .events
+        .iter()
+        .any(|event| (event.table == KNOWLEDGE_TABLE) != knowledge)
+    {
+        return Err(AppError::validation("任务与知识库不能放在同一同步批次"));
+    }
+    Ok(knowledge)
+}
+async fn packet_heads(
+    conn: &mut SqliteConnection,
+    published: bool,
+    knowledge: bool,
+) -> AppResult<Vec<String>> {
+    let operator = if knowledge { "=" } else { "<>" };
+    let query = format!("SELECT p.id FROM cloud_packets p WHERE (?=0 OR p.uploaded=1) AND json_extract(p.payload_json,'$.events[0].table') {operator} ? AND NOT EXISTS(SELECT 1 FROM cloud_packet_parents link JOIN cloud_packets child ON child.id=link.packet_id WHERE link.parent_id=p.id AND json_extract(child.payload_json,'$.events[0].table') {operator} ? AND (?=0 OR child.uploaded=1)) ORDER BY p.id");
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+        .bind(published)
+        .bind(KNOWLEDGE_TABLE)
+        .bind(KNOWLEDGE_TABLE)
+        .bind(published)
+        .fetch_all(conn)
+        .await?)
 }
 async fn save_packet(
     conn: &mut SqliteConnection,
@@ -737,6 +1038,7 @@ async fn save_packet(
     {
         return Err(AppError::validation("云端业务批次格式无效"));
     }
+    packet_is_knowledge(packet)?;
     let payload = encoded(packet)?;
     if payload.len() > MAX_JSON * 2 / 3 {
         return Err(AppError::validation("业务批次超过加密后 4 MiB 限制"));
@@ -783,17 +1085,75 @@ async fn save_packet(
     dirty_head(conn).await?;
     Ok(())
 }
-async fn make_packet(db: &Db) -> AppResult<()> {
-    let mut tx = db.pool().begin().await?;
-    let raw: Vec<String> = sqlx::query_scalar(
-        "SELECT payload_json FROM cloud_events WHERE packet_id IS NULL ORDER BY rowid LIMIT 100",
+async fn prune_deleted_knowledge_assets(conn: &mut SqliteConnection) -> AppResult<bool> {
+    let records: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id,selected_event FROM cloud_records
+         WHERE table_name=? AND base_json IS NULL AND selected_event IS NOT NULL",
     )
-    .fetch_all(&mut *tx)
+    .bind(KNOWLEDGE_TABLE)
+    .fetch_all(&mut *conn)
     .await?;
+    let mut removed = false;
+    for (record_id, selected) in records {
+        let heads = heads(conn, Some(&record_id), false).await?;
+        if heads.len() != 1 || selected.as_ref() != heads.first() {
+            continue;
+        }
+        let payload: String =
+            sqlx::query_scalar("SELECT payload_json FROM cloud_events WHERE id=?")
+                .bind(&heads[0])
+                .fetch_one(&mut *conn)
+                .await?;
+        let event: Event = decoded(&payload)?;
+        if event.table != KNOWLEDGE_TABLE || event.row.is_some() {
+            continue;
+        }
+        let assets: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT json_extract(payload_json,'$.row.asset_id')
+             FROM cloud_events WHERE record_id=? AND json_extract(payload_json,'$.row') IS NOT NULL",
+        )
+        .bind(&record_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        for canonical in assets {
+            let local = local_id(conn, "content_assets", &canonical).await?;
+            let marker = format!("lumen-asset:{local}");
+            let in_use: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                    SELECT 1 FROM knowledge_sources WHERE asset_id=?
+                    UNION ALL
+                    SELECT 1 FROM memo_documents WHERE instr(body_md,?)>0 OR instr(steps_json,?)>0
+                )",
+            )
+            .bind(&local)
+            .bind(&marker)
+            .bind(&marker)
+            .fetch_one(&mut *conn)
+            .await?;
+            if !in_use {
+                removed |= sqlx::query("DELETE FROM content_assets WHERE id=?")
+                    .bind(local)
+                    .execute(&mut *conn)
+                    .await?
+                    .rows_affected()
+                    > 0;
+            }
+        }
+    }
+    Ok(removed)
+}
+async fn make_packet(db: &Db, knowledge: bool) -> AppResult<()> {
+    let mut tx = db.pool().begin().await?;
+    let operator = if knowledge { "=" } else { "<>" };
+    let query = format!("SELECT payload_json FROM cloud_events WHERE packet_id IS NULL AND json_extract(payload_json,'$.table') {operator} ? ORDER BY rowid LIMIT 100");
+    let raw: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+        .bind(KNOWLEDGE_TABLE)
+        .fetch_all(&mut *tx)
+        .await?;
     if raw.is_empty() {
         return Ok(());
     }
-    let parents = packet_heads(&mut tx, false).await?;
+    let parents = packet_heads(&mut tx, false, knowledge).await?;
     let mut packet = Packet {
         version: 1,
         id: uuid::Uuid::now_v7().to_string(),
@@ -815,29 +1175,46 @@ async fn make_packet(db: &Db) -> AppResult<()> {
     tx.commit().await?;
     Ok(())
 }
-pub async fn upload(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<()> {
-    make_packet(db).await?;
-    let payloads: Vec<String> = sqlx::query_scalar(
-        "SELECT payload_json FROM cloud_packets WHERE uploaded=0 ORDER BY rowid LIMIT 4",
-    )
-    .fetch_all(db.pool())
-    .await?;
+pub async fn upload_scope(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    include_knowledge: bool,
+) -> AppResult<()> {
+    make_packet(db, false).await?;
+    if include_knowledge {
+        make_packet(db, true).await?;
+    }
+    let knowledge_filter = if include_knowledge {
+        ""
+    } else {
+        "AND json_extract(payload_json,'$.events[0].table') <> 'knowledge_sources'"
+    };
+    let query = format!("SELECT payload_json FROM cloud_packets WHERE uploaded=0 {knowledge_filter} ORDER BY rowid LIMIT 4");
+    let payloads: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(query))
+        .fetch_all(db.pool())
+        .await?;
     for payload in payloads {
         let packet: Packet = decoded(&payload)?;
         for event in &packet.events {
             if let Some(row) = &event.row {
-                for id in media_ids(row) {
-                    let asset = content_assets::get_asset(db, &id).await?;
-                    upload_immutable(
-                        dav,
-                        db,
-                        c,
-                        key,
-                        &bucket("assets", &id)?,
-                        &asset,
-                        40 * 1024 * 1024,
-                    )
-                    .await?;
+                if event.table == KNOWLEDGE_TABLE {
+                    upload_knowledge_asset(db, dav, c, key, row).await?;
+                } else {
+                    for id in media_ids(row) {
+                        let asset = content_assets::get_asset(db, &id).await?;
+                        upload_immutable(
+                            dav,
+                            db,
+                            c,
+                            key,
+                            &bucket("assets", &id)?,
+                            &asset,
+                            40 * 1024 * 1024,
+                        )
+                        .await?;
+                    }
                 }
                 if event.table == "attachments" {
                     attachment_upload(db, dav, c, key, event).await?;
@@ -868,23 +1245,43 @@ pub async fn upload(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult
         dirty_head(&mut tx).await?;
         tx.commit().await?;
     }
+    if include_knowledge {
+        let mut tx = db.pool().begin().await?;
+        prune_deleted_knowledge_assets(&mut tx).await?;
+        tx.commit().await?;
+    }
     Ok(())
 }
 pub async fn published_heads(db: &Db) -> AppResult<Vec<String>> {
     let mut conn = db.pool().acquire().await?;
-    packet_heads(&mut conn, true).await
+    packet_heads(&mut conn, true, false).await
 }
-pub async fn fetch(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], root: &str) -> AppResult<()> {
+pub async fn published_knowledge_heads(db: &Db) -> AppResult<Vec<String>> {
+    let mut conn = db.pool().acquire().await?;
+    packet_heads(&mut conn, true, true).await
+}
+pub async fn fetch(
+    db: &Db,
+    dav: &Dav,
+    c: &Config,
+    key: &[u8; 32],
+    root: &str,
+    knowledge: bool,
+) -> AppResult<()> {
     let mut stack = vec![(root.to_owned(), false)];
     let mut packets = std::collections::HashMap::<String, Packet>::new();
     let mut visiting = HashSet::new();
     while let Some((id, ready)) = stack.pop() {
-        let known: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM cloud_packets WHERE id=?)")
+        let known: Option<String> =
+            sqlx::query_scalar("SELECT payload_json FROM cloud_packets WHERE id=?")
                 .bind(&id)
-                .fetch_one(db.pool())
+                .fetch_optional(db.pool())
                 .await?;
-        if known {
+        if let Some(payload) = known {
+            let packet: Packet = decoded(&payload)?;
+            if packet_is_knowledge(&packet)? != knowledge {
+                return Err(AppError::validation("同步头引用了另一类业务批次"));
+            }
             continue;
         }
         if ready {
@@ -893,8 +1290,12 @@ pub async fn fetch(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], root: &str) -
                 .ok_or_else(|| AppError::validation("业务父批次尚未就绪"))?;
             for event in &packet.events {
                 if let Some(row) = &event.row {
-                    for asset in media_ids(row) {
-                        import_asset(db, dav, c, key, &asset).await?;
+                    if event.table == KNOWLEDGE_TABLE {
+                        import_knowledge_asset(db, dav, c, key, row).await?;
+                    } else {
+                        for asset in media_ids(row) {
+                            import_asset(db, dav, c, key, &asset).await?;
+                        }
                     }
                     if event.table == "attachments" {
                         let mut safe = row.clone();
@@ -927,6 +1328,9 @@ pub async fn fetch(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], root: &str) -
                 || packet.parents.len() > MAX_HEADS
             {
                 return Err(AppError::validation("云端业务批次格式无效"));
+            }
+            if packet_is_knowledge(&packet)? != knowledge {
+                return Err(AppError::validation("同步头引用了另一类业务批次"));
             }
             stack.push((id.clone(), true));
             for parent in packet.parents.iter().rev() {
@@ -973,6 +1377,10 @@ async fn write(conn: &mut SqliteConnection, event: &Event) -> AppResult<()> {
         let obj = row
             .as_object()
             .ok_or_else(|| AppError::validation("业务记录无效"))?;
+        let source_id = (event.table == KNOWLEDGE_TABLE)
+            .then(|| obj.get("id").and_then(Value::as_str))
+            .flatten()
+            .map(str::to_owned);
         let pk = primary(conn, &event.table).await?;
         let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new("INSERT INTO ");
         qb.push(&event.table).push(" (");
@@ -1008,11 +1416,26 @@ async fn write(conn: &mut SqliteConnection, event: &Event) -> AppResult<()> {
                 .push("\"");
         }
         qb.build().execute(&mut *conn).await?;
+        if let Some(source_id) = source_id {
+            crate::knowledge_base::rebuild_synced_source(conn, &source_id).await?;
+        }
     } else {
         let key = localize(conn, &event.table, &event.key).await?;
         let obj = key
             .as_object()
             .ok_or_else(|| AppError::validation("业务编号无效"))?;
+        let source_asset = if event.table == KNOWLEDGE_TABLE {
+            let source_id = obj
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| AppError::validation("知识库来源编号缺失"))?;
+            sqlx::query_scalar::<_, String>("SELECT asset_id FROM knowledge_sources WHERE id=?")
+                .bind(source_id)
+                .fetch_optional(&mut *conn)
+                .await?
+        } else {
+            None
+        };
         let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new("DELETE FROM ");
         qb.push(&event.table).push(" WHERE ");
         for (i, (col, val)) in obj.iter().enumerate() {
@@ -1023,6 +1446,22 @@ async fn write(conn: &mut SqliteConnection, event: &Event) -> AppResult<()> {
             bind(&mut qb, val)?;
         }
         qb.build().execute(&mut *conn).await?;
+        if let Some(asset_id) = source_asset {
+            let marker = format!("lumen-asset:{asset_id}");
+            let referenced: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM memo_documents WHERE instr(body_md,?)>0 OR instr(steps_json,?)>0)",
+            )
+            .bind(&marker)
+            .bind(&marker)
+            .fetch_one(&mut *conn)
+            .await?;
+            if !referenced {
+                sqlx::query("DELETE FROM content_assets WHERE id=?")
+                    .bind(asset_id)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
     }
     sqlx::query("UPDATE cloud_records SET base_json=?,selected_event=? WHERE id=?")
         .bind(event.row.as_ref().map(encoded).transpose()?)
@@ -1032,27 +1471,65 @@ async fn write(conn: &mut SqliteConnection, event: &Event) -> AppResult<()> {
         .await?;
     Ok(())
 }
-pub async fn apply(db: &Db) -> AppResult<bool> {
+pub async fn apply_scope(db: &Db, include_knowledge: bool) -> AppResult<bool> {
     let mut tx = db.pool().begin().await?;
-    let changed = apply_from(&mut tx, db.data_dir()).await?;
+    let changed = apply_from(&mut tx, db.data_dir(), include_knowledge).await?;
     tx.commit().await?;
     Ok(changed)
 }
-async fn apply_from(tx: &mut SqliteConnection, dir: &std::path::Path) -> AppResult<bool> {
-    capture_from(tx, dir).await?;
+async fn apply_from(
+    tx: &mut SqliteConnection,
+    dir: &std::path::Path,
+    include_knowledge: bool,
+) -> AppResult<bool> {
+    capture_from(tx, dir, include_knowledge).await?;
     let mapping = aliases(tx).await?;
     sqlx::query("PRAGMA defer_foreign_keys=ON")
         .execute(&mut *tx)
         .await?;
-    let records = sqlx::query("SELECT id,selected_event FROM cloud_records")
+    let records = sqlx::query("SELECT id,selected_event,table_name FROM cloud_records")
         .fetch_all(&mut *tx)
         .await?;
     let mut candidates = Vec::new();
     for row in records {
         let id: String = row.get("id");
+        let table: String = row.get("table_name");
+        if table == KNOWLEDGE_TABLE && !include_knowledge {
+            continue;
+        }
         let heads = heads(tx, Some(&id), false).await?;
         let selected: Option<String> = row.get("selected_event");
-        if heads.len() != 1 || selected.as_ref() == heads.first() {
+        if heads.is_empty() || (heads.len() == 1 && selected.as_ref() == heads.first()) {
+            continue;
+        }
+        if heads.len() > 1 && table == KNOWLEDGE_TABLE {
+            let mut identical: Option<Event> = None;
+            let mut all_identical = true;
+            for head in &heads {
+                let payload: String =
+                    sqlx::query_scalar("SELECT payload_json FROM cloud_events WHERE id=?")
+                        .bind(head)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                let event: Event = decoded(&payload)?;
+                if let Some(first) = &identical {
+                    all_identical &= first.row == event.row;
+                } else {
+                    identical = Some(event);
+                }
+            }
+            if all_identical {
+                let mut merged =
+                    identical.ok_or_else(|| AppError::internal("知识库合并版本缺失"))?;
+                merged.id = uuid::Uuid::now_v7().to_string();
+                merged.parents = heads;
+                merged.created_at = stamp();
+                insert(tx, &merged, false).await?;
+                candidates.push(merged);
+            }
+            continue;
+        }
+        if heads.len() != 1 {
             continue;
         }
         let payload: String =
@@ -1066,6 +1543,9 @@ async fn apply_from(tx: &mut SqliteConnection, dir: &std::path::Path) -> AppResu
     // before touching business rows; otherwise a remote parent deletion could erase local children.
     for event in candidates.iter().filter(|e| e.row.is_none()) {
         for table in TABLES {
+            if table == KNOWLEDGE_TABLE && !include_knowledge {
+                continue;
+            }
             let sql = format!("PRAGMA foreign_key_list({table})");
             let fks = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&mut *tx)
@@ -1107,7 +1587,8 @@ async fn apply_from(tx: &mut SqliteConnection, dir: &std::path::Path) -> AppResu
     for event in &candidates {
         write(tx, event).await?;
     }
-    Ok(!candidates.is_empty())
+    let pruned_assets = prune_deleted_knowledge_assets(tx).await?;
+    Ok(!candidates.is_empty() || pruned_assets)
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1163,7 +1644,7 @@ pub async fn resolve(db: &Db, id: &str, event_id: &str, expected: Vec<String>) -
     event.parents = heads;
     event.created_at = stamp();
     insert(&mut tx, &event, false).await?;
-    apply_from(&mut tx, db.data_dir()).await?;
+    apply_from(&mut tx, db.data_dir(), true).await?;
     tx.commit().await?;
     Ok(())
 }

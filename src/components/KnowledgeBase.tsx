@@ -196,12 +196,12 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
   }
 
   const removeSource = async (source: KnowledgeSourceSummary) => {
-    if (!window.confirm(`从知识库移除「${source.title}」？将删除解析文本和检索索引；如果原件仍被备忘或流程引用，会保留原件，否则一并删除。`)) return
+    if (!window.confirm(`从知识库移除「${source.title}」？将删除解析文本和检索索引；如果原件仍被备忘或流程引用，或有待上传的同步版本，会先保留原件。`)) return
     setBusyDelete(source.id)
     try {
       const retained = await knowledgeDelete(source.id)
       setImportMessage(retained
-        ? `已移除「${source.title}」的知识库索引；原文件仍被备忘或流程引用，因此保留在本机。`
+        ? `已移除「${source.title}」的知识库索引；原件仍被流程引用或有待同步版本，因此保留在本机。`
         : `已移除「${source.title}」及其知识库原件。`)
       await reload()
     } catch (error) { setImportMessage(`移除失败：${contentError(error)}`) }
@@ -260,7 +260,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
-    <p className="knowledge-base__privacy">导入资料保存在本机；已保存的流程会自动纳入检索，无需重复导入。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p>
+    <p className="knowledge-base__privacy">资料原件和解析正文先保存在本机；连接云同步并选择“全部业务数据”后，二者会加密同步到其他电脑，检索索引由各电脑本机重建。已保存流程按“备忘与流程”范围同步并自动纳入检索。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p>
     <div className="knowledge-base__grid">
       <section className="knowledge-panel" aria-label="资料库">
         <header><h3>已加入的资料</h3><span>{sources.length} 项</span></header>
@@ -287,7 +287,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
         </ul>
         {importing && importProgress && <ImportStatus {...importProgress} />}
         {importMessage && <pre className="knowledge-message" role="status">{importMessage}</pre>}
-        <details className="knowledge-base__scope"><summary>解析范围与限制</summary><p>使用应用现有解析器保留原件并抽取文本。图片、扫描 PDF 页面及 Office 内嵌图片优先由已配置的多模态 AI 逐张转录，失败时使用随应用提供的本机 PaddleOCR；Windows OCR 已移除。暂不支持的格式会保留原件并标明失败，不会假装已入索引。来源会显示解析片段和页码/章节位置，可导出原件核对；知识库为本机数据，目前不随云同步。</p></details>
+        <details className="knowledge-base__scope"><summary>解析范围与限制</summary><p>使用应用现有解析器保留原件并抽取文本。图片、扫描 PDF 页面及 Office 内嵌图片优先由已配置的多模态 AI 逐张转录，失败时使用随应用提供的本机 PaddleOCR；Windows OCR 已移除。暂不支持的格式会保留原件并标明失败，不会假装已入索引。来源会显示解析片段和页码/章节位置，可导出原件核对。知识库资料只随“全部业务数据”加密同步；只同步任务或备忘与流程时，资料原件和解析正文仍留在本机。</p></details>
       </section>
 
       <section className="knowledge-panel knowledge-panel--ask" aria-label="知识库问答">

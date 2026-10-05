@@ -51,6 +51,7 @@ export function CloudSyncButton() {
       {status?.config && <>
         <fieldset disabled={busy}><SyncOptionsFields value={options} onChange={setOptions} prefix="本次" /></fieldset>
         {!status.config.enabled && <p className="setgroup__hint">自动同步已暂停；本次手动同步仍可执行，不会恢复自动同步。</p>}
+        <p className="setgroup__hint">知识库原件和解析正文只在选择“全部业务数据”时加密同步；其他范围不会上传或下载知识库资料。流程仍按“备忘与流程”范围同步。</p>
         <p className="setgroup__hint">仅上传不下载；仅下载保留本地待上传内容。双向同步保留并发版本，遇到冲突会提示处理。</p>
       </>}
       {error && <p className="alert alert--error" role="alert">{error}</p>}

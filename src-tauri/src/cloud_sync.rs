@@ -162,7 +162,7 @@ async fn validate_history(conn: &mut SqliteConnection) -> AppResult<()> {
     check_graph(nodes)?;
     business::validate_history(conn).await
 }
-async fn rebase_restore(db: &Db) -> AppResult<()> {
+async fn rebase_restore(db: &Db, include_knowledge: bool) -> AppResult<()> {
     let pending: bool =
         sqlx::query_scalar("SELECT restore_pending<>0 FROM memo_sync_runtime WHERE singleton=1")
             .fetch_one(db.pool())
@@ -177,7 +177,7 @@ async fn rebase_restore(db: &Db) -> AppResult<()> {
     for row in rows {
         record_event(&mut tx, &memos::document(row)?, None).await?;
     }
-    business::rebase_restore(&mut tx, db.data_dir()).await?;
+    business::rebase_restore(&mut tx, db.data_dir(), include_knowledge).await?;
     sqlx::query("UPDATE memo_sync_runtime SET restore_pending=0 WHERE singleton=1")
         .execute(&mut *tx)
         .await?;
@@ -895,6 +895,14 @@ struct Head {
     heads: Vec<String>,
     business_heads: Vec<String>,
 }
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct KnowledgeHead {
+    version: u32,
+    workspace_id: String,
+    device_id: String,
+    heads: Vec<String>,
+}
 fn bucket(kind: &str, id: &str) -> AppResult<String> {
     id_ok(id)?;
     Ok(format!("{kind}/{}/{}.json", &id[..2], id))
@@ -1194,6 +1202,7 @@ async fn publish_head(
     c: &Config,
     key: &[u8; 32],
     device: &str,
+    include_knowledge: bool,
 ) -> AppResult<()> {
     let mut conn = db.pool().acquire().await?;
     let generation: i64 =
@@ -1202,7 +1211,12 @@ async fn publish_head(
             .await?;
     let heads=sqlx::query_scalar("SELECT e.id FROM memo_sync_events e WHERE uploaded=1 AND NOT EXISTS(SELECT 1 FROM memo_sync_parents p JOIN memo_sync_events child ON child.id=p.event_id WHERE p.parent_id=e.id AND child.uploaded=1) ORDER BY e.id").fetch_all(&mut *conn).await?;
     let business_heads = business::published_heads(db).await?;
-    if heads.len() + business_heads.len() > MAX_HEADS {
+    let knowledge_heads = if include_knowledge {
+        business::published_knowledge_heads(db).await?
+    } else {
+        Vec::new()
+    };
+    if heads.len() + business_heads.len() + knowledge_heads.len() > MAX_HEADS {
         return Err(AppError::validation(
             "同步空间超过 10000 条当前版本，请拆分空间",
         ));
@@ -1225,6 +1239,24 @@ async fn publish_head(
         )?,
     )
     .await?;
+    if include_knowledge {
+        let knowledge_path = format!("devices/{device}/knowledge-head.json");
+        dav.put(
+            db,
+            &knowledge_path,
+            encrypt(
+                key,
+                &aad(c, &knowledge_path),
+                &KnowledgeHead {
+                    version: 1,
+                    workspace_id: c.workspace_id.clone(),
+                    device_id: device.into(),
+                    heads: knowledge_heads,
+                },
+            )?,
+        )
+        .await?;
+    }
     sqlx::query("UPDATE memo_sync_runtime SET last_upload=?,last_error=NULL,published_generation=? WHERE singleton=1 AND head_generation=?").bind(stamp()).bind(generation).bind(generation).execute(db.pool()).await?;
     Ok(())
 }
@@ -1363,6 +1395,7 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
     });
     let include_memos = scope != SyncScope::Tasks;
     let include_tasks = scope != SyncScope::Memos;
+    let include_knowledge = scope == SyncScope::All;
     let devices = dav.devices(db).await?;
     sqlx::query("UPDATE memo_sync_runtime SET device_count=? WHERE singleton=1")
         .bind(devices.len().max(1) as i64)
@@ -1372,10 +1405,11 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
         let path = format!("devices/{device}/head.json");
         if let Some(bytes) = dav.read(db, &path, MAX_JSON).await? {
             let head: Head = decrypt(key, &aad(c, &path), &bytes)?;
+            let regular_head_count = head.heads.len() + head.business_heads.len();
             if head.version != 1
                 || head.workspace_id != c.workspace_id
                 || head.device_id != device
-                || head.heads.len() + head.business_heads.len() > MAX_HEADS
+                || regular_head_count > MAX_HEADS
             {
                 return Err(AppError::validation("云端设备头不兼容"));
             }
@@ -1386,7 +1420,23 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
             }
             if include_tasks {
                 for root in head.business_heads {
-                    business::fetch(db, dav, c, key, &root).await?;
+                    business::fetch(db, dav, c, key, &root, false).await?;
+                }
+            }
+            if include_knowledge {
+                let knowledge_path = format!("devices/{device}/knowledge-head.json");
+                if let Some(bytes) = dav.read(db, &knowledge_path, MAX_JSON).await? {
+                    let knowledge: KnowledgeHead = decrypt(key, &aad(c, &knowledge_path), &bytes)?;
+                    if knowledge.version != 1
+                        || knowledge.workspace_id != c.workspace_id
+                        || knowledge.device_id != device
+                        || regular_head_count + knowledge.heads.len() > MAX_HEADS
+                    {
+                        return Err(AppError::validation("云端知识库设备头无效"));
+                    }
+                    for root in knowledge.heads {
+                        business::fetch(db, dav, c, key, &root, true).await?;
+                    }
                 }
             }
         }
@@ -1397,7 +1447,7 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
         false
     };
     let changed = if include_tasks {
-        business::apply(db).await? || memo_changed
+        business::apply_scope(db, include_knowledge).await? || memo_changed
     } else {
         memo_changed
     };
@@ -1434,8 +1484,8 @@ async fn sync_exchange(
     device: &str,
     scan: bool,
 ) -> AppResult<bool> {
-    rebase_restore(db).await?;
     let options = c.default_sync.unwrap_or_default();
+    rebase_restore(db, options.scope == SyncScope::All).await?;
     let can_download = scan && options.direction != SyncDirection::Upload;
     if options.direction == SyncDirection::Download {
         return if can_download {
@@ -1447,12 +1497,12 @@ async fn sync_exchange(
     if options.scope != SyncScope::Tasks {
         upload(db, dav, c, key, device).await?;
         // Publish memos before potentially large task uploads.
-        publish_if_dirty(db, dav, c, key, device).await?;
+        publish_if_dirty(db, dav, c, key, device, options.scope == SyncScope::All).await?;
     }
     if options.scope != SyncScope::Memos {
         let business_result: AppResult<()> = async {
-            business::capture(db).await?;
-            business::upload(db, dav, c, key).await?;
+            business::capture_scope(db, options.scope == SyncScope::All).await?;
+            business::upload_scope(db, dav, c, key, options.scope == SyncScope::All).await?;
             Ok(())
         }
         .await;
@@ -1470,7 +1520,7 @@ async fn sync_exchange(
             return Err(error);
         }
     }
-    publish_if_dirty(db, dav, c, key, device).await?;
+    publish_if_dirty(db, dav, c, key, device, options.scope == SyncScope::All).await?;
     if can_download {
         download(db, dav, c, key).await
     } else {
@@ -1483,6 +1533,7 @@ async fn publish_if_dirty(
     c: &Config,
     key: &[u8; 32],
     device: &str,
+    include_knowledge: bool,
 ) -> AppResult<()> {
     let dirty: bool = sqlx::query_scalar(
         "SELECT head_generation<>published_generation FROM memo_sync_runtime WHERE singleton=1",
@@ -1490,7 +1541,7 @@ async fn publish_if_dirty(
     .fetch_one(db.pool())
     .await?;
     if dirty {
-        publish_head(db, dav, c, key, device).await?;
+        publish_head(db, dav, c, key, device, include_knowledge).await?;
     }
     Ok(())
 }

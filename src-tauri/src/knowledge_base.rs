@@ -11,7 +11,7 @@ use crate::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{FromRow, QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use tauri::{Emitter, Manager, State};
 
@@ -226,6 +226,38 @@ fn split_text(text: &str) -> Vec<KnowledgeChunk> {
         start = end.saturating_sub(CHUNK_OVERLAP_CHARS);
     }
     result
+}
+
+pub(crate) async fn rebuild_synced_source(
+    conn: &mut SqliteConnection,
+    source_id: &str,
+) -> AppResult<()> {
+    let source =
+        sqlx::query("SELECT title,extracted_text,status FROM knowledge_sources WHERE id=?")
+            .bind(source_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| AppError::not_found("知识库资料", source_id))?;
+    sqlx::query("DELETE FROM knowledge_chunks WHERE source_id=?")
+        .bind(source_id)
+        .execute(&mut *conn)
+        .await?;
+    let extracted: String = source.try_get("extracted_text")?;
+    if source.try_get::<String, _>("status")? != "ready" {
+        return Ok(());
+    }
+    for chunk in split_text(&extracted) {
+        sqlx::query("INSERT INTO knowledge_chunks (source_id,locator,heading,content,start_offset,end_offset) VALUES (?,?,?,?,?,?)")
+            .bind(source_id)
+            .bind(chunk.locator)
+            .bind(chunk.heading)
+            .bind(chunk.content)
+            .bind(chunk.start_offset as i64)
+            .bind(chunk.end_offset as i64)
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
 fn heading_before(chars: &[char], offset: usize) -> String {
@@ -1280,7 +1312,7 @@ pub async fn knowledge_ask(
     ask_impl(&state.db, input).await
 }
 
-async fn delete_impl(db: &Db, id: &str) -> AppResult<bool> {
+pub(crate) async fn delete_impl(db: &Db, id: &str) -> AppResult<bool> {
     let source = source_row(db, id).await?;
     let marker = format!("lumen-asset:{}", source.asset_id);
     let referenced: i64 = sqlx::query_scalar(
@@ -1291,19 +1323,42 @@ async fn delete_impl(db: &Db, id: &str) -> AppResult<bool> {
     .bind(&marker)
     .fetch_one(db.pool())
     .await?;
+    let canonical: Option<String> = sqlx::query_scalar(
+        "SELECT canonical_id FROM cloud_aliases WHERE table_name='knowledge_sources' AND local_id=?",
+    )
+    .bind(id)
+    .fetch_optional(db.pool())
+    .await?;
+    let pending_sync = if let Some(canonical) = canonical {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(
+                SELECT 1 FROM cloud_records r
+                JOIN cloud_events e ON e.record_id=r.id
+                WHERE r.table_name='knowledge_sources'
+                  AND json_extract(r.key_json,'$.id')=?
+                  AND e.uploaded=0
+            )",
+        )
+        .bind(canonical)
+        .fetch_one(db.pool())
+        .await?
+    } else {
+        false
+    };
+    let retain_asset = referenced != 0 || pending_sync;
     let mut tx = db.pool().begin().await?;
     sqlx::query("DELETE FROM knowledge_sources WHERE id=?")
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    if referenced == 0 {
+    if !retain_asset {
         sqlx::query("DELETE FROM content_assets WHERE id=?")
             .bind(&source.asset_id)
             .execute(&mut *tx)
             .await?;
     }
     tx.commit().await?;
-    Ok(referenced != 0)
+    Ok(retain_asset)
 }
 
 #[tauri::command]

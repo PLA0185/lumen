@@ -369,6 +369,21 @@ async fn db() -> Db {
         .await
         .unwrap()
 }
+async fn add_knowledge_source(db: &Db, title: &str, original: &[u8], extracted: &str) -> String {
+    let asset = content_assets::store_bytes(db, title, original.to_vec())
+        .await
+        .unwrap();
+    let id = uuid::Uuid::now_v7().to_string();
+    let now = stamp();
+    sqlx::query("INSERT INTO knowledge_sources (id,asset_id,title,mime,sha256,extracted_text,warnings_json,status,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'ready',NULL,?,?)")
+        .bind(&id).bind(&asset.id).bind(title).bind(&asset.mime).bind(&asset.sha256)
+        .bind(extracted).bind("[]").bind(&now).bind(&now)
+        .execute(db.pool()).await.unwrap();
+    sqlx::query("INSERT INTO knowledge_chunks (source_id,locator,heading,content,start_offset,end_offset) VALUES (?, '第 1 页', '', ?, 0, ?)")
+        .bind(&id).bind(extracted).bind(extracted.chars().count() as i64)
+        .execute(db.pool()).await.unwrap();
+    id
+}
 fn cfg() -> Config {
     Config {
         server: "https://example.test/dav/".into(),
@@ -403,7 +418,7 @@ async fn close(db: Db) {
 async fn push(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) {
     let device = runtime(db).await.unwrap();
     upload(db, dav, c, key, &device).await.unwrap();
-    publish_head(db, dav, c, key, &device).await.unwrap();
+    publish_head(db, dav, c, key, &device, true).await.unwrap();
 }
 #[test]
 fn encryption_rejects_tampering_wrong_key_and_wrong_path() {
@@ -581,8 +596,8 @@ async fn failed_upload_is_durable_and_journal_failure_rolls_back_memo() {
 }
 async fn push_all(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) {
     runtime(db).await.unwrap();
-    business::capture(db).await.unwrap();
-    business::upload(db, dav, c, key).await.unwrap();
+    business::capture_scope(db, true).await.unwrap();
+    business::upload_scope(db, dav, c, key, true).await.unwrap();
     push(db, dav, c, key).await;
 }
 async fn add_task(db: &Db, id: &str, title: &str) {
@@ -880,7 +895,7 @@ async fn initial_400_tasks_use_batches_and_missing_old_attachment_does_not_destr
     let original = a.data_dir().join("原文件.txt");
     std::fs::write(&original, b"actual business attachment").unwrap();
     sqlx::query("INSERT INTO attachments(id,task_id,file_name,storage_mode,external_path,created_at) VALUES(?,'t-0','原文件.txt','reference',?,?)").bind(&id).bind(original.to_string_lossy().as_ref()).bind(stamp()).execute(a.pool()).await.unwrap();
-    business::capture(&a).await.unwrap();
+    business::capture_scope(&a, true).await.unwrap();
     std::fs::remove_file(original).unwrap();
     push_all(&a, &dav, &c, &key).await;
     download(&b, &dav, &c, &key).await.unwrap();
@@ -1028,9 +1043,23 @@ async fn all_nine_scope_direction_combinations_only_exchange_selected_content() 
             let key = [3; 32];
             let remote_memo = memos::save_impl(&remote, input("远端备忘")).await.unwrap();
             add_task(&remote, "remote-task", "远端任务").await;
+            add_knowledge_source(
+                &remote,
+                "远端资料.txt",
+                b"remote knowledge bytes",
+                "远端知识库正文",
+            )
+            .await;
             push_all(&remote, &dav, &c, &key).await;
             let local_memo = memos::save_impl(&local, input("本地备忘")).await.unwrap();
             add_task(&local, "local-task", "本地任务").await;
+            add_knowledge_source(
+                &local,
+                "本地资料.txt",
+                b"local knowledge bytes",
+                "本地知识库正文",
+            )
+            .await;
             let before = mock.files.lock().unwrap().clone();
             let device = runtime(&local).await.unwrap();
             let selected = selection(&c, scope, direction);
@@ -1058,6 +1087,26 @@ async fn all_nine_scope_direction_combinations_only_exchange_selected_content() 
                 downloads && tasks,
                 "{scope:?}/{direction:?}: task download"
             );
+            let downloaded_knowledge: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE title='远端资料.txt')",
+            )
+            .fetch_one(local.pool())
+            .await
+            .unwrap();
+            assert_eq!(
+                downloaded_knowledge,
+                downloads && scope == SyncScope::All,
+                "{scope:?}/{direction:?}: knowledge download"
+            );
+            let local_knowledge_head = format!("/Lumen/devices/{device}/knowledge-head.json");
+            assert_eq!(
+                mock.files
+                    .lock()
+                    .unwrap()
+                    .contains_key(&local_knowledge_head),
+                uploads && scope == SyncScope::All,
+                "{scope:?}/{direction:?}: knowledge head publication"
+            );
             if !uploads {
                 assert!(
                     *mock.files.lock().unwrap() == before,
@@ -1082,10 +1131,420 @@ async fn all_nine_scope_direction_combinations_only_exchange_selected_content() 
                 uploads && tasks,
                 "{scope:?}/{direction:?}: task upload"
             );
+            let uploaded_knowledge: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE title='本地资料.txt')",
+            )
+            .fetch_one(remote.pool())
+            .await
+            .unwrap();
+            assert_eq!(
+                uploaded_knowledge,
+                uploads && scope == SyncScope::All,
+                "{scope:?}/{direction:?}: knowledge upload"
+            );
             close(remote).await;
             close(local).await;
         }
     }
+}
+
+#[tokio::test]
+async fn all_scope_syncs_knowledge_original_and_rebuilds_the_local_search_index() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [4; 32];
+    let title = "仓库标签打印说明.txt";
+    let original = b"warehouse label procedure original";
+    let extracted = "标贴请在仓库标签打印机打印，打印完核对箱号";
+    add_knowledge_source(&home, title, original, extracted).await;
+
+    let device = runtime(&home).await.unwrap();
+    add_task(&home, "task-side-by-side", "任务仍走原同步流").await;
+    sync_exchange(
+        &home,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &device,
+        true,
+    )
+    .await
+    .unwrap();
+    let ordinary_bytes = mock
+        .files
+        .lock()
+        .unwrap()
+        .get(&format!("/Lumen/devices/{device}/head.json"))
+        .unwrap()
+        .clone();
+    let ordinary: Head = decrypt(
+        &key,
+        &aad(&c, &format!("devices/{device}/head.json")),
+        &ordinary_bytes,
+    )
+    .unwrap();
+    for head in ordinary.business_heads {
+        let packet_json: String =
+            sqlx::query_scalar("SELECT payload_json FROM cloud_packets WHERE id=?")
+                .bind(head)
+                .fetch_one(home.pool())
+                .await
+                .unwrap();
+        let packet: serde_json::Value = serde_json::from_str(&packet_json).unwrap();
+        assert!(packet["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| { event["table"] != "knowledge_sources" }));
+    }
+    let knowledge_path = format!("devices/{device}/knowledge-head.json");
+    let knowledge_bytes = mock
+        .files
+        .lock()
+        .unwrap()
+        .get(&format!("/Lumen/{knowledge_path}"))
+        .unwrap()
+        .clone();
+    let knowledge: KnowledgeHead =
+        decrypt(&key, &aad(&c, &knowledge_path), &knowledge_bytes).unwrap();
+    assert!(
+        !knowledge.heads.is_empty(),
+        "knowledge data uses its own head file"
+    );
+    let other_device = runtime(&company).await.unwrap();
+    sync_exchange(
+        &company,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &other_device,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let row = sqlx::query("SELECT s.title,s.extracted_text,s.sha256,a.data_base64 FROM knowledge_sources s JOIN content_assets a ON a.id=s.asset_id")
+        .fetch_one(company.pool()).await.unwrap();
+    assert_eq!(row.get::<String, _>("title"), title);
+    assert_eq!(row.get::<String, _>("extracted_text"), extracted);
+    let asset: String = row.get("data_base64");
+    assert_eq!(STANDARD.decode(asset).unwrap(), original);
+    let indexed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM knowledge_chunks_fts")
+        .fetch_one(company.pool())
+        .await
+        .unwrap();
+    assert!(
+        indexed > 0,
+        "the receiving computer must rebuild its local FTS index"
+    );
+
+    let cloud_bytes: Vec<Vec<u8>> = mock.files.lock().unwrap().values().cloned().collect();
+    assert!(cloud_bytes.iter().all(|blob| !blob
+        .windows(extracted.len())
+        .any(|w| w == extracted.as_bytes())));
+    assert!(cloud_bytes
+        .iter()
+        .all(|blob| !blob.windows(title.len()).any(|w| w == title.as_bytes())));
+    close(home).await;
+    close(company).await;
+}
+
+#[tokio::test]
+async fn same_knowledge_file_imported_on_both_devices_does_not_create_a_conflict() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [5; 32];
+    let original = b"same source bytes";
+    let extracted = "同一份资料的解析正文";
+    add_knowledge_source(&home, "相同资料.txt", original, extracted).await;
+    add_knowledge_source(&company, "相同资料.txt", original, extracted).await;
+
+    for local in [&home, &company] {
+        let device = runtime(local).await.unwrap();
+        sync_exchange(
+            local,
+            &dav,
+            &selection(&c, SyncScope::All, SyncDirection::Both),
+            &key,
+            &device,
+            true,
+        )
+        .await
+        .unwrap();
+    }
+
+    let conflicts = business::conflicts(&company).await.unwrap();
+    assert!(conflicts
+        .iter()
+        .all(|conflict| conflict.table != "knowledge_sources"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM knowledge_sources")
+        .fetch_one(company.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 1,
+        "matching content hashes represent one knowledge source"
+    );
+    close(home).await;
+    close(company).await;
+}
+
+#[tokio::test]
+async fn deleting_a_synced_knowledge_source_keeps_assets_referenced_by_a_flow() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [9; 32];
+    let source_id = add_knowledge_source(
+        &home,
+        "装箱步骤.txt",
+        b"packing instructions",
+        "先贴标签，再装箱",
+    )
+    .await;
+    let asset_id: String = sqlx::query_scalar("SELECT asset_id FROM knowledge_sources WHERE id=?")
+        .bind(&source_id)
+        .fetch_one(home.pool())
+        .await
+        .unwrap();
+    let mut flow = input("装箱流程");
+    flow.body_md = format!("请核对原件：[装箱说明](lumen-asset:{asset_id})");
+    memos::save_impl(&home, flow).await.unwrap();
+    push_all(&home, &dav, &c, &key).await;
+
+    let device = runtime(&company).await.unwrap();
+    sync_exchange(
+        &company,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &device,
+        true,
+    )
+    .await
+    .unwrap();
+    let received_asset: String =
+        sqlx::query_scalar("SELECT asset_id FROM knowledge_sources WHERE title='装箱步骤.txt'")
+            .fetch_one(company.pool())
+            .await
+            .unwrap();
+    let flow_body: String =
+        sqlx::query_scalar("SELECT body_md FROM memo_documents WHERE title='装箱流程'")
+            .fetch_one(company.pool())
+            .await
+            .unwrap();
+    assert!(flow_body.contains(&format!("lumen-asset:{received_asset}")));
+
+    sqlx::query("DELETE FROM knowledge_sources WHERE title='装箱步骤.txt'")
+        .execute(company.pool())
+        .await
+        .unwrap();
+    let device = runtime(&company).await.unwrap();
+    sync_exchange(
+        &company,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &device,
+        true,
+    )
+    .await
+    .unwrap();
+    let home_device = runtime(&home).await.unwrap();
+    sync_exchange(
+        &home,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &home_device,
+        true,
+    )
+    .await
+    .unwrap();
+    let home_source: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM knowledge_sources WHERE title='装箱步骤.txt')",
+    )
+    .fetch_one(home.pool())
+    .await
+    .unwrap();
+    assert!(!home_source, "source tombstone must reach the other device");
+    let preserved_asset: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM content_assets WHERE id=?)")
+            .bind(&received_asset)
+            .fetch_one(company.pool())
+            .await
+            .unwrap();
+    assert!(preserved_asset, "flow references keep the original asset");
+    close(home).await;
+    close(company).await;
+}
+
+#[tokio::test]
+async fn missing_knowledge_original_aborts_import_without_a_partial_source() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [10; 32];
+    add_knowledge_source(&home, "缺失原件.txt", b"original bytes", "可检索正文").await;
+    push_all(&home, &dav, &c, &key).await;
+    let canonical: String = sqlx::query_scalar(
+        "SELECT canonical_id FROM cloud_aliases WHERE table_name='content_assets'",
+    )
+    .fetch_one(home.pool())
+    .await
+    .unwrap();
+    let asset_path = format!("/Lumen/assets/{}/{}.json", &canonical[..2], canonical);
+    mock.files.lock().unwrap().remove(&asset_path);
+
+    let device = runtime(&company).await.unwrap();
+    let result = sync_exchange(
+        &company,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Download),
+        &key,
+        &device,
+        true,
+    )
+    .await;
+    assert!(result.is_err(), "missing original must fail the sync");
+    let sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM knowledge_sources")
+        .fetch_one(company.pool())
+        .await
+        .unwrap();
+    assert_eq!(sources, 0, "a partial source must not be visible");
+    let packets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cloud_packets")
+        .fetch_one(company.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        packets, 0,
+        "the packet must not be acknowledged before assets validate"
+    );
+    close(home).await;
+    close(company).await;
+}
+
+#[tokio::test]
+async fn restore_rebase_outside_all_scope_preserves_knowledge_sync_baseline() {
+    let local = db().await;
+    add_knowledge_source(&local, "仅本机资料.txt", b"local only", "本机解析正文").await;
+    business::capture_scope(&local, true).await.unwrap();
+    let before: Option<String> = sqlx::query_scalar(
+        "SELECT base_json FROM cloud_records WHERE table_name='knowledge_sources'",
+    )
+    .fetch_one(local.pool())
+    .await
+    .unwrap();
+    assert!(before.is_some());
+
+    let mut tx = local.pool().begin().await.unwrap();
+    business::rebase_restore(&mut tx, local.data_dir(), false)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let after: Option<String> = sqlx::query_scalar(
+        "SELECT base_json FROM cloud_records WHERE table_name='knowledge_sources'",
+    )
+    .fetch_one(local.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        after, before,
+        "non-All restore must not rebase local KB data"
+    );
+    close(local).await;
+}
+
+#[tokio::test]
+async fn pending_knowledge_source_delete_keeps_original_until_tombstone_uploads() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let local = db().await;
+    let remote = db().await;
+    let c = cfg();
+    let key = [11; 32];
+    let source_id =
+        add_knowledge_source(&local, "刚导入的资料.txt", b"pending source", "待同步正文").await;
+    business::capture_scope(&local, true).await.unwrap();
+    let asset_id: String = sqlx::query_scalar("SELECT asset_id FROM knowledge_sources WHERE id=?")
+        .bind(&source_id)
+        .fetch_one(local.pool())
+        .await
+        .unwrap();
+
+    let retained = crate::knowledge_base::delete_impl(&local, &source_id)
+        .await
+        .unwrap();
+    assert!(
+        retained,
+        "pending source history still needs the local original"
+    );
+    let asset_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM content_assets WHERE id=?)")
+            .bind(&asset_id)
+            .fetch_one(local.pool())
+            .await
+            .unwrap();
+    assert!(asset_exists);
+
+    let device = runtime(&local).await.unwrap();
+    sync_exchange(
+        &local,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &device,
+        true,
+    )
+    .await
+    .unwrap();
+    let asset_exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM content_assets WHERE id=?)")
+            .bind(&asset_id)
+            .fetch_one(local.pool())
+            .await
+            .unwrap();
+    assert!(
+        !asset_exists,
+        "after its tombstone uploads, an unreferenced original is cleaned up"
+    );
+    let remote_device = runtime(&remote).await.unwrap();
+    sync_exchange(
+        &remote,
+        &dav,
+        &selection(&c, SyncScope::All, SyncDirection::Both),
+        &key,
+        &remote_device,
+        true,
+    )
+    .await
+    .unwrap();
+    let remote_sources: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM knowledge_sources")
+        .fetch_one(remote.pool())
+        .await
+        .unwrap();
+    let remote_assets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM content_assets")
+        .fetch_one(remote.pool())
+        .await
+        .unwrap();
+    assert_eq!(remote_sources, 0);
+    assert_eq!(
+        remote_assets, 0,
+        "remote import prunes an orphaned original after a final tombstone"
+    );
+    close(local).await;
+    close(remote).await;
 }
 
 #[tokio::test]

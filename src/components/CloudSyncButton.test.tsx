@@ -25,6 +25,7 @@ it('顶部入口读取默认选择，修改本次范围方向不改默认，暂�
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSyncButton />))
   await click('同步')
+  expect(document.body.textContent).toContain('知识库原件和解析正文只在选择“全部业务数据”时加密同步')
   expect((document.querySelector('[aria-label="本次同步内容"]') as HTMLSelectElement).value).toBe('memos')
   expect((document.querySelector('[aria-label="本次同步方向"]') as HTMLSelectElement).value).toBe('download')
   await select('本次同步内容', 'tasks'); await select('本次同步方向', 'upload')
@@ -65,4 +66,5 @@ it('云同步设置把自动同步开关和上传队列状态分开说明', asyn
   await act(async () => root!.render(<CloudSettings />))
   expect(document.body.textContent).toContain('自动同步开关：已开启')
   expect(document.body.textContent).toContain('待上传云端：2 项变更（尚未上传）')
+  expect(document.body.textContent).toContain('“全部业务数据”还会加密同步知识库原件与解析正文')
 })
