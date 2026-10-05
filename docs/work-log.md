@@ -3506,7 +3506,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 未用真实坚果云/WebDAV 账号做双电脑在线同步；本轮同步、加密和故障测试全部使用本地 WebDAV 测试服务，不会把用户资料上传到真实云端。因此真实账号权限、网盘限额和两台实机的连接状态未验证。
 - 当前仍有 0.4.27 的 Lumen 窗口运行。为避免打断或覆盖它，本轮没有安装 0.4.28；安装包已生成，需关闭当前应用后再安装。
-- 本轮提交推送后的 GitHub Actions 尚未验证；本地门禁结果不代替 CI。
+- 推送提交 `704e59d` 后的 [GitHub Actions 37263683160](https://github.com/PLA0185/lumen/actions/runs/37263683160) 前端与 Rust job 均通过，Rust 格式、编译、全套单测和严格 Clippy 全绿。
+- CI 仍提示 `.github/workflows/ci.yml` 中 `actions/checkout@v4`、`actions/setup-node@v4`、`pnpm/action-setup@v4` 面临 Node.js 20 弃用并被 runner 强制使用 Node.js 24。本轮未修改这些 action；提示不阻断 CI。
 
 ### 怎么验证的
 

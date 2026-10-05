@@ -90,4 +90,4 @@
 - [x] Run `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm lint`, `cargo fmt --check`, `cargo test --lib`, and strict Clippy after build.
 - [x] Run the three repository secret/artifact checks from `AGENTS.md`; inspect expected documentation-only grep matches.
 - [x] Append the work-log round with done/not done/verification/documents.
-- [ ] Commit each logical change in Chinese and try to push the requested GitHub branch.
+- [x] Commit each logical change in Chinese and push the requested GitHub branch; verify GitHub Actions.
