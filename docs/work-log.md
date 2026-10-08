@@ -3686,3 +3686,33 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 推送后验证补记
 
 - 草稿 PR [#1](https://github.com/PLA0185/lumen/pull/1) 对应代码提交的 GitHub Actions [CI 37855379160](https://github.com/PLA0185/lumen/actions/runs/37855379160) 已完成：frontend 与 rust 两个 job 均成功；Rust job 的格式、编译、573 项测试（4 项既有忽略）和严格 Clippy 全部成功。随后只追加了本条工作记录，没有改动代码。
+
+## 第 76 轮 · 2026-10-09 · 食物联网检索链路复审
+
+### 做了
+
+- 复审发现 AI 提示词要求最多返回 3 个食物候选，但后端原先会接纳 5 个；将服务端硬限制改为 3，避免模型未遵从提示时界面仍出现超额候选。
+- 把原有检索实现抽出为内部编排函数，正式命令仍固定请求 Tavily 官方地址并调用用户当前配置的 AI；测试可注入本机 HTTP 假服务和假 AI 响应，无需访问或读取真实密钥。
+- 增加完整链路回归覆盖：有效 HTTPS 搜索证据进入 AI、无效 HTTP 来源被过滤、AI 只能引用有效结果索引、核实候选才写入本机；没有来源时跳过 AI、不写数据；Tavily 429 被明确返回且不调用 AI、不写数据；越过候选上限的数据被截断。
+
+### 没做到
+
+- 未使用真实 Tavily API Key 或用户 AI 凭据执行在线食物查询；本轮端到端验证使用本机 HTTP 假搜索服务和假 AI 响应，因此真实服务的网络、额度、账户配置和模型输出未验证。
+- 本轮没有连接 Android 设备或模拟器，也没有重新进行 Android 页面目测或触控验收；本轮 Rust 改动不涉及平台专属代码，之前的 ARM64 编译和 APK 包装记录见第 75 轮。
+- 复审范围聚焦食物热量联网检索链路；其余页面没有逐项重新进行人工视觉验收。
+
+### 怎么验证的
+
+- 新增候选上限测试先在原代码下失败（实际为 4 项，承诺上限为 3 项），修正后通过；完整检索编排的 4 项网络/AI/数据库模拟测试通过。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.34）、`pnpm typecheck`、`pnpm test`（50 个文件、374 项）、`pnpm build`、`pnpm lint` 均实际执行并通过。构建有仓库既有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示；安装提示 esbuild 构建脚本按 pnpm 默认设置忽略。
+- `cargo fmt --check`、`cargo test --lib`（578 项通过、4 项按既有条件忽略）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。MSVC 输出的“正在创建库”链接器信息仍随单测出现。
+- `git diff --check` 通过；跟踪文件检查未发现密钥、数据库、日志、可执行文件、签名或构建目录；密钥标记文本只命中安全说明文档。
+- 推送后 CI 与 PR 状态尚未取得，将在后续补记中记录。
+
+### 相关文档
+
+- [食物检索与候选校验](../src-tauri/src/nutrition.rs)、[食谱与采购实现规格](superpowers/specs/2026-10-08-recipes-grocery-cross-platform.md)、[前一轮食谱与采购工作记录](#第-75-轮--2026-10-09--食谱热量采购清单与-android-适配)。
+
+### 推送后验证补记
+
+- PR [#2](https://github.com/PLA0185/lumen/pull/2) 的 GitHub Actions [CI 37859542642](https://github.com/PLA0185/lumen/actions/runs/37859542642) 已完成，frontend 与 rust 两个 job 均成功；Rust 远端完整格式、编译、测试和严格 Clippy 检查通过。
