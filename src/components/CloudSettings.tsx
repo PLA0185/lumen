@@ -43,9 +43,10 @@ export function CloudSettings() {
       <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} /></label>
       <label>同步文件夹<input className="input" value={form.folder} onChange={e => setForm({ ...form, folder: e.target.value })} /></label>
       <label>第三方应用密码<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>
-      <label>另一台电脑的恢复码<input className="input" type="password" autoComplete="off" placeholder="首次创建云空间留空；公司电脑接入时必填" value={form.recoveryCode} onChange={e => setForm({ ...form, recoveryCode: e.target.value })} /></label>
+      <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => setForm({ ...form, recoveryCode: e.target.value })} /></label>
+      <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是坚果云提供的密码。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。坚果云无法重置此密钥。</p>
       <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => setForm({ ...form, inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
-      <button className="btn btn--primary" disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); setForm(f => ({ ...f, password: '', recoveryCode: '' })); setNotice('连接成功，已开启自动同步。请复制恢复码并保存，公司电脑接入时需要。') })}>验证并连接云空间</button>
+      <button className="btn btn--primary" disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); setForm(f => ({ ...f, password: '', recoveryCode: '' })); setNotice('连接成功，已开启自动同步。请复制并保存 Lumen 同步密钥，另一台电脑加入此空间时需要。') })}>验证并连接云空间</button>
     </fieldset>
     {status?.config && <>
       <h3>默认同步类型</h3>
@@ -60,7 +61,7 @@ export function CloudSettings() {
       <div className="memos__toolbar">
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudNow(cloud.defaultSync(status.config))); setNotice('本次同步已执行，采用已保存的默认类型。') })}>立即同步</button>
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudEnable(!status.config!.enabled)) })}>{status.config.enabled ? '暂停同步' : '恢复同步'}</button>
-        <button className="btn" disabled={busy} onClick={() => void run(async () => { await writeText(await cloud.cloudRecoveryCode()); setNotice('恢复码已复制。请妥善保存；在公司电脑填入，不要发到聊天或 GitHub。') })}>复制同步恢复码</button>
+        <button className="btn" disabled={busy} onClick={() => void run(async () => { await writeText(await cloud.cloudRecoveryCode()); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。坚果云不会保存或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
       </div>
       {status.conflicts.map(id => <button key={id} className="btn" onClick={() => setHistoryId(id)}>查看备忘/流程冲突</button>)}
       {conflicts.map(c => <div key={c.id} className="setgroup">

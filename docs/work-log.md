@@ -3519,3 +3519,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [知识库云同步设计](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)、[知识库云同步实施计划](superpowers/plans/2026-10-05-knowledge-base-cloud-sync.md)、[知识库设计](design-knowledge-base-2026-10-04.md)、[发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
+
+## 第 70 轮 · 2026-10-08 · 坚果云同步提示与密钥名称修正
+
+### 做了
+
+- 设置页明确说明坚果云只提供 WebDAV 存储；用于解密同步内容的是 Lumen 本机生成的同步密钥，坚果云不会提供或重置它。首次创建空间留空，其他电脑加入时复制并填写。
+- 将连接成功、复制按钮及同步密钥错误提示统一改用“Lumen 同步密钥”，避免误以为坚果云提供恢复码。
+- 将应用版本升至 0.4.29。首次 WebDAV 目录访问的 HTTP 409 修复已存在于上游 0.4.16 起的正式版本，当前仓库保留该实现。
+
+### 没做到
+
+- **本机尚未安装 0.4.29**：本次重新编译需要下载 60.7 MiB 的 ONNX Runtime，实测下载速度约 8 KiB/s；中断时仅下载约 320 KiB，继续等待预计超过一小时。当前本机仍运行 0.4.16，它已有首次目录 409 修复，但界面仍显示旧“恢复码”用词。
+- **真实坚果云连接未复验**：旧连接失败发生在账号凭据写入本机前，数据库没有 `memo_cloud_sync` 配置。需要在已运行的 Lumen 设置页重新输入坚果云第三方应用密码；本轮没有向云端写入或覆盖用户资料。
+- Rust 测试因上述依赖下载过慢被中断；`cargo test --lib`、严格 Clippy、签名安装包构建及本机安装均未完成。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.29）、`pnpm typecheck`、`pnpm test`（47 个文件、363 项）、`pnpm build`、`pnpm lint` 均退出 0；`cargo fmt --all -- --check` 退出 0。
+- SQLite 只读检查确认本机有 2 条备忘记录、数据库结构版本为 12，未配置云同步；已确认运行中的唯一 Lumen 进程是 `C:\Users\win\AppData\Local\Lumen\lumen.exe`，版本 0.4.16。
+- ONNX Runtime 下载地址响应 HTTP 200、Content-Length 为 63,689,297 字节，但下载速度过慢，未取得完整文件或通过 SHA-256 校验；没有把临时下载文件放入仓库。
+
+### 相关文档
+
+- [0.4.29 发布说明](../RELEASE_NOTES.md)、[云同步设置](../src/components/CloudSettings.tsx)、[WebDAV 同步实现](../src-tauri/src/cloud_sync.rs)、[知识库云同步验收记录](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)。

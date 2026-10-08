@@ -407,7 +407,7 @@ fn credentials(id: &str, value: Option<&Credentials>) -> AppResult<Credentials> 
     let value = entry.get_password().map_err(|_| {
         AppError::new(
             ErrorCode::NotConfigured,
-            "本机缺少同步应用密码或恢复码，请重新配置连接",
+            "本机缺少同步应用密码或 Lumen 同步密钥，请重新配置连接",
         )
     })?;
     decoded(&value)
@@ -447,7 +447,7 @@ fn key_bytes(value: &str) -> AppResult<[u8; 32]> {
         .ok()
         .and_then(|v| v.try_into().ok())
         .ok_or_else(|| {
-            AppError::validation("恢复码格式无效，请完整复制另一台电脑显示的 LUMEN1- 恢复码")
+            AppError::validation("Lumen 同步密钥格式无效，请完整复制另一台电脑显示的 LUMEN1- 密钥")
         })
 }
 fn encrypt<T: Serialize>(key: &[u8; 32], aad: &str, data: &T) -> AppResult<Vec<u8>> {
@@ -499,7 +499,7 @@ fn decrypt<T: serde::de::DeserializeOwned>(key: &[u8; 32], aad: &str, data: &[u8
         .map_err(|_| {
             AppError::new(
                 ErrorCode::Unauthorized,
-                "恢复码不匹配，或云端文件已损坏；没有覆盖本机内容",
+                "Lumen 同步密钥不匹配，或云端文件已损坏；没有覆盖本机内容",
             )
         })?;
     serde_json::from_slice(&value).map_err(|_| AppError::validation("云端内容格式不兼容"))
@@ -983,10 +983,10 @@ pub async fn cloud_sync_connect(
         key = key_bytes(&credentials(&previous.connection_id, None)?.key)?;
     } else if !create {
         return Err(AppError::validation(
-            "请填写家里电脑的同步恢复码，才能下载加密内容",
+            "请填写已连接设备提供的 Lumen 同步密钥，才能下载加密内容",
         ));
     } else {
-        getrandom::fill(&mut key).map_err(|_| AppError::internal("无法生成同步恢复码"))?;
+        getrandom::fill(&mut key).map_err(|_| AppError::internal("无法生成 Lumen 同步密钥"))?;
     }
     let workspace = match existing {
         Some(bytes) => {
@@ -1049,7 +1049,7 @@ pub async fn cloud_sync_connect(
             .await?;
         if !matches!(code, 201 | 204) {
             return Err(AppError::conflict(
-                "同步空间创建未成功，可能已由另一台电脑创建；请填写那台电脑的恢复码再连接",
+                "同步空间创建未成功，可能已由另一台电脑创建；请填写那台电脑提供的 Lumen 同步密钥再连接",
             ));
         }
     }
