@@ -18,13 +18,22 @@ export function CloudSettings() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [syncKey, setSyncKey] = useState('')
+  const [showSyncKey, setShowSyncKey] = useState(false)
   const [historyId, setHistoryId] = useState('')
   const [conflicts, setConflicts] = useState<cloud.BusinessConflict[]>([])
   const [defaults, setDefaults] = useState<cloud.SyncOptions>({ scope: 'all', direction: 'both' })
   useEffect(() => {
     let active = true
     const refresh = () => { void Promise.all([cloud.cloudStatus(), cloud.cloudBusinessConflicts()]).then(([s, c]) => { if (active) { setStatus(s); setConflicts(c) } }).catch(e => { if (active) setError(message(e)) }) }
-    void cloud.cloudStatus().then(s => { if (active) { setDefaults(cloud.defaultSync(s.config)); if (s.config) setForm(f => ({ ...f, server: s.config!.server, account: s.config!.account, folder: s.config!.folder, inheritAll: s.config!.inheritAll })) } }).catch(e => { if (active) setError(message(e)) })
+    void cloud.cloudStatus().then(async s => {
+      const key = s.config ? await cloud.cloudRecoveryCode() : ''
+      if (active) {
+        setDefaults(cloud.defaultSync(s.config))
+        if (s.config) setForm(f => ({ ...f, server: s.config!.server, account: s.config!.account, folder: s.config!.folder, inheritAll: s.config!.inheritAll }))
+        setSyncKey(key)
+      }
+    }).catch(e => { if (active) setError(message(e)) })
     refresh(); const timer = setInterval(refresh, 3000)
     return () => { active = false; clearInterval(timer) }
   }, [])
@@ -38,6 +47,15 @@ export function CloudSettings() {
     <p className="setgroup__hint">修改先保存在本机，再按默认内容和方向同步。顶部“同步”可单独选择本次类型。无需运行坚果云客户端，云端内容加密保存。</p>
     {(error || status?.lastError) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
     {notice && <p role="status">{notice}</p>}
+    {status?.config ? <div className="cloud-sync-key">
+      <h3>连接其他电脑</h3>
+      <p className="setgroup__hint">把这把 Lumen 同步密钥复制到另一台电脑的云同步设置中。坚果云不保存此密钥。</p>
+      <div className="cloud-sync-key__row">
+        <input className="input" aria-label="Lumen 同步密钥" type={showSyncKey ? 'text' : 'password'} readOnly value={syncKey} placeholder="正在读取本机密钥…" />
+        <button className="btn" disabled={!syncKey} onClick={() => setShowSyncKey(value => !value)}>{showSyncKey ? '隐藏密钥' : '显示密钥'}</button>
+        <button className="btn" disabled={busy || !syncKey} onClick={() => void run(async () => { await writeText(syncKey); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。坚果云不会保存或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
+      </div>
+    </div> : <p className="setgroup__hint">尚未连接，首次连接成功后会生成同步密钥；连接成功后可在这里查看或复制。</p>}
     <fieldset disabled={busy} className="cloud-settings__fields">
       <label>服务器地址<input className="input" value={form.server} onChange={e => setForm({ ...form, server: e.target.value })} /></label>
       <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} /></label>
@@ -46,7 +64,7 @@ export function CloudSettings() {
       <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => setForm({ ...form, recoveryCode: e.target.value })} /></label>
       <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是坚果云提供的密码。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。坚果云无法重置此密钥。</p>
       <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => setForm({ ...form, inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
-      <button className="btn btn--primary" disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); setForm(f => ({ ...f, password: '', recoveryCode: '' })); setNotice('连接成功，已开启自动同步。请复制并保存 Lumen 同步密钥，另一台电脑加入此空间时需要。') })}>验证并连接云空间</button>
+      <button className="btn btn--primary" disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })); setNotice('连接成功，Lumen 同步密钥已显示；请保存，另一台电脑加入此空间时需要。') })}>验证并连接云空间</button>
     </fieldset>
     {status?.config && <>
       <h3>默认同步类型</h3>
@@ -61,7 +79,6 @@ export function CloudSettings() {
       <div className="memos__toolbar">
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudNow(cloud.defaultSync(status.config))); setNotice('本次同步已执行，采用已保存的默认类型。') })}>立即同步</button>
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudEnable(!status.config!.enabled)) })}>{status.config.enabled ? '暂停同步' : '恢复同步'}</button>
-        <button className="btn" disabled={busy} onClick={() => void run(async () => { await writeText(await cloud.cloudRecoveryCode()); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。坚果云不会保存或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
       </div>
       {status.conflicts.map(id => <button key={id} className="btn" onClick={() => setHistoryId(id)}>查看备忘/流程冲突</button>)}
       {conflicts.map(c => <div key={c.id} className="setgroup">

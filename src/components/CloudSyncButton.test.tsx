@@ -19,6 +19,11 @@ async function select(label: string, value: string) {
   expect(field, label).toBeTruthy()
   await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('change', { bubbles: true })) })
 }
+async function fill(label: string, value: string) {
+  const field = [...document.querySelectorAll('label')].find(l => l.textContent?.startsWith(label))?.querySelector('input') as HTMLInputElement
+  expect(field, label).toBeTruthy()
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, value); field.dispatchEvent(new Event('input', { bubbles: true })); field.dispatchEvent(new Event('change', { bubbles: true })) })
+}
 it('顶部入口读取默认选择，修改本次范围方向不改默认，暂停时仍可手动执行', async () => {
   vi.spyOn(cloud, 'cloudStatus').mockResolvedValue(connected)
   const now = vi.spyOn(cloud, 'cloudNow').mockResolvedValue(connected)
@@ -62,9 +67,30 @@ it('云同步设置保存默认内容和方向，不重连也不需要重新填�
 it('云同步设置把自动同步开关和上传队列状态分开说明', async () => {
   vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: { ...connected.config, enabled: true } })
   vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-saved-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
   expect(document.body.textContent).toContain('自动同步开关：已开启')
   expect(document.body.textContent).toContain('待上传云端：2 项变更（尚未上传）')
   expect(document.body.textContent).toContain('“全部业务数据”还会加密同步知识库原件与解析正文')
+  const key = document.querySelector('[aria-label="Lumen 同步密钥"]') as HTMLInputElement
+  expect(key.value).toBe('LUMEN1-saved-key')
+  expect(key.type).toBe('password')
+  await click('显示密钥')
+  expect(key.type).toBe('text')
+})
+it('首次连接成功后立即显示可复制的 Lumen 同步密钥', async () => {
+  let current: cloud.CloudStatus = { ...connected, config: null }
+  vi.spyOn(cloud, 'cloudStatus').mockImplementation(async () => current)
+  vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  vi.spyOn(cloud, 'cloudConnect').mockImplementation(async () => { current = connected; return connected })
+  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-test-key')
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<CloudSettings />))
+  expect(document.body.textContent).toContain('尚未连接，首次连接成功后会生成同步密钥')
+  await fill('坚果云账号', 'test@example.com')
+  await fill('第三方应用密码', 'app-password')
+  await click('验证并连接云空间')
+  expect((document.querySelector('[aria-label="Lumen 同步密钥"]') as HTMLInputElement).value).toBe('LUMEN1-test-key')
+  expect(document.body.textContent).toContain('复制 Lumen 同步密钥')
 })

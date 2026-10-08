@@ -3545,3 +3545,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.29 发布说明](../RELEASE_NOTES.md)、[v0.4.29 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.29)、[云同步设置](../src/components/CloudSettings.tsx)、[WebDAV 同步实现](../src-tauri/src/cloud_sync.rs)、[知识库云同步验收记录](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)。
+
+## 第 71 轮 · 2026-10-08 · 云同步密钥显示与复制入口
+
+### 做了
+
+- 在云同步设置顶部增加连接状态提示；未连接时说明密钥尚未生成。
+- 连接成功后立即读取并明文展示 Lumen 同步密钥；已有连接在打开设置页时也能加载密钥，并通过“显示密钥”切换明文/遮挡及复制到剪贴板。
+- 将原来埋在同步操作按钮区的复制入口移到清晰的“连接其他电脑”区域。没有修改 WebDAV 协议、密钥生成、加密或同步数据。
+- 版本更新到 0.4.30。
+
+### 没做到
+
+- 未用真实坚果云账号或另一台电脑验证 WebDAV 登录、密钥交接和数据同步；本轮未向云端传输用户数据。
+- 本机 `cargo test --lib` 停在 `ort-sys` 构建步骤超过两分钟且没有进度输出，手动中止；本机 Clippy 未运行。推送后的 GitHub CI 结果尚未取得。
+- 未对安装后的设置页执行实机鼠标验收；界面状态由组件回归测试覆盖。
+
+### 怎么验证的
+
+- 新增回归测试先在原界面失败，失败点为未连接页面没有“尚未连接”提示；修复后覆盖首次连接成功立即显示密钥、已有连接遮挡/显示密钥及两个页面状态。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（47 个文件、364 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.30）及 `cargo fmt --check` 均退出 0。构建保留既有 Vite 动态导入告警。
+- `git diff --check` 通过；跟踪文件产物检查无命中；私钥说明关键字仅命中安全说明文档与工作记录，未发现密钥块。
+
+### 相关文档
+
+- [0.4.30 发布说明](../RELEASE_NOTES.md)、[云同步设置](../src/components/CloudSettings.tsx)、[云同步界面回归测试](../src/components/CloudSyncButton.test.tsx)。
