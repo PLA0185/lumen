@@ -410,6 +410,64 @@ fn sync_selection_is_serializable_and_old_connection_fields_survive() {
         "download"
     );
 }
+#[tokio::test]
+async fn waiting_rate_limit_does_not_extend_retry_or_hide_original_error() {
+    let db = db().await;
+    runtime(&db).await.unwrap();
+    let retry_until = chrono::Utc::now().timestamp() + 12;
+    let cause = "已达到当前共享请求预算，稍后自动续传";
+    sqlx::query("UPDATE memo_sync_runtime SET retry_until=?,last_error=? WHERE singleton=1")
+        .bind(retry_until)
+        .bind(cause)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    save_error(
+        &db,
+        &AppError::new(
+            crate::error::ErrorCode::RateLimited,
+            "云同步正在等待重试，本机修改已经保存",
+        ),
+    )
+    .await;
+
+    let row = sqlx::query("SELECT retry_until,last_error FROM memo_sync_runtime WHERE singleton=1")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(row.get::<i64, _>("retry_until"), retry_until);
+    assert_eq!(row.get::<String, _>("last_error"), cause);
+    close(db).await;
+}
+
+#[tokio::test]
+async fn rate_limit_cause_does_not_extend_provider_retry_after() {
+    let db = db().await;
+    runtime(&db).await.unwrap();
+    let retry_until = chrono::Utc::now().timestamp() + 12;
+    let cause = "网盘要求稍后重试，本机修改没有丢失";
+    sqlx::query("UPDATE memo_sync_runtime SET retry_until=?,last_error=NULL WHERE singleton=1")
+        .bind(retry_until)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    save_error(
+        &db,
+        &AppError::new(crate::error::ErrorCode::RateLimited, cause),
+    )
+    .await;
+
+    let row = sqlx::query("SELECT retry_until,last_error FROM memo_sync_runtime WHERE singleton=1")
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(row.get::<i64, _>("retry_until"), retry_until);
+    assert_eq!(row.get::<String, _>("last_error"), cause);
+    close(db).await;
+}
+
 async fn close(db: Db) {
     let dir = db.data_dir().to_owned();
     db.pool().close().await;

@@ -30,6 +30,7 @@ fn stamp() -> String {
     crate::db::to_db_time(crate::db::utc_now())
 }
 const CONFIG_KEY: &str = "memo_cloud_sync";
+const SYNC_WAITING_RETRY: &str = "云同步正在等待重试，本机修改已经保存";
 const MAX_JSON: usize = 4 * 1024 * 1024;
 const MAX_HEADS: usize = 10_000;
 const MAX_DEVICES: usize = 32;
@@ -579,10 +580,7 @@ impl Dav {
         runtime(db).await?;
         let row = sqlx::query("SELECT budget_start,request_count,device_count,retry_until FROM memo_sync_runtime WHERE singleton=1").fetch_one(db.pool()).await?;
         if row.try_get::<i64, _>("retry_until")? > now {
-            return Err(AppError::new(
-                ErrorCode::RateLimited,
-                "云同步正在等待重试，本机修改已经保存",
-            ));
+            return Err(AppError::new(ErrorCode::RateLimited, SYNC_WAITING_RETRY));
         }
         let reset = now - row.try_get::<i64, _>("budget_start")? >= 1800;
         let count = if reset {
@@ -1554,6 +1552,15 @@ fn notify(app: &tauri::AppHandle) {
 }
 async fn save_error(db: &Db, error: &AppError) {
     // Status is auxiliary; pending revisions remain durable even if status cannot be refreshed.
+    if matches!(error.code, ErrorCode::RateLimited) {
+        if error.message != SYNC_WAITING_RETRY {
+            let _ = sqlx::query("UPDATE memo_sync_runtime SET last_error=? WHERE singleton=1")
+                .bind(&error.message)
+                .execute(db.pool())
+                .await;
+        }
+        return;
+    }
     let _=sqlx::query("UPDATE memo_sync_runtime SET last_error=?,retry_until=MAX(retry_until,?) WHERE singleton=1")
         .bind(&error.message).bind(chrono::Utc::now().timestamp()+30).execute(db.pool()).await;
 }
@@ -1593,6 +1600,16 @@ pub fn spawn(app: tauri::AppHandle) {
             let _guard = ENGINE.lock().await;
             let db = &app.state::<AppState>().db;
             if !matches!(config(db).await, Ok(Some(Config { enabled: true, .. }))) {
+                continue;
+            }
+            let retry_until: i64 =
+                sqlx::query_scalar("SELECT retry_until FROM memo_sync_runtime WHERE singleton=1")
+                    .fetch_optional(db.pool())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+            if retry_until > chrono::Utc::now().timestamp() {
                 continue;
             }
             let devices: i64 =
