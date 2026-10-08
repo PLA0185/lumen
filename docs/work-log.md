@@ -3558,7 +3558,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 未用真实坚果云账号或另一台电脑验证 WebDAV 登录、密钥交接和数据同步；本轮未向云端传输用户数据。
-- 本机 `cargo test --lib` 停在 `ort-sys` 构建步骤超过两分钟且没有进度输出，手动中止；本机 Clippy 未运行。推送后的 GitHub CI 结果尚未取得。
+- 本机 `cargo test --lib` 停在 `ort-sys` 构建步骤超过两分钟且没有进度输出，手动中止；本机 Clippy 未运行。GitHub Actions 已完成完整 Rust 与前端 CI 并通过；正式 Release 已通过完整门禁和签名密钥检查，签名安装包仍在构建。
 - 未对安装后的设置页执行实机鼠标验收；界面状态由组件回归测试覆盖。
 
 ### 怎么验证的
@@ -3566,6 +3566,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 新增回归测试先在原界面失败，失败点为未连接页面没有“尚未连接”提示；修复后覆盖首次连接成功立即显示密钥、已有连接遮挡/显示密钥及两个页面状态。
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（47 个文件、364 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.30）及 `cargo fmt --check` 均退出 0。构建保留既有 Vite 动态导入告警。
 - `git diff --check` 通过；跟踪文件产物检查无命中；私钥说明关键字仅命中安全说明文档与工作记录，未发现密钥块。
+- GitHub Actions [CI 37752898581](https://github.com/PLA0185/lumen/actions/runs/37752898581) 的前端与 Rust job 全部通过（含单测与严格 Clippy）。[v0.4.30 Release 37753080026](https://github.com/PLA0185/lumen/actions/runs/37753080026) 的完整门禁和签名密钥检查通过；签名安装包构建及验签尚未结束。
 
 ### 相关文档
 
