@@ -5,7 +5,8 @@ import { IpcError } from '../lib/ipc'
 import { CloudHistory } from './CloudHistory'
 import { SyncOptionsFields } from './SyncOptionsFields'
 const labels: Record<string, string> = { tasks: '任务', subtasks: '子任务', projects: '项目', categories: '分类', tags: '标签', reminders: '提醒', attachments: '附件', task_series: '重复任务', task_series_template: '重复子任务', task_series_segments: '重复规则', task_series_skips: '跳过记录', task_series_rebuilds: '重建记录', task_series_tags: '重复标签', task_tags: '任务标签', task_dependencies: '依赖', focus_sessions: '专注记录', goals: '目标', settings: '业务设置', knowledge_sources: '知识库资料' }
-const message = (e: unknown) => e instanceof IpcError ? e.userMessage() : String(e)
+const message = (e: unknown) => e instanceof IpcError ? e.userMessage() : e instanceof Error ? e.message : String(e)
+type ConnectionFeedback = { type: 'pending' | 'success' | 'error'; message: string }
 const fieldLabels: Record<string,string> = { title:'标题',name:'名称',description:'说明',note_md:'备注',body_md:'正文',rrule:'重复规则',tzid:'时区',status:'状态',is_done:'完成状态',planned_at:'计划时间',due_at:'截止时间',completed_at:'完成时间',file_name:'文件名',size_bytes:'文件字节数',priority:'优先级',estimated_minutes:'预计分钟',actual_minutes:'实际分钟',created_at:'创建时间',updated_at:'修改时间' }
 function versionText(row: Record<string, unknown> | null): string {
   if (!row) return '这个版本删除了记录。'
@@ -18,6 +19,7 @@ export function CloudSettings() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [connectionFeedback, setConnectionFeedback] = useState<ConnectionFeedback | null>(null)
   const [syncKey, setSyncKey] = useState('')
   const [showSyncKey, setShowSyncKey] = useState(false)
   const [historyId, setHistoryId] = useState('')
@@ -37,15 +39,25 @@ export function CloudSettings() {
     refresh(); const timer = setInterval(refresh, 3000)
     return () => { active = false; clearInterval(timer) }
   }, [])
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, connectionMessages?: { pending: string; success: string; failure: string }) => {
     setBusy(true); setError(''); setNotice('')
-    try { await action(); setStatus(await cloud.cloudStatus()); setConflicts(await cloud.cloudBusinessConflicts()) }
-    catch (e) { setError(message(e)) } finally { setBusy(false) }
+    setConnectionFeedback(connectionMessages ? { type: 'pending', message: connectionMessages.pending } : null)
+    try {
+      await action()
+      setStatus(await cloud.cloudStatus())
+      setConflicts(await cloud.cloudBusinessConflicts())
+      if (connectionMessages) setConnectionFeedback({ type: 'success', message: connectionMessages.success })
+    } catch (e) {
+      const detail = message(e)
+      setError(detail)
+      if (connectionMessages) setConnectionFeedback({ type: 'error', message: `${connectionMessages.failure}：${detail}` })
+    } finally { setBusy(false) }
   }
+  const updateForm = (patch: Partial<typeof form>) => { setForm(current => ({ ...current, ...patch })); setConnectionFeedback(null) }
   return <section className="setgroup">
     <h2>云同步 · 坚果云 / WebDAV</h2>
     <p className="setgroup__hint">修改先保存在本机，再按默认内容和方向同步。顶部“同步”可单独选择本次类型。无需运行坚果云客户端，云端内容加密保存。</p>
-    {(error || status?.lastError) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
+    {((error && connectionFeedback?.type !== 'error') || status?.lastError) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
     {notice && <p role="status">{notice}</p>}
     {status?.config ? <div className="cloud-sync-key">
       <h3>连接其他电脑</h3>
@@ -57,15 +69,16 @@ export function CloudSettings() {
       </div>
     </div> : <p className="setgroup__hint">尚未连接，首次连接成功后会生成同步密钥；连接成功后可在这里查看或复制。</p>}
     <fieldset disabled={busy} className="cloud-settings__fields">
-      <label>服务器地址<input className="input" value={form.server} onChange={e => setForm({ ...form, server: e.target.value })} /></label>
-      <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => setForm({ ...form, account: e.target.value })} /></label>
-      <label>同步文件夹<input className="input" value={form.folder} onChange={e => setForm({ ...form, folder: e.target.value })} /></label>
-      <label>第三方应用密码<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>
-      <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => setForm({ ...form, recoveryCode: e.target.value })} /></label>
+      <label>服务器地址<input className="input" value={form.server} onChange={e => updateForm({ server: e.target.value })} /></label>
+      <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => updateForm({ account: e.target.value })} /></label>
+      <label>同步文件夹<input className="input" value={form.folder} onChange={e => updateForm({ folder: e.target.value })} /></label>
+      <label>第三方应用密码<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} /></label>
+      <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => updateForm({ recoveryCode: e.target.value })} /></label>
       <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是坚果云提供的密码。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。坚果云无法重置此密钥。</p>
-      <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => setForm({ ...form, inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
-      <button className="btn btn--primary" disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })); setNotice('连接成功，Lumen 同步密钥已显示；请保存，另一台电脑加入此空间时需要。') })}>验证并连接云空间</button>
+      <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => updateForm({ inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
+      <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })) }, { pending: '正在验证服务器、账号和云空间，请稍候…', success: '云空间连接成功。同步密钥已显示，自动同步会按默认类型开始运行。', failure: '云空间连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接云空间'}</button>
     </fieldset>
+    {connectionFeedback && <div className={`cloud-settings__connect-feedback ${connectionFeedback.type === 'success' ? 'alert alert--ok' : connectionFeedback.type === 'error' ? 'alert alert--error' : 'setgroup__hint'}`} role={connectionFeedback.type === 'error' ? 'alert' : 'status'} aria-live={connectionFeedback.type === 'error' ? 'assertive' : 'polite'}>{connectionFeedback.message}</div>}
     {status?.config && <>
       <h3>默认同步类型</h3>
       <fieldset disabled={busy} className="cloud-settings__fields">
