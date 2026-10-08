@@ -3624,3 +3624,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [云同步连接状态界面](../src/components/CloudSettings.tsx)、[云同步连接状态回归测试](../src/components/CloudSyncButton.test.tsx)、[0.4.32 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
+
+## 第 74 轮 · 2026-10-08 · 修正云空间连接限流误报
+
+### 做了
+
+- 查明截图中的失败发生在本机 WebDAV 请求预算拦截处，验证请求没有发到坚果云；只读同步状态显示当前设备预算为 250/250、两台设备计入共享预算、约 705 项本机变更待上传。此状态不能证明账号或第三方应用密码错误。
+- 区分本机预算耗尽、坚果云频率限制和真实授权错误；等待提示显示限流来源、剩余时间、本次请求尚未发出及本机待上传数据仍保留。连接页把限流显示为“连接验证暂缓”，明确账号尚未验证，并列出待上传数量。
+- 增加前后端回归测试，覆盖冷却时不发送 HTTP 请求、显示准确原因且不误报连接失败。版本更新为 0.4.33。
+
+### 没做到
+
+- 未使用真实坚果云凭据验证账号/第三方应用密码，也未向坚果云发送请求；该次失败发生在网络请求前。账户套餐与服务端当时状态未验证。
+- 0.4.33 尚未推送；GitHub CI 和 Release 工作流未运行。本机尚未安装本轮构建版本，界面改进在安装更新前不可见。
+
+### 怎么验证的
+
+- 两项新增测试修复前失败；修复后云同步前端测试 8 项通过、后端云同步测试 31 项通过。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.33）、`pnpm typecheck`、`pnpm test`（47 个文件、367 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo check --all-targets`、`cargo test --lib`（559 项通过、4 项 ignored）及 `cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。Vite 构建保留已有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示。
+- `git diff --check` 通过；跟踪文件产物检查无命中；私钥标记文本只命中安全说明文档与工作记录，未发现密钥块。
+
+### 相关文档
+
+- [0.4.33 发布说明](../RELEASE_NOTES.md)、[WebDAV 限流与连接反馈](../src-tauri/src/cloud_sync.rs)、[连接界面与回归测试](../src/components/CloudSettings.tsx)、[云同步后端回归测试](../src-tauri/src/cloud_sync/tests.rs)、[README 文档索引](../README.md#文档索引)。
