@@ -3712,3 +3712,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [食物检索与候选校验](../src-tauri/src/nutrition.rs)、[食谱与采购实现规格](superpowers/specs/2026-10-08-recipes-grocery-cross-platform.md)、[前一轮食谱与采购工作记录](#第-75-轮--2026-10-09--食谱热量采购清单与-android-适配)。
+
+### 推送后验证补记
+
+- PR [#2](https://github.com/PLA0185/lumen/pull/2) 的 GitHub Actions [CI 37859542642](https://github.com/PLA0185/lumen/actions/runs/37859542642) 已完成，frontend 与 rust 两个 job 均成功；Rust 远端完整格式、编译、测试和严格 Clippy 检查通过。
