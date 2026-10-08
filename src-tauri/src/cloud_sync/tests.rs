@@ -3,7 +3,7 @@ use std::{
     io::{Read, Write},
     net::TcpListener,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -16,6 +16,7 @@ struct Mock {
     read_conflict: Arc<AtomicBool>,
     ignore_put_condition: Arc<AtomicBool>,
     ignore_move_condition: Arc<AtomicBool>,
+    requests: Arc<AtomicUsize>,
 }
 impl Mock {
     fn new() -> Self {
@@ -37,6 +38,8 @@ impl Mock {
         let ignore_put = ignore_put_condition.clone();
         let ignore_move_condition = Arc::new(AtomicBool::new(false));
         let ignore_move = ignore_move_condition.clone();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let request_count = requests.clone();
         std::thread::spawn(move || {
             for socket in listener.incoming() {
                 let Ok(mut socket) = socket else { break };
@@ -58,6 +61,7 @@ impl Mock {
                 if end == 0 {
                     continue;
                 }
+                request_count.fetch_add(1, Ordering::SeqCst);
                 let headers = String::from_utf8_lossy(&bytes[..end]).to_string();
                 let length = headers
                     .lines()
@@ -180,6 +184,7 @@ impl Mock {
             read_conflict,
             ignore_put_condition,
             ignore_move_condition,
+            requests,
         }
     }
     fn dav(&self) -> Dav {
@@ -190,6 +195,9 @@ impl Mock {
             password: "not-a-real-secret".into(),
             folders: std::sync::Mutex::new(HashSet::new()),
         }
+    }
+    fn request_count(&self) -> usize {
+        self.requests.load(Ordering::SeqCst)
     }
 }
 #[tokio::test]
@@ -465,6 +473,27 @@ async fn rate_limit_cause_does_not_extend_provider_retry_after() {
         .unwrap();
     assert_eq!(row.get::<i64, _>("retry_until"), retry_until);
     assert_eq!(row.get::<String, _>("last_error"), cause);
+    close(db).await;
+}
+
+#[tokio::test]
+async fn local_request_budget_wait_says_request_was_not_sent() {
+    let db = db().await;
+    runtime(&db).await.unwrap();
+    let retry_until = chrono::Utc::now().timestamp() + 50;
+    sqlx::query("UPDATE memo_sync_runtime SET request_count=250,device_count=2,retry_until=?,last_error=? WHERE singleton=1")
+        .bind(retry_until)
+        .bind("已达到当前共享请求预算，稍后自动续传")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let mock = Mock::new();
+    let error = mock.dav().workspace(&db).await.unwrap_err();
+    assert!(matches!(error.code, crate::error::ErrorCode::RateLimited));
+    assert!(error.message.contains("本机 WebDAV 请求额度已用完"));
+    assert!(error.message.contains("当前 WebDAV 请求尚未发出"));
+    assert_eq!(mock.request_count(), 0);
     close(db).await;
 }
 

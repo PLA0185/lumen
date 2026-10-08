@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as cloud from '../lib/cloud-sync-ipc'
+import { IpcError } from '../lib/ipc'
 import { CloudSyncButton } from './CloudSyncButton'
 import { CloudSettings } from './CloudSettings'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -126,4 +127,25 @@ it('验证云空间失败时在按钮旁明确显示失败原因', async () => {
   const feedback = document.querySelector('.cloud-settings__connect-feedback')
   expect(feedback?.textContent).toContain('云空间连接失败：坚果云密码错误')
   expect(feedback?.getAttribute('role')).toBe('alert')
+})
+it('本机请求额度冷却时说明尚未发送验证请求，不误报连接失败', async () => {
+  vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: null })
+  vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  vi.spyOn(cloud, 'cloudConnect').mockRejectedValue(new IpcError(
+    'rate_limited',
+    'Lumen 本机 WebDAV 请求额度已用完，约 8 分钟后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。',
+    null,
+    null,
+  ))
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<CloudSettings />))
+  await fill('坚果云账号', 'test@example.com')
+  await fill('第三方应用密码', 'app-password')
+  await click('验证并连接云空间')
+  const feedback = document.querySelector('.cloud-settings__connect-feedback')
+  expect(feedback?.textContent).toContain('本机 WebDAV 请求额度已用完')
+  expect(feedback?.textContent).toContain('没有账号验证结果')
+  expect(feedback?.textContent).toContain('当前有 2 项变更待上传')
+  expect(feedback?.textContent).not.toContain('云空间连接失败')
+  expect(feedback?.getAttribute('role')).toBe('status')
 })

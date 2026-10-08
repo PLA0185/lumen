@@ -31,9 +31,33 @@ fn stamp() -> String {
 }
 const CONFIG_KEY: &str = "memo_cloud_sync";
 const SYNC_WAITING_RETRY: &str = "云同步正在等待重试，本机修改已经保存";
+const SYNC_BUDGET_EXCEEDED: &str = "已达到当前共享请求预算，稍后自动续传";
+const SYNC_PROVIDER_RATE_LIMITED: &str = "网盘要求稍后重试，本机修改没有丢失";
 const MAX_JSON: usize = 4 * 1024 * 1024;
 const MAX_HEADS: usize = 10_000;
 const MAX_DEVICES: usize = 32;
+fn retry_wait_text(seconds: i64) -> String {
+    let seconds = seconds.max(1);
+    let minutes = seconds / 60;
+    let remainder = seconds % 60;
+    if minutes == 0 {
+        format!("{seconds} 秒")
+    } else if remainder == 0 {
+        format!("{minutes} 分钟")
+    } else {
+        format!("{minutes} 分 {remainder} 秒")
+    }
+}
+fn waiting_retry_message(cause: Option<&str>, seconds: i64) -> String {
+    let wait = retry_wait_text(seconds);
+    if cause == Some(SYNC_BUDGET_EXCEEDED) {
+        format!("Lumen 本机 WebDAV 请求额度已用完，约 {wait} 后自动续传；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+    } else if cause == Some(SYNC_PROVIDER_RATE_LIMITED) {
+        format!("坚果云暂时限制了 WebDAV 请求，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+    } else {
+        format!("云同步正在等待重试，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+    }
+}
 pub const HISTORY_TABLES: [&str; 9] = [
     "memo_sync_events",
     "memo_sync_parents",
@@ -578,9 +602,14 @@ impl Dav {
     ) -> AppResult<reqwest::Response> {
         let now = chrono::Utc::now().timestamp();
         runtime(db).await?;
-        let row = sqlx::query("SELECT budget_start,request_count,device_count,retry_until FROM memo_sync_runtime WHERE singleton=1").fetch_one(db.pool()).await?;
-        if row.try_get::<i64, _>("retry_until")? > now {
-            return Err(AppError::new(ErrorCode::RateLimited, SYNC_WAITING_RETRY));
+        let row = sqlx::query("SELECT budget_start,request_count,device_count,retry_until,last_error FROM memo_sync_runtime WHERE singleton=1").fetch_one(db.pool()).await?;
+        let retry_until: i64 = row.try_get("retry_until")?;
+        if retry_until > now {
+            let cause: Option<String> = row.try_get("last_error")?;
+            return Err(AppError::new(
+                ErrorCode::RateLimited,
+                waiting_retry_message(cause.as_deref(), retry_until - now),
+            ));
         }
         let reset = now - row.try_get::<i64, _>("budget_start")? >= 1800;
         let count = if reset {
@@ -590,14 +619,17 @@ impl Dav {
         };
         let devices = row.try_get::<i64, _>("device_count")?.max(1);
         if count >= 500 / devices {
+            let retry_until = row.try_get::<i64, _>("budget_start")? + 1800;
             sqlx::query(
-                "UPDATE memo_sync_runtime SET retry_until=budget_start+1800 WHERE singleton=1",
+                "UPDATE memo_sync_runtime SET retry_until=?,last_error=? WHERE singleton=1",
             )
+            .bind(retry_until)
+            .bind(SYNC_BUDGET_EXCEEDED)
             .execute(db.pool())
             .await?;
             return Err(AppError::new(
                 ErrorCode::RateLimited,
-                "已达到当前共享请求预算，稍后自动续传",
+                waiting_retry_message(Some(SYNC_BUDGET_EXCEEDED), retry_until - now),
             ));
         }
         sqlx::query("UPDATE memo_sync_runtime SET budget_start=CASE WHEN ? THEN ? ELSE budget_start END,request_count=? WHERE singleton=1")
@@ -663,13 +695,19 @@ impl Dav {
                 })
                 .unwrap_or(60)
                 .clamp(1, 86400);
-            sqlx::query("UPDATE memo_sync_runtime SET retry_until=? WHERE singleton=1")
-                .bind(now + delay)
-                .execute(db.pool())
-                .await?;
+            sqlx::query(
+                "UPDATE memo_sync_runtime SET retry_until=?,last_error=? WHERE singleton=1",
+            )
+            .bind(now + delay)
+            .bind(SYNC_PROVIDER_RATE_LIMITED)
+            .execute(db.pool())
+            .await?;
             return Err(AppError::new(
                 ErrorCode::RateLimited,
-                "网盘要求稍后重试，本机修改没有丢失",
+                format!(
+                    "坚果云返回 WebDAV 请求频率限制，Lumen 将按要求等待约 {} 后自动重试；本机未上传内容仍保留。",
+                    retry_wait_text(delay)
+                ),
             ));
         }
         Ok(response)
@@ -1553,7 +1591,13 @@ fn notify(app: &tauri::AppHandle) {
 async fn save_error(db: &Db, error: &AppError) {
     // Status is auxiliary; pending revisions remain durable even if status cannot be refreshed.
     if matches!(error.code, ErrorCode::RateLimited) {
-        if error.message != SYNC_WAITING_RETRY {
+        let has_cause: bool = sqlx::query_scalar(
+            "SELECT last_error IS NOT NULL FROM memo_sync_runtime WHERE singleton=1",
+        )
+        .fetch_one(db.pool())
+        .await
+        .unwrap_or(false);
+        if !has_cause && error.message != SYNC_WAITING_RETRY {
             let _ = sqlx::query("UPDATE memo_sync_runtime SET last_error=? WHERE singleton=1")
                 .bind(&error.message)
                 .execute(db.pool())
