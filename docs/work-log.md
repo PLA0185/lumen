@@ -3647,3 +3647,9 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.33 发布说明](../RELEASE_NOTES.md)、[WebDAV 限流与连接反馈](../src-tauri/src/cloud_sync.rs)、[连接界面与回归测试](../src/components/CloudSettings.tsx)、[云同步后端回归测试](../src-tauri/src/cloud_sync/tests.rs)、[README 文档索引](../README.md#文档索引)。
+
+### 推送后验证补记
+
+- 上述“尚未推送 / 工作流未运行”记录的是本节首次提交时的状态。之后已推送 `main`，GitHub 主分支 CI [37782068122](https://github.com/PLA0185/lumen/actions/runs/37782068122) 的前端与 Rust job 全部成功。
+- Release [37782090465](https://github.com/PLA0185/lumen/actions/runs/37782090465) 的完整门禁、签名包构建、安装包验签与篡改拒绝检查、更新清单规范化及公开发布步骤全部成功。核验时只剩 Runner 的 Rust 缓存收尾步骤仍在运行。
+- 匿名读取应用更新地址 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json` 返回 0.4.33，并指向公开的 `Lumen_0.4.33_x64-setup.exe`；Release 不是草稿，Assets 包含安装程序、`.sig` 和 `latest.json`。
