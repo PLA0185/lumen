@@ -32,7 +32,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 7;
+pub const BACKUP_FORMAT_VERSION: u32 = 8;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -107,6 +107,12 @@ pub struct BackupStats {
     pub knowledge_sources: usize,
     #[serde(default)]
     pub knowledge_chunks: usize,
+    #[serde(default)]
+    pub recipes: usize,
+    #[serde(default)]
+    pub nutrition_entries: usize,
+    #[serde(default)]
+    pub shopping_items: usize,
 }
 
 /// 备份承载的数据。全部使用 `serde_json::Value` 行式存储，
@@ -153,6 +159,9 @@ pub struct BackupData {
     pub focus_sessions: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub goals: Vec<serde_json::Value>,
+    /// 版本 8 加入饮食与采购清单；空 map 不改变旧备份的校验和。
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub nutrition_data: std::collections::BTreeMap<String, Vec<serde_json::Value>>,
 }
 
 impl BackupData {
@@ -180,6 +189,15 @@ impl BackupData {
             series_rebuilds: self.series_rebuilds.len(),
             focus_sessions: self.focus_sessions.len(),
             goals: self.goals.len(),
+            recipes: self.nutrition_data.get("recipes").map_or(0, Vec::len),
+            nutrition_entries: self
+                .nutrition_data
+                .get("nutrition_entries")
+                .map_or(0, Vec::len),
+            shopping_items: self
+                .nutrition_data
+                .get("shopping_items")
+                .map_or(0, Vec::len),
         }
     }
 }
@@ -309,6 +327,11 @@ pub(crate) async fn dump_table_from(
         "task_series_rebuilds" => "SELECT * FROM task_series_rebuilds",
         "focus_sessions" => "SELECT * FROM focus_sessions",
         "goals" => "SELECT * FROM goals",
+        "nutrition_preferences" => "SELECT * FROM nutrition_preferences",
+        "recipes" => "SELECT * FROM recipes",
+        "recipe_ingredients" => "SELECT * FROM recipe_ingredients",
+        "nutrition_entries" => "SELECT * FROM nutrition_entries",
+        "shopping_items" => "SELECT * FROM shopping_items",
 
         _ => return Err(AppError::internal("内部错误：非法表名")),
     };
@@ -394,7 +417,10 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
             (SELECT COUNT(*) FROM task_series_skips) AS series_skips,
             (SELECT COUNT(*) FROM task_series_rebuilds) AS series_rebuilds,
             (SELECT COUNT(*) FROM focus_sessions) AS focus_sessions,
-            (SELECT COUNT(*) FROM goals) AS goals",
+            (SELECT COUNT(*) FROM goals) AS goals,
+            (SELECT COUNT(*) FROM recipes) AS recipes,
+            (SELECT COUNT(*) FROM nutrition_entries) AS nutrition_entries,
+            (SELECT COUNT(*) FROM shopping_items) AS shopping_items",
     )
     .fetch_one(db.pool())
     .await?;
@@ -422,6 +448,9 @@ async fn current_stats(db: &Db) -> AppResult<BackupStats> {
         series_rebuilds: row.try_get::<i64, _>("series_rebuilds")? as usize,
         focus_sessions: row.try_get::<i64, _>("focus_sessions")? as usize,
         goals: row.try_get::<i64, _>("goals")? as usize,
+        recipes: row.try_get::<i64, _>("recipes")? as usize,
+        nutrition_entries: row.try_get::<i64, _>("nutrition_entries")? as usize,
+        shopping_items: row.try_get::<i64, _>("shopping_items")? as usize,
     })
 }
 
@@ -446,6 +475,19 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         .await?
         .try_get("n")?;
     let cached_count = sync_history.get("cloud_files").map_or(0, Vec::len);
+    let mut nutrition_data = std::collections::BTreeMap::new();
+    for table in [
+        "nutrition_preferences",
+        "recipes",
+        "recipe_ingredients",
+        "nutrition_entries",
+        "shopping_items",
+    ] {
+        let rows = dump_table_from(conn, table).await?;
+        if !rows.is_empty() {
+            nutrition_data.insert(table.to_owned(), rows);
+        }
+    }
 
     Ok(BackupData {
         sync_history,
@@ -471,6 +513,7 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         series_rebuilds: dump_table_from(conn, "task_series_rebuilds").await?,
         focus_sessions: dump_table_from(conn, "focus_sessions").await?,
         goals: dump_table_from(conn, "goals").await?,
+        nutrition_data,
 
         attachments_note: if cached_count > 0 {
             format!("本备份包含 {attachment_count} 条附件记录和 {cached_count} 个云同步缓存文件本体。恢复时会重建已有记录的缓存副本；未缓存的传统附件文件不在备份中，需保留原文件。")
@@ -565,6 +608,21 @@ fn read_backup(path: &Path) -> AppResult<BackupFile> {
 
 fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
     let mut issues = Vec::new();
+    const NUTRITION_TABLES: [&str; 5] = [
+        "nutrition_preferences",
+        "recipes",
+        "recipe_ingredients",
+        "nutrition_entries",
+        "shopping_items",
+    ];
+    if file
+        .data
+        .nutrition_data
+        .keys()
+        .any(|key| !NUTRITION_TABLES.contains(&key.as_str()))
+    {
+        issues.push("备份包含不支持的饮食或采购表".into());
+    }
     if file
         .data
         .sync_history
@@ -926,6 +984,11 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         "memo_documents",
         "knowledge_sources",
         "content_assets",
+        "nutrition_entries",
+        "recipe_ingredients",
+        "recipes",
+        "shopping_items",
+        "nutrition_preferences",
     ] {
         // 表名来自上面这个内部字面量数组，非用户输入
         let sql = format!("DELETE FROM {t}");
@@ -935,7 +998,8 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
     }
 
     // 插入顺序与外键方向一致：父表先插
-    let plan: [(&str, &[serde_json::Value]); 22] = [
+    let nutrition = &file.data.nutrition_data;
+    let plan: [(&str, &[serde_json::Value]); 27] = [
         ("projects", &file.data.projects),
         ("categories", &file.data.categories),
         ("tags", &file.data.tags),
@@ -958,6 +1022,38 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         ("knowledge_chunks", &file.data.knowledge_chunks),
         ("focus_sessions", &file.data.focus_sessions),
         ("goals", &file.data.goals),
+        (
+            "nutrition_preferences",
+            nutrition
+                .get("nutrition_preferences")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "recipes",
+            nutrition.get("recipes").map(Vec::as_slice).unwrap_or(&[]),
+        ),
+        (
+            "recipe_ingredients",
+            nutrition
+                .get("recipe_ingredients")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "nutrition_entries",
+            nutrition
+                .get("nutrition_entries")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "shopping_items",
+            nutrition
+                .get("shopping_items")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
     ];
 
     // 预先取好各表列名（避免在事务里反复 PRAGMA 查询）
@@ -995,6 +1091,9 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
             "task_series_rebuilds" => imported.series_rebuilds = n,
             "focus_sessions" => imported.focus_sessions = n,
             "goals" => imported.goals = n,
+            "recipes" => imported.recipes = n,
+            "nutrition_entries" => imported.nutrition_entries = n,
+            "shopping_items" => imported.shopping_items = n,
 
             _ => {}
         }
@@ -1748,6 +1847,87 @@ mod tests {
     // 数据库往返测试（§11 要求自动化测试覆盖"备份恢复"）
     // =========================================================================
 
+    #[tokio::test]
+    async fn nutrition_and_grocery_data_survive_complete_backup_restore() {
+        let (db, dir) = make_db_with_data().await;
+        sqlx::query("INSERT INTO task_series_template(series_id,title) VALUES('s1','模板')")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let now = to_db_time(utc_now());
+        sqlx::query("INSERT INTO nutrition_preferences(singleton,daily_target_kcal,updated_at) VALUES(1,2350,?)")
+            .bind(&now).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO recipes(id,title,servings,instructions,created_at,updated_at) VALUES('recipe-1','番茄鸡肉',2,'炖煮',?,?)")
+            .bind(&now).bind(&now).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO recipe_ingredients(id,recipe_id,food_name,amount_grams,kcal_per_100g,source_title,source_url,checked_at,sort_order) VALUES('ingredient-1','recipe-1','鸡肉',200,165,'食品营养资料','https://example.test/chicken',?,0)")
+            .bind(&now).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO nutrition_entries(id,log_date,meal_type,name,amount,unit,kcal_per_unit,calories,state,source_title,source_url,recipe_id,created_at,updated_at) VALUES('entry-1','2026-10-08','lunch','番茄鸡肉',1,'份',410,410,'eaten','食谱：番茄鸡肉',NULL,'recipe-1',?,?)")
+            .bind(&now).bind(&now).execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO shopping_items(id,name,quantity,unit,category,notes,completed,source,sort_order,created_at,updated_at) VALUES('shop-1','鸡肉',200,'g','食材','番茄鸡肉',0,'recipe',0,?,?)")
+            .bind(&now).bind(&now).execute(db.pool()).await.unwrap();
+
+        let data = build_backup_data(&db).await.expect("导出饮食与采购数据");
+        let expected_nutrition = data.nutrition_data.clone();
+        let stats = data.stats();
+        assert_eq!(stats.recipes, 1);
+        assert_eq!(stats.nutrition_entries, 1);
+        assert_eq!(stats.shopping_items, 1);
+        for table in [
+            "nutrition_preferences",
+            "recipes",
+            "recipe_ingredients",
+            "nutrition_entries",
+            "shopping_items",
+        ] {
+            assert!(!data.nutrition_data[table].is_empty(), "备份漏掉 {table}");
+        }
+        let file = BackupFile {
+            format_version: BACKUP_FORMAT_VERSION,
+            app_version: "test".into(),
+            created_at: now_stamp(),
+            checksum: checksum_of(&data).unwrap(),
+            stats,
+            note: None,
+            data,
+        };
+        let path = dir.join("nutrition.json");
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        sqlx::query("DELETE FROM nutrition_entries")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM recipes")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM shopping_items")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE nutrition_preferences SET daily_target_kcal=NULL WHERE singleton=1")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        restore_from(&db, path.to_str().unwrap())
+            .await
+            .expect("恢复饮食与采购数据");
+        let restored = build_backup_data(&db).await.expect("读取恢复后的数据");
+        assert_eq!(restored.nutrition_data, expected_nutrition);
+        let restored_stats = current_stats(&db).await.unwrap();
+        assert_eq!(restored_stats.recipes, 1);
+        assert_eq!(restored_stats.nutrition_entries, 1);
+        assert_eq!(restored_stats.shopping_items, 1);
+        let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+        assert_eq!(integrity, "ok");
+
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 建一个带样例数据的临时库，返回 (库句柄, 目录)
     async fn make_db_with_data() -> (Db, PathBuf) {
         let dir = std::env::temp_dir().join(format!("lumen-backup-{}", uuid::Uuid::now_v7()));
@@ -2481,6 +2661,7 @@ mod tests {
             series_rebuilds: vec![],
             focus_sessions: vec![],
             goals: vec![],
+            nutrition_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2515,6 +2696,7 @@ mod tests {
             series_rebuilds: vec![],
             focus_sessions: vec![],
             goals: vec![],
+            nutrition_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2552,6 +2734,7 @@ mod tests {
             series_rebuilds: vec![],
             focus_sessions: vec![],
             goals: vec![],
+            nutrition_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2589,6 +2772,7 @@ mod tests {
             series_rebuilds: vec![],
             focus_sessions: vec![],
             goals: vec![],
+            nutrition_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2638,6 +2822,7 @@ mod tests {
                 series_rebuilds: vec![],
                 focus_sessions: vec![],
                 goals: vec![],
+                nutrition_data: Default::default(),
 
                 attachments_note: "无附件".into(),
             },

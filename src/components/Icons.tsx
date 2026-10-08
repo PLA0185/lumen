@@ -47,6 +47,7 @@ export type IconName =
   | 'plus'
   | 'repeat'
   | 'download'
+  | 'upload'
   | 'alert'
   | 'search'
   | 'close'
@@ -71,6 +72,7 @@ export type IconName =
   | 'file'
   | 'image'
   | 'document'
+  | 'heart'
   | 'audio'
   | 'video'
   | 'package'
@@ -214,6 +216,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M4.4 19.6h15.2" />
     </>
   ),
+  upload: (
+    <>
+      <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" />
+      <path d="M5 14v4.2A1.8 1.8 0 0 0 6.8 20h10.4a1.8 1.8 0 0 0 1.8-1.8V14" />
+    </>
+  ),
   alert: (
     <>
       <path d="M12 4.2 21 19.8H3L12 4.2Z" />
@@ -326,6 +334,9 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M13.4 3.8v4.6h4.8" />
       <path d="M8.6 12.4h6.8M8.6 15.2h6.8M8.6 17.6h4" />
     </>
+  ),
+  heart: (
+    <path d="M20.4 8.5c0 5-8.4 11.1-8.4 11.1S3.6 13.5 3.6 8.5A4.3 4.3 0 0 1 12 6.6a4.3 4.3 0 0 1 8.4 1.9Z" />
   ),
   audio: (
     <>

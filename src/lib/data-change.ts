@@ -4,6 +4,7 @@ import { emit, listen } from '@tauri-apps/api/event'
 export type DataDomain =
   | 'memos'
   | 'knowledge'
+  | 'nutrition'
   | 'tasks'
   | 'organization'
   | 'subtasks'
@@ -24,6 +25,25 @@ export const MUTATION_DOMAINS = {
   memo_set_deleted: ['memos'],
   knowledge_import: ['knowledge'],
   knowledge_delete: ['knowledge'],
+  nutrition_set_daily_target: ['nutrition'],
+  nutrition_entry_create_food: ['nutrition'],
+  nutrition_entry_create_training: ['nutrition'],
+  nutrition_entry_update_amount: ['nutrition'],
+  nutrition_entry_replace_food: ['nutrition'],
+  nutrition_entry_set_state: ['nutrition'],
+  nutrition_entry_delete: ['nutrition'],
+  nutrition_recipe_create: ['nutrition'],
+  nutrition_recipe_update: ['nutrition'],
+  nutrition_recipe_delete: ['nutrition'],
+  nutrition_recipe_add_ingredient: ['nutrition'],
+  nutrition_recipe_remove_ingredient: ['nutrition'],
+  nutrition_recipe_plan: ['nutrition'],
+  nutrition_shopping_create: ['nutrition'],
+  nutrition_shopping_update: ['nutrition'],
+  nutrition_shopping_set_completed: ['nutrition'],
+  nutrition_shopping_delete: ['nutrition'],
+  nutrition_shopping_import_commit: ['nutrition'],
+  nutrition_shopping_add_recipe: ['nutrition'],
   cloud_sync_restore: ['memos'],
   cloud_sync_business_resolve: ['all'],
   task_create: ['tasks', 'organization', 'stats'],

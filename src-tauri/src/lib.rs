@@ -33,6 +33,7 @@ pub mod commands;
 #[cfg(test)]
 mod commands_e2e;
 pub mod content_assets;
+pub(crate) mod credentials;
 pub mod db;
 pub mod document_import;
 pub mod error;
@@ -44,6 +45,7 @@ pub mod knowledge_base;
 pub mod memo_ai;
 pub mod memos;
 pub mod models;
+pub mod nutrition;
 pub mod organize;
 pub mod paddle_ocr;
 pub mod pdf;
@@ -55,15 +57,26 @@ pub mod recurrence_subtasks;
 #[cfg(test)]
 mod remediation2_e2e;
 pub mod reminders;
+#[cfg(desktop)]
 pub mod shortcuts;
 pub mod stats;
 pub mod subtasks;
 pub mod weekly_recurring;
+#[cfg(desktop)]
+pub mod window_mgr;
+#[cfg(target_os = "android")]
+#[path = "window_mgr_android.rs"]
 pub mod window_mgr;
 
+#[cfg(desktop)]
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+#[cfg(desktop)]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent};
+use tauri::Manager;
+#[cfg(desktop)]
+use tauri::WindowEvent;
+#[cfg(desktop)]
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_log::{Target, TargetKind};
 
 use commands::AppState;
@@ -74,6 +87,7 @@ use window_mgr::WindowConfig;
 pub const MAIN_WINDOW: &str = window_mgr::MAIN;
 
 /// 托盘图标 ID
+#[cfg(desktop)]
 const TRAY_ID: &str = "main-tray";
 
 /// 装配并启动应用。
@@ -95,7 +109,7 @@ pub fn run() {
         }));
     }
 
-    builder
+    builder = builder
         // ---------------- 日志（§9：一键打开日志目录、日志不含密钥） ----------------
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -119,31 +133,36 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         // 系统通知（§4.3）
         .plugin(tauri_plugin_notification::init())
-        // 全局快捷键（§4.4 / §8.2 恢复入口）。
-        // 注意 with_handler 是必需的：没有 handler 时 on_shortcut 注册不生效。
-        .plugin(
+        .plugin(tauri_plugin_store::Builder::new().build());
+
+    #[cfg(desktop)]
+    {
+        // 全局快捷键、开机启动与桌面窗口状态只在桌面版注册。
+        // Android 使用系统导航和应用生命周期，不提供这些桌面能力。
+        builder = builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|_app, _shortcut, _event| {
                     // 实际动作在各自的 on_shortcut 闭包里处理，
                     // 这里保持空实现即可（插件要求提供 handler）。
                 })
                 .build(),
-        )
-        // 开机自启（§8.6，可选开关）
-        .plugin(tauri_plugin_autostart::init(
+        );
+        builder = builder.plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
-        ))
-        // 窗口位置尺寸记忆（§8 多显示器断连找回）
-        .plugin(tauri_plugin_window_state::Builder::default().build())
-        .plugin(tauri_plugin_store::Builder::new().build())
-        // 自动更新（§9「后续版本升级不需要用户手动重装」）。
-        // 更新包必须用 minisign 私钥签名，公钥在 tauri.conf.json 的
-        // plugins.updater.pubkey 中；签名无法关闭（插件硬性要求）。
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        // 更新安装完成后需要重启应用
-        .plugin(tauri_plugin_process::init())
+        ));
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+        // Windows 更新包由 minisign 签名；Android 更新由安装来源负责。
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
+
+    builder
         .setup(|app| {
+            if let Err(error) = credentials::initialize() {
+                log::error!("初始化本机安全凭据库失败：{error}");
+            }
             canvas_input::install(app.handle())?;
             // ---------------- 数据目录与数据库 ----------------
             // 刻意使用 app_data_dir（Windows 下 %APPDATA%\com.pla0185.lumen），
@@ -203,6 +222,9 @@ pub fn run() {
                         WindowConfig::default()
                     }
                 };
+                #[cfg(desktop)]
+                let changed = window_mgr::safe_recovery(&handle, &mut cfg);
+                #[cfg(target_os = "android")]
                 let changed = window_mgr::safe_recovery(&handle, &mut cfg);
                 if changed {
                     if let Err(e) = window_mgr::save_config(&state, &cfg).await {
@@ -213,18 +235,21 @@ pub fn run() {
                 state.set_cfg(&cfg);
 
                 // 2) 注册全局快捷键（失败要让用户知道，否则恢复路径是假的）
+                #[cfg(desktop)]
                 if let Err(e) = shortcuts::reload(&handle, &cfg) {
                     log::error!("全局快捷键注册失败：{e}");
                     let _ = handle.emit("shortcut-error", e.to_string());
                 }
 
                 // 3) 按配置应用主窗口能力
+                #[cfg(desktop)]
                 if let Some(w) = handle.get_webview_window(MAIN_WINDOW) {
                     let _ = w.set_always_on_top(cfg.main_always_on_top);
                     let _ = w.set_skip_taskbar(!cfg.main_show_in_taskbar);
                 }
 
                 // 4) 恢复悬浮窗（若用户上次开着）
+                #[cfg(desktop)]
                 if cfg.floating_enabled {
                     if let Err(e) = window_mgr::ensure_floating(&handle, &cfg) {
                         log::error!("恢复悬浮窗失败：{e}");
@@ -232,11 +257,13 @@ pub fn run() {
                 }
 
                 // 5) 托盘
+                #[cfg(desktop)]
                 if cfg.tray_enabled {
                     if let Err(e) = setup_tray(&handle) {
                         log::error!("托盘初始化失败（应用继续运行）：{e}");
                     }
                 } else {
+                    #[cfg(desktop)]
                     log::info!("按用户设置未启用托盘图标");
                 }
 
@@ -245,12 +272,14 @@ pub fn run() {
                 cloud_sync::spawn(handle.clone());
 
                 // 7) 统计今日未完成数并刷新菜单文字
+                #[cfg(desktop)]
                 refresh_today_count(&handle);
             });
 
             Ok(())
         })
         .on_window_event(|window, event| {
+            #[cfg(desktop)]
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
                     if window.label() != MAIN_WINDOW {
@@ -299,6 +328,8 @@ pub fn run() {
                 }
                 _ => {}
             }
+            #[cfg(target_os = "android")]
+            let _ = (window, event);
         })
         .invoke_handler(tauri::generate_handler![
             canvas_input::canvas_input_set_active,
@@ -317,6 +348,30 @@ pub fn run() {
             knowledge_base::knowledge_search,
             knowledge_base::knowledge_delete,
             knowledge_base::knowledge_ask,
+            nutrition::nutrition_dashboard,
+            nutrition::nutrition_set_daily_target,
+            nutrition::nutrition_search_key_status,
+            nutrition::nutrition_set_search_key,
+            nutrition::nutrition_lookup_food,
+            nutrition::nutrition_entry_create_food,
+            nutrition::nutrition_entry_create_training,
+            nutrition::nutrition_entry_update_amount,
+            nutrition::nutrition_entry_replace_food,
+            nutrition::nutrition_entry_set_state,
+            nutrition::nutrition_entry_delete,
+            nutrition::nutrition_recipe_create,
+            nutrition::nutrition_recipe_update,
+            nutrition::nutrition_recipe_delete,
+            nutrition::nutrition_recipe_add_ingredient,
+            nutrition::nutrition_recipe_remove_ingredient,
+            nutrition::nutrition_recipe_plan,
+            nutrition::nutrition_shopping_create,
+            nutrition::nutrition_shopping_update,
+            nutrition::nutrition_shopping_set_completed,
+            nutrition::nutrition_shopping_delete,
+            nutrition::nutrition_shopping_import_commit,
+            nutrition::nutrition_shopping_add_recipe,
+            nutrition::nutrition_shopping_import_preview,
             commands::task_create,
             commands::task_update,
             commands::task_save,
@@ -483,6 +538,7 @@ pub fn run() {
 // =============================================================================
 
 /// 菜单项 ID 常量。集中定义避免字符串拼写错误导致事件匹配不上。
+#[cfg(desktop)]
 mod tray_ids {
     /// 打开/隐藏主窗口
     pub const TOGGLE: &str = "tray-toggle";
@@ -509,6 +565,7 @@ mod tray_ids {
 }
 
 /// 设置托盘在图标的显隐（§8.6）。返回是否处于启用状态。
+#[cfg(desktop)]
 pub fn set_tray_visible(app: &AppHandle, visible: bool) {
     if visible {
         if app.tray_by_id(TRAY_ID).is_none() {
@@ -529,6 +586,7 @@ pub fn set_tray_visible(app: &AppHandle, visible: bool) {
 /// §8.6 要求菜单至少包含：打开/隐藏、快速添加、今日概览、置顶、穿透、
 /// 暂停提醒、设置、完全退出。这里逐项落实，并额外提供「窗口安全重置」
 /// 作为兜底手段——它对应 §8 那条"不得让用户必须删配置文件才能找回窗口"。
+#[cfg(desktop)]
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let cfg = current_config(app);
     let menu = build_tray_menu(app, &cfg)?;
@@ -566,6 +624,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 /// 若在其内部 `block_on`，而外层已处于 Tauri 的异步运行时中（setup 阶段），
 /// 就会造成 tokio 运行时嵌套并直接 panic（实测踩到过）。
 /// 因此配置以 AppState 的内存副本为准，数据库只负责持久化。
+#[cfg(desktop)]
 fn current_config(app: &AppHandle) -> WindowConfig {
     app.try_state::<AppState>()
         .map(|s| s.cfg())
@@ -573,6 +632,7 @@ fn current_config(app: &AppHandle) -> WindowConfig {
 }
 
 /// 根据当前状态构建托盘菜单（勾选项反映真实状态）
+#[cfg(desktop)]
 fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<tauri::Wry>> {
     let paused = app
         .try_state::<AppState>()
@@ -689,6 +749,7 @@ fn build_tray_menu(app: &AppHandle, cfg: &WindowConfig) -> tauri::Result<Menu<ta
 }
 
 /// 本地"今天"的 UTC 范围（与前端 `todayRange()` 口径一致）
+#[cfg(desktop)]
 fn local_today_range() -> (String, String) {
     use chrono::TimeZone;
     let now = chrono::Local::now();
@@ -707,6 +768,7 @@ fn local_today_range() -> (String, String) {
 ///
 /// 之所以要缓存而不是让菜单现查：菜单构建在同步上下文里，查库需要 async，
 /// 二者混用会导致 tokio 运行时嵌套（实测崩溃）。因此把 I/O 放到这里。
+#[cfg(desktop)]
 pub fn refresh_today_count(app: &AppHandle) {
     let app2 = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -742,6 +804,7 @@ pub fn refresh_today_count(app: &AppHandle) {
 }
 
 /// 处理托盘菜单事件。
+#[cfg(desktop)]
 fn handle_tray_menu(app: &AppHandle, event: MenuEvent) {
     match event.id().as_ref() {
         tray_ids::TOGGLE => window_mgr::toggle_main(app),
@@ -818,6 +881,7 @@ fn handle_tray_menu(app: &AppHandle, event: MenuEvent) {
 }
 
 /// 通过托盘触发一个窗口动作，并把结果（含失败原因）反馈给用户
+#[cfg(desktop)]
 fn apply_action_from_tray(app: &AppHandle, action: &str) {
     let app2 = app.clone();
     let action = action.to_string();
@@ -842,6 +906,7 @@ fn apply_action_from_tray(app: &AppHandle, action: &str) {
 /// 重建托盘菜单，让勾选状态与最新配置一致。
 ///
 /// 菜单在 Windows 上是静态资源，状态变化后必须重建才能反映出来。
+#[cfg(desktop)]
 pub fn refresh_tray_menu(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         return;

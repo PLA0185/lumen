@@ -3655,3 +3655,34 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 匿名读取应用更新地址 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json` 返回 0.4.33，并指向公开的 `Lumen_0.4.33_x64-setup.exe`；Release 不是草稿，Assets 包含安装程序、`.sig` 和 `latest.json`。
 - Release 工作流 [37782090465](https://github.com/PLA0185/lumen/actions/runs/37782090465) 后续完成，最终结论为成功。
 - 工作记录补记提交的 CI [37784626503](https://github.com/PLA0185/lumen/actions/runs/37784626503) 首次前端单测因既有 100 节点画布用例耗时 9.16 秒、超过 Vitest 5 秒默认超时而失败；同次 Rust job 成功。本机单独运行该用例耗时约 0.41 秒，失败 job 重跑后前端与 Rust job 均成功。该既有压力用例偶发超时仍需留意，本轮没有为此放宽全局测试超时或改动其行为。
+
+## 第 75 轮 · 2026-10-09 · 食谱热量、采购清单与 Android 适配
+
+### 做了
+
+- 新增每日饮食、基础三餐与加餐、训练消耗、手动每日热量目标和食谱；食物热量通过 Tavily 联网资料与已配置 AI 归一化，保存可核验来源，热量由本机按克数确定性计算。更换食物需重新检索核验，候选过期或请求失败不会覆盖原记录。
+- 新增待办式采购清单，支持手动维护、从食谱添加，以及选择本机解析或 AI 整理导入 PDF、DOCX、XLSX/XLS、图片、CSV/TSV、JSON、HTML/XML、Markdown、LOG 和文本；解析进度可见，确认前可编辑/取消，确认后才写入。
+- 迁移 0014、备份格式 8 与云同步范围加入饮食和采购数据，只有“全部业务数据”包含这些表。AI/Tavily 密钥留在设备系统凭据存储中，临时候选不备份、不上传。Windows 沿用桌面侧栏和精细指针交互；Android 增加窄屏底部导航、更多菜单、系统安全区与 44px 触控目标，宽屏切换回侧栏，并复用既有主题、SVG 图标、焦点和减少动画系统。
+- 查阅 Apple HIG、Android 自适应布局、Windows Fluent 与 Tavily 官方资料；新增实现规格和计划记录，更新 README 文档索引、结构说明与 0.4.34 发布说明。
+
+### 没做到
+
+- 没有 Tavily 或 AI 服务密钥，未执行真实联网食物查询；候选来源校验、失败回退、换食物保护和本机热量计算仅由自动化测试验证。
+- 本机没有连接 Android 设备或模拟器，未安装 APK，也未人工目测所有 Android 页面和触控流程；本轮只完成 Android ARM64 交叉编译和 Gradle 包装验证。
+- 生成的是本地 Android Debug 签名包，不是生产签名发行包，不能用来覆盖已有正式签名安装。Tauri CLI 的 Android 自动生成/构建在本机受 Windows 符号链接权限限制；本轮通过更新生成配置、交叉编译原生库和 Gradle 手动组装完成了 APK 验证。
+- 未发现其他经测试确认而仍未修复的问题；所有页面没有逐一进行真实设备视觉验收。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.34）、`pnpm typecheck`、`pnpm test`（50 个文件、374 项）、`pnpm build`、`pnpm lint` 均实际执行并通过。Vite 保留仓库现有 `INEFFECTIVE_DYNAMIC_IMPORT` 告警；安装提示 esbuild 构建脚本处于 pnpm 默认忽略状态。
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`cargo test --lib`（573 项通过、4 项按既有条件忽略）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。
+- Android `aarch64-linux-android` Release 库交叉编译通过；Gradle `:app:assembleArm64Debug -x :app:rustBuildArm64Debug` 成功。APK 元数据版本为 0.4.34 / versionCode 4034，包含 `lib/arm64-v8a/liblumen_lib.so`，`apksigner verify` 的 v2 验证通过；包大小 8,382,123 字节，SHA-256 为 `3C1EEC846262390EA8CDC114E68119AE87EB018F61A5DCFB8740108E1AF7CB68`。生成包位于本机忽略目录 `src-tauri/gen/android/app/build/outputs/apk/arm64/debug/app-arm64-debug.apk`。
+- `git diff --check` 通过。密钥/数据库/日志/构建产物跟踪检查无异常；`minisign encrypted secret key` 只命中仓库安全说明文字，未发现密钥数据块。
+- 推送后 CI 状态尚未取得；将在对应补记中记录 PR 工作流结果。
+
+### 相关文档
+
+- [食谱与采购实现规格](superpowers/specs/2026-10-08-recipes-grocery-cross-platform.md)、[实施与验收计划](superpowers/plans/2026-10-08-recipes-grocery-cross-platform.md)、[数据结构](data-structure.md)、[0.4.34 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
+### 推送后验证补记
+
+- 草稿 PR [#1](https://github.com/PLA0185/lumen/pull/1) 对应代码提交的 GitHub Actions [CI 37855379160](https://github.com/PLA0185/lumen/actions/runs/37855379160) 已完成：frontend 与 rust 两个 job 均成功；Rust job 的格式、编译、573 项测试（4 项既有忽略）和严格 Clippy 全部成功。随后只追加了本条工作记录，没有改动代码。

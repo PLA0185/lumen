@@ -379,11 +379,11 @@ pub fn save_api_key(provider: Provider, key: &str) -> AppResult<()> {
     if k.is_empty() {
         return delete_api_key(provider);
     }
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+    let entry = crate::credentials::Entry::new(KEYRING_SERVICE, &key_name(provider))
         .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     entry.set_password(k).map_err(|e| {
         AppError::internal(format!("保存密钥失败：{e}"))
-            .with_hint("请确认当前用户有权限写入 Windows 凭据管理器")
+            .with_hint("请确认当前用户有权限写入本机安全凭据库")
     })?;
     // 只记录"已保存"，绝不记录密钥内容本身（§10 日志不含密钥）
     log::info!("已保存 {} 的 API Key 到系统凭据管理器", provider.label());
@@ -392,26 +392,26 @@ pub fn save_api_key(provider: Provider, key: &str) -> AppResult<()> {
 
 /// 读取 API Key
 pub fn load_api_key(provider: Provider) -> AppResult<Option<String>> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+    let entry = crate::credentials::Entry::new(KEYRING_SERVICE, &key_name(provider))
         .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     match entry.get_password() {
         Ok(p) if !p.trim().is_empty() => Ok(Some(p)),
         Ok(_) => Ok(None),
-        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(crate::credentials::Error::NoEntry) => Ok(None),
         Err(e) => Err(AppError::internal(format!("读取密钥失败：{e}"))),
     }
 }
 
 /// 删除 API Key
 pub fn delete_api_key(provider: Provider) -> AppResult<()> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &key_name(provider))
+    let entry = crate::credentials::Entry::new(KEYRING_SERVICE, &key_name(provider))
         .map_err(|e| AppError::internal(format!("无法访问系统凭据管理器：{e}")))?;
     match entry.delete_credential() {
         Ok(()) => {
             log::info!("已删除 {} 的 API Key", provider.label());
             Ok(())
         }
-        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(crate::credentials::Error::NoEntry) => Ok(()),
         Err(e) => Err(AppError::internal(format!("删除密钥失败：{e}"))),
     }
 }

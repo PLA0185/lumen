@@ -25,7 +25,9 @@
 //! 异步运行时，命令在 `rx.await` 上等待。
 
 use crate::error::{AppError, AppResult};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::Manager;
 
 /// 把主窗口当前页面导出为 PDF。
 ///

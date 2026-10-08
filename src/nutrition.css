@@ -1,0 +1,221 @@
+.nutrition-view {
+  width: min(100%, 1480px); margin-inline: auto; padding: clamp(12px, 2.2vw, 28px);
+  display: grid; gap: 20px; color: var(--c-text);
+}
+.nutrition-hero,.nutrition-summary,.nutrition-panel { border: 1px solid var(--c-border); border-radius: 16px; background: var(--c-surface); }
+.nutrition-hero { display:flex; justify-content:space-between; align-items:end; gap:20px; padding:22px 24px; background:linear-gradient(120deg,color-mix(in srgb,var(--c-accent) 8%,var(--c-surface)),var(--c-surface) 58%); }
+.nutrition-hero h2 { margin-top:4px; font-size:clamp(23px,2vw,30px); letter-spacing:-.025em; }
+.nutrition-hero p { margin-top:5px; color:var(--c-text-2); }
+.nutrition-eyebrow { color:var(--c-text-3); font-size:var(--font-sm); letter-spacing:.035em; }
+.nutrition-date { flex:0 0 180px; display:grid; gap:6px; color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-date input,.nutrition-view input:not([type=checkbox]):not([type=radio]):not([type=file]),.nutrition-view select,.nutrition-view textarea {
+  width:100%; min-width:0; min-height:40px; padding:8px 11px; border:1px solid var(--c-border); border-radius:9px; background:var(--c-bg); color:var(--c-text);
+}
+.nutrition-view textarea { resize:vertical; }
+.nutrition-view input:focus-visible,.nutrition-view select:focus-visible,.nutrition-view textarea:focus-visible { outline:2px solid var(--c-accent); outline-offset:2px; }
+.nutrition-view label { min-width:0; display:grid; gap:6px; color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-summary { padding:22px 24px 16px; background:var(--c-surface-2); }
+.nutrition-summary__top { display:flex; justify-content:space-between; align-items:center; gap:24px; }
+.nutrition-summary__top>div { display:grid; gap:2px; }
+.nutrition-summary__top strong { font-size:clamp(34px,4.5vw,52px); line-height:1.05; letter-spacing:-.04em; font-variant-numeric:tabular-nums; }
+.nutrition-summary__top strong small,.nutrition-totals small { font-size:.46em; color:var(--c-text-2); font-weight:500; letter-spacing:0; }
+.nutrition-target { display:flex; align-items:center; gap:9px; margin-top:5px; }
+.nutrition-target input { max-width:150px; }
+.nutrition-target>span { white-space:nowrap; }
+.nutrition-progress { height:9px; margin:18px 0 16px; overflow:hidden; border-radius:99px; background:var(--c-border); }
+.nutrition-progress>div { height:100%; border-radius:inherit; background:var(--c-accent); transition:width 220ms ease; }
+.nutrition-empty-target { margin:16px 0; color:var(--c-text-3); }
+.nutrition-totals { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.nutrition-totals>div { display:grid; gap:5px; min-width:0; padding:12px 14px; border-radius:11px; background:var(--c-surface); }
+.nutrition-totals span { color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-totals strong { font-size:19px; font-variant-numeric:tabular-nums; }
+.nutrition-totals__remaining { border:1px solid color-mix(in srgb,var(--c-accent) 35%,var(--c-border)); }
+.nutrition-footnote,.nutrition-muted { margin-top:12px; color:var(--c-text-3); font-size:var(--font-sm); }
+.nutrition-layout { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(340px,.9fr); align-items:start; gap:18px; }
+.nutrition-column { display:grid; gap:18px; min-width:0; }
+.nutrition-panel { min-width:0; padding:20px; }
+.nutrition-panel__heading,.nutrition-recipe__top,.nutrition-entry__main,.nutrition-entry__meta,.nutrition-import-preview__top { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.nutrition-panel__heading { margin-bottom:16px; }
+.nutrition-panel__heading h3 { margin-top:2px; font-size:20px; }
+.nutrition-panel__heading>span { flex:none; color:var(--c-text-3); font-size:var(--font-sm); }
+.nutrition-key-state { padding:4px 9px; border-radius:999px; background:var(--c-warn-soft); color:var(--c-warn); white-space:nowrap; }
+.nutrition-key-state.is-ready { background:var(--c-ok-soft); color:var(--c-ok); }
+.nutrition-food-search { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:end; }
+.nutrition-food-search>button { min-height:40px; }
+.nutrition-progress-note { margin-top:10px; padding:10px 12px; border-radius:9px; color:var(--c-info); background:color-mix(in srgb,var(--c-info) 10%,var(--c-surface)); }
+.nutrition-candidates { display:grid; gap:9px; margin-top:16px; }
+.nutrition-candidates__intro { color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-candidate { display:flex!important; align-items:start; gap:11px!important; padding:12px; border:1px solid var(--c-border); border-radius:11px; background:var(--c-bg); cursor:pointer; }
+.nutrition-candidate.is-selected { border-color:var(--c-accent); box-shadow:inset 0 0 0 1px var(--c-accent); }
+.nutrition-candidate>input { flex:none; width:18px; height:18px; margin-top:3px; accent-color:var(--c-accent); }
+.nutrition-candidate__body { display:grid; gap:3px; min-width:0; }
+.nutrition-candidate__body>span { font-variant-numeric:tabular-nums; }
+.nutrition-candidate a,.nutrition-entry__source,.nutrition-recipe li a,.nutrition-disclosure a { color:var(--c-accent); font-size:var(--font-sm); overflow-wrap:anywhere; }
+.nutrition-entry-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; align-items:end; margin-top:5px; }
+.nutrition-entry-controls>button { min-height:40px; }
+.nutrition-disclosure { margin-top:16px; padding-top:13px; border-top:1px solid var(--c-border); color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-disclosure summary { cursor:pointer; }
+.nutrition-disclosure p { margin:9px 0; }
+.nutrition-key-form { display:flex; gap:8px; margin-top:11px; }
+.nutrition-key-form input { flex:1; }
+.nutrition-recipe-form,.nutrition-training-form,.nutrition-shopping-form { display:grid; gap:11px; }
+.nutrition-recipe-form { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.nutrition-recipe-form__instructions,.nutrition-recipe-form>button,.nutrition-draft-ingredients,.nutrition-recipe-form>p { grid-column:1/-1; }
+.nutrition-draft-ingredients { margin:0; padding:10px 14px 10px 30px; border-radius:10px; background:var(--c-bg); }
+.nutrition-draft-ingredients li { padding:3px 0; color:var(--c-text-2); }
+.nutrition-draft-ingredients button { margin-left:8px; color:var(--c-danger); }
+.nutrition-empty { padding:16px 0 4px; color:var(--c-text-3); }
+.nutrition-recipe-list,.nutrition-entry-list,.nutrition-shopping-list { display:grid; gap:10px; }
+.nutrition-recipe,.nutrition-entry,.nutrition-shopping-item { min-width:0; padding:13px; border:1px solid var(--c-border); border-radius:11px; background:var(--c-bg); }
+.nutrition-recipe h4,.nutrition-entry strong,.nutrition-shopping-item strong { font-size:16px; }
+.nutrition-recipe__top>div { display:grid; gap:2px; }
+.nutrition-recipe__top>div>strong { color:var(--c-accent); font-size:var(--font-sm); }
+.nutrition-recipe p { margin-top:9px; color:var(--c-text-2); white-space:pre-wrap; }
+.nutrition-recipe ul { display:grid; gap:5px; margin:10px 0 0; padding:0; list-style:none; }
+.nutrition-recipe li { display:flex; justify-content:space-between; gap:10px; color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-recipe__actions,.nutrition-entry__actions,.nutrition-import-preview__actions { display:flex; flex-wrap:wrap; gap:7px; margin-top:12px; }
+.nutrition-training-form { grid-template-columns:minmax(0,1fr) minmax(150px,.7fr) auto; align-items:end; }
+.nutrition-entry { display:grid; gap:8px; }
+.nutrition-entry.is-planned { border-style:dashed; opacity:.84; }
+.nutrition-entry.is-training { background:color-mix(in srgb,var(--c-info) 5%,var(--c-bg)); }
+.nutrition-entry__main>div:first-child { display:grid; gap:3px; }
+.nutrition-entry__meal { color:var(--c-text-3); font-size:var(--font-sm); }
+.nutrition-entry__calories { flex:none; font-size:18px; font-weight:650; font-variant-numeric:tabular-nums; }
+.nutrition-entry__calories small { font-size:var(--font-sm); font-weight:400; color:var(--c-text-3); }
+.nutrition-entry__meta { justify-content:start; color:var(--c-text-3); font-size:var(--font-sm); }
+.nutrition-entry__status { padding:2px 8px; border-radius:999px; background:var(--c-surface-2); }
+.nutrition-entry__status.is-eaten { color:var(--c-ok); background:var(--c-ok-soft); }
+.nutrition-entry__source { width:fit-content; }
+.nutrition-entry__edit { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin-top:4px; }
+.nutrition-entry__edit label { display:grid; gap:5px; color:var(--c-text-2); font-size:var(--font-sm); }
+.nutrition-entry__edit input { width:min(220px,100%); }
+.nutrition-shopping-form { grid-template-columns:minmax(0,1fr) 90px 85px 110px auto; align-items:end; }
+.nutrition-import { margin-top:16px; padding:13px; border:1px solid var(--c-border); border-radius:11px; background:var(--c-surface-2); }
+.nutrition-import__heading,.nutrition-import__controls { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.nutrition-import__heading span,.nutrition-import>p { color:var(--c-text-3); font-size:var(--font-sm); }
+.nutrition-import__controls { margin-top:10px; }
+.nutrition-import__controls>label:first-child { min-width:160px; }
+.nutrition-file-button { position:relative; display:inline-flex!important; min-height:40px; align-items:center; justify-content:center; gap:7px!important; padding:0 13px; overflow:hidden; cursor:pointer; }
+.nutrition-file-button input[type=file] { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.nutrition-import>p { margin-top:8px; }
+.nutrition-import-preview { margin-top:13px; }
+.nutrition-import-preview details { margin:9px 0; color:var(--c-warn); font-size:var(--font-sm); }
+.nutrition-import-preview details p { margin-top:5px; }
+.nutrition-import-preview__rows { display:grid; gap:7px; max-height:340px; margin-top:9px; overflow:auto; }
+.nutrition-import-row { display:grid; grid-template-columns:minmax(0,1fr) 72px 70px 95px auto; gap:7px; align-items:center; }
+.nutrition-import-row input { min-height:36px!important; padding:6px 8px!important; }
+.nutrition-import-row__select { display:flex!important; flex-direction:row; align-items:center; gap:7px!important; }
+.nutrition-import-row__select input[type=checkbox],.nutrition-shopping-item>input { flex:none; width:18px; height:18px; accent-color:var(--c-accent); }
+.nutrition-shopping-list { margin-top:14px; }
+.nutrition-shopping-item { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:11px; align-items:start; }
+.nutrition-shopping-item>input { margin-top:3px; }
+.nutrition-shopping-item__content { display:grid; gap:3px; min-width:0; }
+.nutrition-shopping-item__content>span,.nutrition-shopping-item__content small { color:var(--c-text-3); }
+.nutrition-shopping-item.is-completed .nutrition-shopping-item__content>strong { color:var(--c-text-3); text-decoration:line-through; }
+.nutrition-shopping-item__actions { display:flex; gap:4px; }
+.nutrition-shopping-edit { display:grid; grid-template-columns:minmax(0,1fr) 90px 90px 110px; gap:7px; }
+.nutrition-shopping-edit>div { grid-column:1/-1; display:flex; gap:7px; }
+.nutrition-alert,.nutrition-notice { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 14px; border:1px solid var(--c-border); border-radius:10px; white-space:pre-line; }
+.nutrition-alert { color:var(--c-danger); background:var(--c-danger-soft); }
+.nutrition-notice { color:var(--c-ok); background:var(--c-ok-soft); }
+.nutrition-loading { padding:20px; text-align:center; color:var(--c-text-3); }
+.nutrition-view .btn { min-height:40px; }
+
+/* Android uses a compact bottom bar and a separate full navigation drawer. */
+.mobile-nav,.mobile-sidebar-backdrop { display:none; }
+.app--android { display:flex; flex-direction:column; }
+.app--android .sidebar { display:none; }
+.app--android .sidebar.sidebar--mobile-open { position:fixed; z-index:82; inset:0 auto 0 0; display:flex; width:min(86vw,330px); height:100dvh; box-shadow:var(--shadow-lg); }
+.app--android .main { flex:1; min-height:0; }
+.app--android .topbar { flex-wrap:wrap; gap:8px; padding:10px 14px; }
+.app--android .topbar__heading { max-width:100%; }
+.app--android .topbar__actions,.app--android .topbar__controls { width:100%; min-width:0; }
+.app--android .topbar__controls { max-width:100%; overflow-x:auto; scrollbar-width:none; }
+.app--android .content { padding:0 0 calc(72px + env(safe-area-inset-bottom)); }
+.mobile-sidebar-backdrop { position:fixed; z-index:81; inset:0; display:block; background:rgb(0 0 0 / 48%); }
+.mobile-nav { position:fixed; z-index:80; inset:auto 0 0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); min-height:calc(60px + env(safe-area-inset-bottom)); padding:5px 7px calc(5px + env(safe-area-inset-bottom)); border-top:1px solid var(--c-border); background:color-mix(in srgb,var(--c-surface) 94%,transparent); backdrop-filter:blur(14px); }
+.mobile-nav__item { display:grid; align-content:center; justify-items:center; gap:3px; min-width:0; min-height:48px; color:var(--c-text-3); border-radius:10px; font-size:11px; }
+.mobile-nav__item.is-active { color:var(--c-accent); background:var(--c-accent-soft); font-weight:650; }
+.app--android .nutrition-view { gap:12px; padding:12px 12px 20px; }
+.app--android .nutrition-hero { align-items:start; flex-direction:column; gap:12px; padding:16px; }
+.app--android .nutrition-date { flex:none; width:100%; }
+.app--android .nutrition-summary,.app--android .nutrition-panel { padding:15px; border-radius:14px; }
+.app--android .nutrition-summary__top { align-items:start; flex-direction:column; gap:12px; }
+.app--android .nutrition-summary__top>label { width:100%; }
+.app--android .nutrition-target input { max-width:none; }
+.app--android .nutrition-totals { grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.app--android .nutrition-totals>div { padding:10px; }
+.app--android .nutrition-layout { grid-template-columns:minmax(0,1fr); gap:12px; }
+.app--android .nutrition-entry-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.app--android .nutrition-entry-controls>button { grid-column:1/-1; }
+.app--android .nutrition-training-form { grid-template-columns:minmax(0,1fr); }
+.app--android .nutrition-shopping-form { grid-template-columns:minmax(0,1fr) 90px 90px; }
+.app--android .nutrition-shopping-form>button { grid-column:1/-1; }
+.app--android .nutrition-recipe-form { grid-template-columns:minmax(0,1fr); }
+.app--android .nutrition-recipe-form>* { grid-column:1; }
+.app--android .nutrition-import__controls { align-items:stretch; flex-direction:column; }
+.app--android .nutrition-import__controls>label:first-child { min-width:0; }
+.app--android .nutrition-file-button { width:100%; }
+.app--android .nutrition-import-row { grid-template-columns:minmax(0,1fr) 72px 72px; padding:8px; border:1px solid var(--c-border); border-radius:9px; }
+.app--android .nutrition-import-row__select { grid-column:1/-1; }
+.app--android .nutrition-import-row>input[aria-label="采购分类"] { grid-column:1/3; }
+.app--android .nutrition-shopping-edit { grid-template-columns:minmax(0,1fr) 80px; }
+.app--android .nutrition-shopping-edit>input[aria-label="编辑单位"] { grid-column:1; }
+.app--android .nutrition-shopping-edit>input[aria-label="编辑分类"] { grid-column:2; }
+
+@media (max-width:1050px) {
+  .nutrition-layout { grid-template-columns:minmax(0,1fr); }
+  .nutrition-shopping-form { grid-template-columns:minmax(0,1fr) 90px 85px; }
+  .nutrition-shopping-form>button { grid-column:1/-1; }
+}
+@media (max-width:620px) {
+  .nutrition-view { padding:10px; gap:12px; }
+  .nutrition-hero { align-items:start; flex-direction:column; padding:16px; }
+  .nutrition-date { flex:none; width:100%; }
+  .nutrition-summary,.nutrition-panel { padding:15px; }
+  .nutrition-summary__top { align-items:start; flex-direction:column; gap:12px; }
+  .nutrition-summary__top>label { width:100%; }
+  .nutrition-target input { max-width:none; }
+  .nutrition-totals { grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+  .nutrition-totals>div { padding:10px; }
+  .nutrition-layout,.nutrition-entry-controls { grid-template-columns:minmax(0,1fr); }
+  .nutrition-entry-controls>button { grid-column:1; }
+  .nutrition-training-form,.nutrition-recipe-form { grid-template-columns:minmax(0,1fr); }
+  .nutrition-recipe-form>* { grid-column:1; }
+  .nutrition-shopping-form { grid-template-columns:minmax(0,1fr) 90px; }
+  .nutrition-shopping-form>label:nth-of-type(3),.nutrition-shopping-form>label:nth-of-type(4) { grid-column:auto; }
+  .nutrition-shopping-form>button { grid-column:1/-1; }
+  .nutrition-import__controls { align-items:stretch; flex-direction:column; }
+  .nutrition-import__controls>label:first-child { min-width:0; }
+  .nutrition-file-button { width:100%; }
+  .nutrition-import-row { grid-template-columns:minmax(0,1fr) 72px 72px; padding:8px; border:1px solid var(--c-border); border-radius:9px; }
+  .nutrition-import-row__select { grid-column:1/-1; }
+  .nutrition-import-row>input[aria-label="采购分类"] { grid-column:1/3; }
+  .nutrition-shopping-edit { grid-template-columns:minmax(0,1fr) 80px; }
+  .nutrition-shopping-edit>input[aria-label="编辑单位"] { grid-column:1; }
+  .nutrition-shopping-edit>input[aria-label="编辑分类"] { grid-column:2; }
+}
+@media (prefers-reduced-motion:reduce) { .nutrition-progress>div { transition:none; } }
+
+/* Expanded Android windows (tablets / DeX) switch to the persistent navigation rail. */
+@media (min-width: 900px) {
+  .app--android { display: grid; grid-template-columns: var(--sidebar-w) minmax(0,1fr); grid-template-rows: minmax(0,1fr); }
+  .app--android .sidebar { display: flex; position: relative; inset: auto; width: auto; height: auto; box-shadow: none; }
+  .app--android .sidebar { padding-top:var(--space-3); padding-bottom:var(--space-3); }
+  .app--android .sidebar.sidebar--mobile-open { position: relative; inset: auto; width: auto; height: auto; box-shadow: none; }
+  .app--android .mobile-nav,.app--android .mobile-sidebar-backdrop { display: none; }
+  .app--android .content { padding-bottom: 28px; }
+  .app--android .topbar { flex-wrap: nowrap; }
+  .app--android .topbar__actions,.app--android .topbar__controls { width: auto; }
+  .app--android .topbar__controls { max-width: none; overflow: visible; }
+}
+
+/* Android adopts system insets and touch-sized controls; Windows keeps its dense desktop rhythm. */
+.app--android { padding-top: env(safe-area-inset-top, 0px); }
+.app--android .sidebar { padding-top:max(12px, env(safe-area-inset-top, 0px)); padding-bottom:max(8px, env(safe-area-inset-bottom, 0px)); }
+.app--android button,.app--android [role="button"],.app--android select { min-height:44px; border-radius:12px; touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+.app--android input:not([type="checkbox"]):not([type="radio"]),.app--android textarea { min-height:44px; border-radius:12px; }
+.app--android button:focus-visible,.app--android [role="button"]:focus-visible,.app--android a:focus-visible,.app--android input:focus-visible,.app--android select:focus-visible,.app--android textarea:focus-visible { outline:2px solid var(--c-accent); outline-offset:2px; }
+@media (hover:hover) and (pointer:fine) {
+  .app--windows button:not(:disabled):hover,.app--windows [role="button"]:not([aria-disabled="true"]):hover { filter:brightness(1.08); }
+}

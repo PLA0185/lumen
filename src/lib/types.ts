@@ -291,6 +291,7 @@ export type ViewId =
   | 'weekly-recurring'
   | 'memos'
   | 'knowledge'
+  | 'nutrition'
   | 'assistant'
   | 'inbox'
   | 'today'
