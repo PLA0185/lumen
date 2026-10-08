@@ -1005,6 +1005,80 @@ fn selection(c: &Config, scope: SyncScope, direction: SyncDirection) -> Config {
     c
 }
 #[tokio::test]
+async fn nutrition_data_syncs_with_all_scope_and_stays_local_in_tasks_scope() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let source = db().await;
+    let destination = db().await;
+    let c = cfg();
+    let key = [13; 32];
+    let now = stamp();
+    sqlx::query(
+        "INSERT INTO nutrition_preferences(singleton,daily_target_kcal,updated_at) VALUES(1,2300,?)",
+    )
+    .bind(&now)
+    .execute(source.pool())
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO recipes(id,title,servings,instructions,created_at,updated_at) VALUES('sync-recipe','早餐粥',2,'',?,?)")
+        .bind(&now).bind(&now).execute(source.pool()).await.unwrap();
+
+    business::capture_scope(&source, false).await.unwrap();
+    let excluded: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cloud_records WHERE table_name IN ('nutrition_preferences','recipes')")
+        .fetch_one(source.pool()).await.unwrap();
+    assert_eq!(
+        excluded, 0,
+        "tasks-only scope must not journal nutrition rows"
+    );
+
+    push_all(&source, &dav, &c, &key).await;
+    runtime(&destination).await.unwrap();
+    let tasks = selection(&c, SyncScope::Tasks, SyncDirection::Download);
+    let device = runtime(&destination).await.unwrap();
+    sync_exchange(&destination, &dav, &tasks, &key, &device, true)
+        .await
+        .unwrap();
+    let recipe_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM recipes")
+        .fetch_one(destination.pool())
+        .await
+        .unwrap();
+    let target: Option<i64> =
+        sqlx::query_scalar("SELECT daily_target_kcal FROM nutrition_preferences WHERE singleton=1")
+            .fetch_optional(destination.pool())
+            .await
+            .unwrap()
+            .flatten();
+    assert_eq!(
+        recipe_count, 0,
+        "tasks-only scope must not download recipes"
+    );
+    assert_eq!(
+        target, None,
+        "tasks-only scope must not download nutrition settings"
+    );
+
+    let all = selection(&c, SyncScope::All, SyncDirection::Download);
+    let device = runtime(&destination).await.unwrap();
+    sync_exchange(&destination, &dav, &all, &key, &device, true)
+        .await
+        .unwrap();
+    let recipe_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM recipes WHERE id='sync-recipe'")
+            .fetch_one(destination.pool())
+            .await
+            .unwrap();
+    let target: Option<i64> =
+        sqlx::query_scalar("SELECT daily_target_kcal FROM nutrition_preferences WHERE singleton=1")
+            .fetch_optional(destination.pool())
+            .await
+            .unwrap()
+            .flatten();
+    assert_eq!(recipe_count, 1);
+    assert_eq!(target, Some(2300));
+    close(source).await;
+    close(destination).await;
+}
+#[tokio::test]
 async fn selected_download_never_writes_cloud_and_keeps_local_pending_memos() {
     let mock = Mock::new();
     let dav = mock.dav();

@@ -37,7 +37,7 @@ function errText(e: unknown): string {
 
 type Tab = 'appearance' | 'window' | 'ai' | 'data' | 'cloud' | 'reminders' | 'about'
 
-export function SettingsView() {
+export function SettingsView({ isAndroid = false }: { isAndroid?: boolean }) {
   const { appInfo, dataPaths, theme, setTheme, pushToast } = useApp()
   const [restoreNeedsRestart, setRestoreNeedsRestart] = useState(false)
   const [tab, setTab] = useState<Tab>('appearance')
@@ -145,7 +145,7 @@ export function SettingsView() {
         filters: [{ name: 'Lumen 备份', extensions: ['json'] }],
       })
       const r = await bk.backupExport(typeof target === 'string' ? target : undefined)
-      pushToast('success', `已导出 ${r.stats.tasks} 个任务、${r.stats.memoDocuments} 条备忘与流程到 ${r.path}`)
+      pushToast('success', `已导出 ${r.stats.tasks} 个任务、${r.stats.memoDocuments} 条备忘与流程，以及 ${r.stats.recipes ?? 0} 份食谱、${r.stats.nutritionEntries ?? 0} 条饮食记录、${r.stats.shoppingItems ?? 0} 条采购记录到 ${r.path}`)
       if (r.attachmentWarning) {
         pushToast('info', r.attachmentWarning)
       }
@@ -305,7 +305,7 @@ export function SettingsView() {
   }
 
   // ------------------------------ 渲染 ------------------------------
-  const tabs: { id: Tab; label: string }[] = [
+  const tabDefinitions: { id: Tab; label: string }[] = [
     { id: 'appearance', label: '外观' },
     { id: 'window', label: '窗口与启动' },
     { id: 'ai', label: 'AI' },
@@ -314,6 +314,7 @@ export function SettingsView() {
     { id: 'reminders', label: '提醒' },
     { id: 'about', label: '关于' },
   ]
+  const tabs = isAndroid ? tabDefinitions.filter((item) => item.id !== 'window') : tabDefinitions
 
   const paths: DataPaths | null = dataPaths
 
@@ -684,6 +685,7 @@ export function SettingsView() {
                       子任务 {preview.stats.subtasks}　依赖 {preview.stats.dependencies}　提醒{' '}
                       {preview.stats.reminders}　重复系列 {preview.stats.series}
                       <br />备忘与流程 {preview.stats.memoDocuments ?? 0}
+                      <br />食谱与饮食记录 {(preview.stats.recipes ?? 0) + (preview.stats.nutritionEntries ?? 0)} 条；采购项目 {preview.stats.shoppingItems ?? 0} 条
                       <br />专注记录 {preview.stats.focusSessions}　个人目标 {preview.stats.goals}
                       <br />重复模板 {preview.stats.seriesTemplates}　跳过记录 {preview.stats.seriesSkips}
                     </td>
@@ -694,6 +696,7 @@ export function SettingsView() {
                       任务 {preview.current.tasks}　项目 {preview.current.projects}　标签{' '}
                       {preview.current.tags}　提醒 {preview.current.reminders}
                       <br />备忘与流程 {preview.current.memoDocuments ?? 0}
+                      <br />食谱与饮食记录 {(preview.current.recipes ?? 0) + (preview.current.nutritionEntries ?? 0)} 条；采购项目 {preview.current.shoppingItems ?? 0} 条
                       <br />专注记录 {preview.current.focusSessions}　个人目标 {preview.current.goals}
                       <br />重复模板 {preview.current.seriesTemplates}　跳过记录 {preview.current.seriesSkips}
                     </td>
@@ -944,7 +947,7 @@ export function SettingsView() {
       )}
 
       {/* ---------------------------- 软件更新（§9） ---------------------------- */}
-      {tab === 'about' && <UpdatePanel currentVersion={appInfo?.version} />}
+      {tab === 'about' && !isAndroid && <UpdatePanel currentVersion={appInfo?.version} />}
     </div>
   )
 }

@@ -422,12 +422,12 @@ struct Credentials {
     key: String,
 }
 fn credentials(id: &str, value: Option<&Credentials>) -> AppResult<Credentials> {
-    let entry = keyring::Entry::new("Lumen.CloudSync", id)
-        .map_err(|_| AppError::internal("无法访问 Windows 凭据管理器"))?;
+    let entry = crate::credentials::Entry::new("Lumen.CloudSync", id)
+        .map_err(|_| AppError::internal("无法访问本机安全凭据库"))?;
     if let Some(v) = value {
         entry
             .set_password(&encoded(v)?)
-            .map_err(|_| AppError::internal("无法保存同步凭据，请检查当前 Windows 账户权限"))?;
+            .map_err(|_| AppError::internal("无法保存同步凭据，请检查当前设备的安全凭据存储"))?;
     }
     let value = entry.get_password().map_err(|_| {
         AppError::new(

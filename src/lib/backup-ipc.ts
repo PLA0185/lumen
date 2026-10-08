@@ -28,6 +28,9 @@ export interface BackupStats {
   seriesRebuilds: number
   focusSessions: number
   goals: number
+  recipes?: number
+  nutritionEntries?: number
+  shoppingItems?: number
 }
 
 /** 导出结果 */

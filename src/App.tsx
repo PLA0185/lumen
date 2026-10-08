@@ -25,6 +25,8 @@ import { CloudSyncButton } from './components/CloudSyncButton'
 import { AiAssistant } from './components/AiAssistant'
 import { MemosView } from './components/MemosView'
 import { KnowledgeBase } from './components/KnowledgeBase'
+import { NutritionView } from './components/NutritionView'
+import { isAndroidPlatform } from './lib/platform'
 import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
@@ -44,6 +46,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'weekly-recurring',
   'memos',
   'knowledge',
+  'nutrition',
   'assistant',
   'today',
   'tomorrow',
@@ -109,6 +112,8 @@ export default function App() {
   const [memoSearch, setMemoSearch] = useState('')
   const [memoDirty, setMemoDirty] = useState(false)
   const [knowledgeMounted, setKnowledgeMounted] = useState(view === 'knowledge')
+  const isAndroid = isAndroidPlatform()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [knowledgeFlowTarget, setKnowledgeFlowTarget] = useState<{ flowId: string; stepId: string; requestId: string } | null>(null)
   const [showAi, setShowAi] = useState(false)
   const aiDialog = useRef<HTMLDialogElement>(null)
@@ -119,6 +124,7 @@ export default function App() {
   const navigate = useCallback((next: ViewId) => {
     if (view === 'memos' && next !== view && memoDirty && !window.confirm('备忘修改尚未保存。放弃修改并离开吗？')) return
     setShowQuickAdd(false)
+    setMobileMenuOpen(false)
     setView(next)
   }, [view, memoDirty, setView])
   const [creationContext, setCreationContext] = useState<TaskCreationContext>()
@@ -156,6 +162,7 @@ export default function App() {
   const [floatingOn, setFloatingOn] = useState<boolean | null>(null)
 
   useEffect(() => {
+    if (isAndroid) return
     void (async () => {
       try {
         const s = await win.windowFloatingState()
@@ -164,14 +171,15 @@ export default function App() {
         // 非 Tauri 环境或窗口不存在时保持未知，按钮显示为"未开启"
       }
     })()
-  }, [])
+  }, [isAndroid])
 
   // 从设置页或托盘改动时保持同步
   useEffect(() => {
+    if (isAndroid) return
     return listenEvent<win.WindowConfig>('floating-config', (e) => {
       setFloatingOn(e.payload.floatingEnabled)
     })
-  }, [])
+  }, [isAndroid])
 
   const toggleFloating = useCallback(async () => {
     try {
@@ -478,8 +486,9 @@ export default function App() {
 
   return (
     <>
-    <div className="app">
-      <Sidebar current={view} onSelect={navigate} counts={counts} version={appInfo?.version} />
+    <div className={`app${isAndroid ? ' app--android' : ' app--windows'}`}>
+      <Sidebar current={view} onSelect={navigate} counts={counts} version={appInfo?.version} mobileOpen={isAndroid && mobileMenuOpen} />
+      {isAndroid && mobileMenuOpen && <button type="button" className="mobile-sidebar-backdrop" aria-label="关闭导航菜单" onClick={() => setMobileMenuOpen(false)} />}
 
       <div className="main">
         <header className="topbar">
@@ -493,7 +502,7 @@ export default function App() {
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
             {view !== 'knowledge' && <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>}
             {view !== 'knowledge' && <CloudSyncButton />}
-            {view !== 'knowledge' && <button
+            {!isAndroid && view !== 'knowledge' && <button
               type="button"
               className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}
               aria-pressed={floatingOn === true}
@@ -509,7 +518,7 @@ export default function App() {
               悬浮窗
             </button>}
 
-            {view !== 'memos' && view !== 'knowledge' && <><button
+            {view !== 'memos' && view !== 'knowledge' && view !== 'nutrition' && <><button
               type="button"
               className={`btn btn--ghost btn--sm${overdueOnly ? ' btn--filter-on' : ''}`}
               aria-pressed={overdueOnly}
@@ -568,7 +577,7 @@ export default function App() {
             </>}
             </div>
             <div className="topbar__end">
-            {view !== 'knowledge' && <>
+            {view !== 'knowledge' && view !== 'nutrition' && <>
             <div className="search">
               <span className="search__icon" aria-hidden="true">
                 <Icon name="search" size={15} />
@@ -601,7 +610,7 @@ export default function App() {
               )}
             </div>
             </>}
-            {view !== 'memos' && view !== 'knowledge' && <>
+            {view !== 'memos' && view !== 'knowledge' && view !== 'nutrition' && <>
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -626,7 +635,7 @@ export default function App() {
         </header>
 
         <main className="content">
-          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} initialFlowTarget={knowledgeFlowTarget} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : <>
+          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} initialFlowTarget={knowledgeFlowTarget} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
@@ -708,6 +717,7 @@ export default function App() {
 
           <TaskArea
             view={view}
+            isAndroid={isAndroid}
             tasks={sortedTasks}
             progressMap={progressMap}
             loadState={loadState}
@@ -754,6 +764,13 @@ export default function App() {
           </div>}
         </main>
       </div>
+      {isAndroid && <nav className="mobile-nav" aria-label="主要导航">
+        <button type="button" className={view === 'today' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('today')}><Icon name="today" size={20} /><span>今天</span></button>
+        <button type="button" className={view === 'all' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('all')}><Icon name="list" size={20} /><span>全部</span></button>
+        <button type="button" className={view === 'memos' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('memos')}><Icon name="edit" size={20} /><span>流程</span></button>
+        <button type="button" className={view === 'nutrition' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('nutrition')}><Icon name="heart" size={20} /><span>饮食</span></button>
+        <button type="button" className="mobile-nav__item" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)}><Icon name={mobileMenuOpen ? 'close' : 'list'} size={20} /><span>更多</span></button>
+      </nav>}
 
       {/* 完整编辑表单（§4.1 字段集） */}
       <dialog ref={aiDialog} className="ai-quick-dialog" aria-label="AI 助手输入对话框" onCancel={() => setShowAi(false)} onClose={() => setShowAi(false)}>
@@ -849,6 +866,7 @@ export default function App() {
 
 interface TaskAreaProps {
   view: ViewId
+  isAndroid: boolean
   tasks: Task[]
   /** 任务 ID → 子任务进度（列表页批量取得） */
   progressMap: Record<string, SubtaskSummary>
@@ -884,6 +902,7 @@ interface TaskAreaProps {
 
 function TaskArea({
   view,
+  isAndroid,
   tasks,
   progressMap,
   loadState,
@@ -918,7 +937,7 @@ function TaskArea({
 
   // 设置页（外观、数据与备份、提醒、关于）
   if (view === 'settings') {
-    return <SettingsView />
+    return <SettingsView isAndroid={isAndroid} />
   }
   if (view === 'weekly-recurring') return <WeeklyRecurringView query={search} />
   if (view === 'assistant') return <AiAssistant />

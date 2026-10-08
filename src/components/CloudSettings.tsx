@@ -87,12 +87,12 @@ export function CloudSettings() {
       <h3>默认同步类型</h3>
       <fieldset disabled={busy} className="cloud-settings__fields">
         <SyncOptionsFields prefix="默认" value={defaults} onChange={setDefaults} />
-        <p className="setgroup__hint">保存后，自动同步和顶部同步入口都采用此选择。“全部业务数据”还会加密同步知识库原件与解析正文，并在接收电脑重建本机检索索引；“仅任务”及“仅备忘与流程”不包含知识库资料。已保存流程继续按备忘与流程范围同步并参与检索。要共享知识库的电脑都需要运行支持此功能的版本。</p>
+        <p className="setgroup__hint">保存后，自动同步和顶部同步入口都采用此选择。“全部业务数据”还会加密同步知识库原件与解析正文、食谱、每日饮食/训练记录和采购清单；联网搜索密钥仍只保存在各自电脑。选择“仅任务”或“仅备忘与流程”时不会同步这些内容。已保存流程继续按备忘与流程范围同步并参与检索。要共享知识库的电脑都需要运行支持此功能的版本。</p>
         {!status.config.defaultSync && !status.config.inheritAll && <p className="setgroup__hint">旧版继承范围只限制下载；保存默认类型后，上传与下载都会采用这里选择的内容范围。</p>}
         <button className="btn btn--primary" onClick={() => void run(async () => { setStatus(await cloud.cloudSetDefaults(defaults)); setNotice('默认同步类型已保存，自动同步及顶部入口将采用此选择。') })}>保存默认同步类型</button>
       </fieldset>
       <p role="status">自动同步开关：{status.config.enabled ? '已开启' : '已暂停'}<br />待上传云端：{status.pending ? `${status.pending} 项变更（尚未上传）` : '无待上传变更'}<br />最近成功上传：{status.lastUpload ? new Date(status.lastUpload).toLocaleString() : '尚未上传'} · 最近检查：{status.lastScan ? new Date(status.lastScan).toLocaleString() : '尚未检查'}</p>
-      <p className="setgroup__hint">任务、项目、标签、重复规则、子任务、提醒、附件、专注、目标、备忘和流程都可以按所选范围同步。知识库资料只属于“全部业务数据”范围。窗口、快捷键和账号密码由各电脑单独设置。任务附件最多 200 MiB，内容中的图片/文件及知识库原件最多 20 MiB；大文件会消耗网盘流量。</p>
+      <p className="setgroup__hint">任务、项目、标签、重复规则、子任务、提醒、附件、专注、目标、食谱、饮食记录、训练消耗、采购清单、备忘和流程都可以按所选范围同步。知识库资料与饮食采购内容只属于“全部业务数据”范围。窗口、快捷键、AI 设置、联网搜索密钥和账号密码由各电脑单独设置。任务附件最多 200 MiB，内容中的图片/文件及知识库原件最多 20 MiB；大文件会消耗网盘流量。</p>
       <div className="memos__toolbar">
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudNow(cloud.defaultSync(status.config))); setNotice('本次同步已执行，采用已保存的默认类型。') })}>立即同步</button>
         <button className="btn" disabled={busy} onClick={() => void run(async () => { setStatus(await cloud.cloudEnable(!status.config!.enabled)) })}>{status.config.enabled ? '暂停同步' : '恢复同步'}</button>

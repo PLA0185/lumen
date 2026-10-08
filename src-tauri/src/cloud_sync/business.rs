@@ -3,7 +3,7 @@
 use super::*;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 24] = [
     "projects",
     "categories",
     "tags",
@@ -23,8 +23,23 @@ pub const TABLES: [&str; 19] = [
     "goals",
     "settings",
     "knowledge_sources",
+    "nutrition_preferences",
+    "recipes",
+    "recipe_ingredients",
+    "nutrition_entries",
+    "shopping_items",
 ];
 const KNOWLEDGE_TABLE: &str = "knowledge_sources";
+const NUTRITION_TABLES: [&str; 5] = [
+    "nutrition_preferences",
+    "recipes",
+    "recipe_ingredients",
+    "nutrition_entries",
+    "shopping_items",
+];
+fn included_in_scope(table: &str, include_all_data: bool) -> bool {
+    include_all_data || (table != KNOWLEDGE_TABLE && !NUTRITION_TABLES.contains(&table))
+}
 const ALIAS_TABLES: [&str; 7] = [
     "projects",
     "categories",
@@ -187,6 +202,22 @@ async fn validate_event(conn: &mut SqliteConnection, event: &Event) -> AppResult
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nutrition_data_is_only_included_in_all_business_sync_scope() {
+        for table in NUTRITION_TABLES {
+            assert!(!included_in_scope(table, false));
+            assert!(included_in_scope(table, true));
+        }
+        assert!(!included_in_scope(KNOWLEDGE_TABLE, false));
+        assert!(included_in_scope(KNOWLEDGE_TABLE, true));
+        assert!(included_in_scope("tasks", false));
+    }
 }
 fn valid_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -502,7 +533,7 @@ async fn capture_from(
         .await?;
     let mapping = aliases(tx).await?;
     for table in TABLES {
-        if table == KNOWLEDGE_TABLE && !include_knowledge {
+        if !included_in_scope(table, include_knowledge) {
             continue;
         }
         let pk = primary(tx, table).await?;
@@ -593,7 +624,7 @@ pub(super) async fn rebase_restore(
     dir: &std::path::Path,
     include_knowledge: bool,
 ) -> AppResult<()> {
-    let tombstones=sqlx::query("SELECT id,table_name,key_json,selected_event FROM cloud_records WHERE base_json IS NULL AND selected_event IS NOT NULL AND (? OR table_name<>?)")
+    let tombstones=sqlx::query("SELECT id,table_name,key_json,selected_event FROM cloud_records WHERE base_json IS NULL AND selected_event IS NOT NULL AND (? OR (table_name<>? AND table_name NOT IN ('nutrition_preferences','recipes','recipe_ingredients','nutrition_entries','shopping_items')))")
         .bind(include_knowledge)
         .bind(KNOWLEDGE_TABLE)
         .fetch_all(&mut *conn)
@@ -619,7 +650,7 @@ pub(super) async fn rebase_restore(
             .execute(&mut *conn)
             .await?;
     }
-    sqlx::query("UPDATE cloud_records SET base_json=NULL WHERE (? OR table_name<>?)")
+    sqlx::query("UPDATE cloud_records SET base_json=NULL WHERE (? OR (table_name<>? AND table_name NOT IN ('nutrition_preferences','recipes','recipe_ingredients','nutrition_entries','shopping_items')))")
         .bind(include_knowledge)
         .bind(KNOWLEDGE_TABLE)
         .execute(&mut *conn)
@@ -1494,7 +1525,7 @@ async fn apply_from(
     for row in records {
         let id: String = row.get("id");
         let table: String = row.get("table_name");
-        if table == KNOWLEDGE_TABLE && !include_knowledge {
+        if !included_in_scope(&table, include_knowledge) {
             continue;
         }
         let heads = heads(tx, Some(&id), false).await?;
@@ -1543,7 +1574,7 @@ async fn apply_from(
     // before touching business rows; otherwise a remote parent deletion could erase local children.
     for event in candidates.iter().filter(|e| e.row.is_none()) {
         for table in TABLES {
-            if table == KNOWLEDGE_TABLE && !include_knowledge {
+            if !included_in_scope(table, include_knowledge) {
                 continue;
             }
             let sql = format!("PRAGMA foreign_key_list({table})");
