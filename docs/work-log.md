@@ -3580,6 +3580,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 自动同步在 `retry_until` 尚未到期时跳过网络流程和状态通知，到期后由后台重新尝试；本机待同步事件仍保存在 SQLite 队列。
 - 增加两项回归测试，覆盖预算限流原因保留、网盘重试截止时间不被改写。版本升到 0.4.31，更新发布说明与 README。
 - 构建 0.4.31 x64 NSIS 签名安装包及 updater 签名，复制到仓库外。安装包为 24,604,575 字节，SHA-256 为 `9AC70454974CB9FA0D8B918F0CF3DFDF21CEFCCBFA3CB366738C2A11B9E56455`；最终清理 Cargo 构建目录移除 18,147 个文件、释放 11.3 GiB。
+- 用户指出应用更新页仍显示 0.4.30 后，确认仅有 main 源码和本机包、缺少 Release tag；推送 `v0.4.31` 并由官方发布工作流创建公开 Release，包含 CI 构建并验签的 Windows 安装包、签名和 `latest.json`。
 
 ### 没做到
 
@@ -3593,6 +3594,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `cargo fmt --all -- --check`、`cargo test --lib`（558 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。
 - 使用 `node tools/verify-updater-signature.mjs` 验证仓库外的安装包和 updater 签名，公钥验签通过，篡改产物被拒绝；包版本元数据为 0.4.31，安装包 24,604,575 字节、签名文件 436 字节。
 - GitHub Actions [运行 37769467813](https://github.com/PLA0185/lumen/actions/runs/37769467813) 已完成，`frontend` 和 `rust` 两个 job 均成功。`git diff --check` 通过；跟踪文件安全检查未发现密钥、数据库、日志、可执行文件、签名或构建目录；密钥标记文本仅命中说明文档。
+- GitHub Release 工作流 [运行 37771094827](https://github.com/PLA0185/lumen/actions/runs/37771094827) 在 20m39s 内完整成功（含完整门禁、签名包构建、验签和篡改拒绝检查、`latest.json` 规范化与公开发布）；应用使用的 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json` 匿名读取返回 HTTP 200、版本 `0.4.31`、Windows 安装地址及签名字段均存在。
 
 ### 相关文档
 
