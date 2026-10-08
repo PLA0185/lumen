@@ -3579,21 +3579,20 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 修复限流冷却期间的错误保存：后台轮询返回“正在等待重试”时不再覆盖首次限流原因，也不再把重试截止时间顺延 30 秒；真实网盘 `Retry-After` 和本机共享请求预算设定的截止时间均被保留。
 - 自动同步在 `retry_until` 尚未到期时跳过网络流程和状态通知，到期后由后台重新尝试；本机待同步事件仍保存在 SQLite 队列。
 - 增加两项回归测试，覆盖预算限流原因保留、网盘重试截止时间不被改写。版本升到 0.4.31，更新发布说明与 README。
-- 构建 0.4.31 x64 NSIS 签名安装包及 updater 签名，复制到仓库外；清理 Cargo 构建目录，释放 13.3 GiB。
+- 构建 0.4.31 x64 NSIS 签名安装包及 updater 签名，复制到仓库外。安装包为 24,604,575 字节，SHA-256 为 `9AC70454974CB9FA0D8B918F0CF3DFDF21CEFCCBFA3CB366738C2A11B9E56455`；最终清理 Cargo 构建目录移除 18,147 个文件、释放 11.3 GiB。
 
 ### 没做到
 
 - 未对真实 WebDAV 执行本轮上传。只读检查时本机有 707 条 `memo_sync_events` 尚未上传，最近成功上传时间仍为 2026-09-30；因此不能声称云端已经收到这些更改。
 - 本机仍有一个 0.4.30 进程使用该资料库，且进程来自独立验证目录。为避免覆盖正在运行的程序或中断窗口，本轮没有安装 0.4.31；修复要在关闭旧程序并安装/启动 0.4.31 后才会作用到该进程。
-- GitHub Actions 尚未验证；需推送代码后检查本次 CI。
-- 本机未安装 Minisign 命令行验证器；签名由 `updater-secret.ps1 -Build` / Tauri 构建生成，构建输出签名文件成功，但没有使用独立 CLI 再验签。
 
 ### 怎么验证的
 
 - 按测试先行：两项新测试在旧实现下均失败；第一项观察到 12 秒冷却被扩到 30 秒。修复后两项测试均通过。
-- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.31）、`pnpm typecheck`、`pnpm test`（47 个文件、363 项）、`pnpm build`、`pnpm lint` 均实际执行并通过。构建仍有既有的 `INEFFECTIVE_DYNAMIC_IMPORT` 提示。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.31）、`pnpm typecheck`、`pnpm test`（47 个文件、364 项）、`pnpm build`、`pnpm lint` 均实际执行并通过。构建仍有既有的 `INEFFECTIVE_DYNAMIC_IMPORT` 提示。
 - `cargo fmt --all -- --check`、`cargo test --lib`（558 项通过、4 项 ignored）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。
-- `git diff --check` 通过；跟踪文件安全检查未发现密钥、数据库、日志、可执行文件、签名或构建目录；密钥标记文本仅命中说明文档。安装包版本元数据为 0.4.31，大小 24,604,190 字节；updater 签名文件 436 字节。`cargo clean` 清理 18,708 个构建文件，释放 13.3 GiB。
+- 使用 `node tools/verify-updater-signature.mjs` 验证仓库外的安装包和 updater 签名，公钥验签通过，篡改产物被拒绝；包版本元数据为 0.4.31，安装包 24,604,575 字节、签名文件 436 字节。
+- GitHub Actions [运行 37769467813](https://github.com/PLA0185/lumen/actions/runs/37769467813) 已完成，`frontend` 和 `rust` 两个 job 均成功。`git diff --check` 通过；跟踪文件安全检查未发现密钥、数据库、日志、可执行文件、签名或构建目录；密钥标记文本仅命中说明文档。
 
 ### 相关文档
 
