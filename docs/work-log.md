@@ -3530,16 +3530,18 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 没做到
 
-- **本机尚未安装 0.4.29**：本次重新编译需要下载 60.7 MiB 的 ONNX Runtime，实测下载速度约 8 KiB/s；中断时仅下载约 320 KiB，继续等待预计超过一小时。当前本机仍运行 0.4.16，它已有首次目录 409 修复，但界面仍显示旧“恢复码”用词。
+- **本机 Rust 编译未完成**：重新编译需要下载 60.7 MiB 的 ONNX Runtime，速度最初约 8 KiB/s，因此中断本地测试；之后从 GitHub 正式 Release 下载已验签的安装包并成功安装 0.4.29。
 - **真实坚果云连接未复验**：旧连接失败发生在账号凭据写入本机前，数据库没有 `memo_cloud_sync` 配置。需要在已运行的 Lumen 设置页重新输入坚果云第三方应用密码；本轮没有向云端写入或覆盖用户资料。
-- Rust 测试因上述依赖下载过慢被中断；`cargo test --lib`、严格 Clippy、签名安装包构建及本机安装均未完成。
+- 本地 `cargo test --lib` 因上述依赖下载过慢被中断，本机严格 Clippy 未执行；GitHub 的 Release 完整门禁及安装包构建、签名校验均通过。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.29）、`pnpm typecheck`、`pnpm test`（47 个文件、363 项）、`pnpm build`、`pnpm lint` 均退出 0；`cargo fmt --all -- --check` 退出 0。
-- SQLite 只读检查确认本机有 2 条备忘记录、数据库结构版本为 12，未配置云同步；已确认运行中的唯一 Lumen 进程是 `C:\Users\win\AppData\Local\Lumen\lumen.exe`，版本 0.4.16。
-- ONNX Runtime 下载地址响应 HTTP 200、Content-Length 为 63,689,297 字节，但下载速度过慢，未取得完整文件或通过 SHA-256 校验；没有把临时下载文件放入仓库。
+- GitHub Actions [CI 37722064776](https://github.com/PLA0185/lumen/actions/runs/37722064776) 与 [v0.4.29 Release 37722646062](https://github.com/PLA0185/lumen/actions/runs/37722646062) 全部成功；发布的 Release 已公开，含 NSIS 安装包、updater 签名与 `latest.json`。
+- 用 `tools/verify-updater-signature.mjs` 验证下载的安装包签名通过，脚本也确认篡改包会被拒绝。静默安装退出码为 0，安装后程序版本为 0.4.29。
+- SQLite 只读检查确认升级后 593 个任务、380 个子任务和 2 条备忘均保留，结构版本为 13；`memo_cloud_sync` 仍不存在。确认当前只有一个 Lumen 进程，运行路径为 `C:\Users\win\AppData\Local\Lumen\lumen.exe`。
+- 本机 OCR 依赖下载未完成；中止的临时文件和签名安装包都在仓库之外，没有把它们或任何凭据加入仓库。
 
 ### 相关文档
 
-- [0.4.29 发布说明](../RELEASE_NOTES.md)、[云同步设置](../src/components/CloudSettings.tsx)、[WebDAV 同步实现](../src-tauri/src/cloud_sync.rs)、[知识库云同步验收记录](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)。
+- [0.4.29 发布说明](../RELEASE_NOTES.md)、[v0.4.29 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.29)、[云同步设置](../src/components/CloudSettings.tsx)、[WebDAV 同步实现](../src-tauri/src/cloud_sync.rs)、[知识库云同步验收记录](superpowers/specs/2026-10-05-knowledge-base-cloud-sync.md)。
