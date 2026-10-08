@@ -3599,3 +3599,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [0.4.31 发布说明](../RELEASE_NOTES.md)、[同步实现](../src-tauri/src/cloud_sync.rs)、[同步回归测试](../src-tauri/src/cloud_sync/tests.rs)、[README 文档索引](../README.md#文档索引)。
+
+## 第 73 轮 · 2026-10-08 · 明确云空间连接结果
+
+### 做了
+
+- 修复云同步设置中“验证并连接云空间”按钮只变暗、不显示进度的问题：请求进行时按钮显示“正在验证并连接…”，表单下方显示当前连接步骤。
+- 连接完成后在按钮附近显示绿色成功结果；失败时就地显示错误原因，避免用户滚回设置页顶部寻找提示。修改连接配置时会清除上次结果，避免旧状态误导。
+- 版本升至 0.4.32，并发布带 updater 签名的 Windows 安装包、签名文件和 `latest.json`。
+
+### 没做到
+
+- 没有使用用户的坚果云凭据进行真实 WebDAV 连接，因此没有验证该账号密码、网络或云端目录是否可用；界面成功/失败路径由组件测试覆盖。
+- 没有替用户安装或重启当前运行中的 Lumen。截图显示当前程序为 0.4.31；需要在程序内检查更新并安装 0.4.32 后才能看到新反馈。
+
+### 怎么验证的
+
+- 两项新增状态测试在修复前失败，修复后通过；分别覆盖连接等待时可见进度、成功提示及失败原因可见。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.32）、`pnpm typecheck`、`pnpm test`（47 个文件、366 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（558 项通过、4 项 ignored）及 `cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。构建仍有既有的 Vite `INEFFECTIVE_DYNAMIC_IMPORT` 告警。
+- GitHub [主分支 CI 37774963988](https://github.com/PLA0185/lumen/actions/runs/37774963988) 的前端和 Rust job 均成功。
+- GitHub [v0.4.32 Release 37775664391](https://github.com/PLA0185/lumen/actions/runs/37775664391) 已通过完整发版门禁、签名密钥检查、安装包构建、签名验证/篡改拒绝检查、更新清单规范化和 Release 发布步骤。公开 Release 含 `.exe`、`.sig` 与 `latest.json`；匿名读取应用更新地址返回 HTTP 200、版本 0.4.32，Windows 下载地址及签名字段存在。核对时 Runner 仍在执行缓存收尾步骤。
+- `git diff --check`、跟踪文件安全检查通过；未发现密钥块、数据库、日志、安装包、签名或构建产物进入提交。
+
+### 相关文档
+
+- [云同步连接状态界面](../src/components/CloudSettings.tsx)、[云同步连接状态回归测试](../src/components/CloudSyncButton.test.tsx)、[0.4.32 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
