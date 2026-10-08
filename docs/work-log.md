@@ -3683,3 +3683,6 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - [食谱与采购实现规格](superpowers/specs/2026-10-08-recipes-grocery-cross-platform.md)、[实施与验收计划](superpowers/plans/2026-10-08-recipes-grocery-cross-platform.md)、[数据结构](data-structure.md)、[0.4.34 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)。
+### 推送后验证补记
+
+- 草稿 PR [#1](https://github.com/PLA0185/lumen/pull/1) 对应代码提交的 GitHub Actions [CI 37855379160](https://github.com/PLA0185/lumen/actions/runs/37855379160) 已完成：frontend 与 rust 两个 job 均成功；Rust job 的格式、编译、573 项测试（4 项既有忽略）和严格 Clippy 全部成功。随后只追加了本条工作记录，没有改动代码。
