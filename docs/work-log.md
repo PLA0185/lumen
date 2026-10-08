@@ -3653,3 +3653,5 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 上述“尚未推送 / 工作流未运行”记录的是本节首次提交时的状态。之后已推送 `main`，GitHub 主分支 CI [37782068122](https://github.com/PLA0185/lumen/actions/runs/37782068122) 的前端与 Rust job 全部成功。
 - Release [37782090465](https://github.com/PLA0185/lumen/actions/runs/37782090465) 的完整门禁、签名包构建、安装包验签与篡改拒绝检查、更新清单规范化及公开发布步骤全部成功。核验时只剩 Runner 的 Rust 缓存收尾步骤仍在运行。
 - 匿名读取应用更新地址 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json` 返回 0.4.33，并指向公开的 `Lumen_0.4.33_x64-setup.exe`；Release 不是草稿，Assets 包含安装程序、`.sig` 和 `latest.json`。
+- Release 工作流 [37782090465](https://github.com/PLA0185/lumen/actions/runs/37782090465) 后续完成，最终结论为成功。
+- 工作记录补记提交的 CI [37784626503](https://github.com/PLA0185/lumen/actions/runs/37784626503) 首次前端单测因既有 100 节点画布用例耗时 9.16 秒、超过 Vitest 5 秒默认超时而失败；同次 Rust job 成功。本机单独运行该用例耗时约 0.41 秒，失败 job 重跑后前端与 Rust job 均成功。该既有压力用例偶发超时仍需留意，本轮没有为此放宽全局测试超时或改动其行为。
