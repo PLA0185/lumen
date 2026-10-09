@@ -3732,13 +3732,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - Windows 顶栏命令可按可用宽度换行，不再把标题、搜索和命令挤在一条不可见的横向滚动带里；Android 小屏保留 5 项底部导航、系统安全区和 48px 触控目标，大屏切换到侧栏。次级页面现在会高亮“更多”入口。
 - 把 Android 与 Windows 壳层规则从饮食页面样式移到独立平台样式表，避免平台导航依附在单一业务页 CSS 中；知识库答案采用限宽正文卡片，依据另行分隔并限制高度。
 - 保留项目自绘 SVG 图标集，统一图标颜色随导航状态变化和按钮按下动效，没有引入 Apple 专有图标或新 UI 依赖。增加 Android 导航选中回归测试与真实 WebView 布局验收脚本。
-- 版本升至 0.4.35；补充重构设计与实施记录、README 文档索引和发布说明。签名配置本机状态检查健康；代码推送和 Release 工作流仍待完成后补记。
+- 版本升至 0.4.35；补充重构设计与实施记录、README 文档索引和发布说明。代码拆为功能与文档两个提交，推送到 `PLA0185/lumen` 的 `main`，主分支 CI 和签名发布工作流均已完成。
 
 ### 没做到
 
-- 未连接 Android 实体机或模拟器，未验证安卓系统栏、键盘弹出、屏幕阅读器及真实触摸手势；Android 以实际 Chromium CSS 视口 390/760/900/1280px 验收。
+- 未连接 Android 实体机或模拟器，未验证安卓系统栏、键盘弹出、屏幕阅读器及真实触摸手势；Android 以实际 Chromium CSS 视口 390/760/900/1280px 验收。尝试执行 Tauri Android 构建，但本机没有 Java/JDK（`JAVA_HOME` 未设且 Android Studio JBR 不存在），所以没有生成 APK。
 - 没有为每个业务页面逐屏制作视觉快照或重排页面内部组件；本轮统一共享设计令牌与应用壳层，真实窗口截图检查的是隔离数据下的 Windows 主界面。
 - 没有修改既有流程画布内部节点几何或历史数据；其当前/悬停层级修复来自之前版本，本轮只保留并检查公共交互规则。
+- 隔离 UI 验收 profile 与截图仍留在 `%TEMP%`，未进入仓库；删除该临时目录的递归清理请求被安全审查拦截。profile 只有 3 个 SQLite 文件、569,344 字节，另有 3 张约 44 KB 截图和 57 字节配置文件。
 
 ### 怎么验证的
 
@@ -3746,7 +3747,9 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 在隔离本机数据目录中启动 0.4.35 Tauri/WebView2；`tools/verify_topbar_layout.py` 的 48 组 Windows 标题/字号/窗口布局全部通过，Android 390/760/900/1280px 导航断点、触控高度和底栏留白通过。脚本对“明天”及“今天”导航派发真实鼠标事件，并确认页面与当前导航同步后还原；真实截图只检查应用壳层和空任务视图。
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.35）、`pnpm typecheck`、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（578 项通过、4 项既有条件忽略）及 `cargo clippy --all-targets --all-features -- -D warnings` 均实际通过。Vite 保留原有 `INEFFECTIVE_DYNAMIC_IMPORT` 告警；Rust 测试保留 MSVC“正在创建库”提示。
 - 手算语义文本对比度：浅色次级文字 6.17:1、浅色说明文字 4.71:1、深色次级文字 10.65:1、深色说明文字 7.47:1，均达到普通正文 4.5:1 AA 线。
-- `git diff --check`、三处版本一致性和仓库敏感产物检查均通过；GitHub CI 与 Release 结果将在推送后补记。
+- `git diff --check`、三处版本一致性和仓库敏感产物检查均通过；没有密钥、数据库、日志或构建产物入库。
+- 主分支 CI [37866832384](https://github.com/PLA0185/lumen/actions/runs/37866832384) 的 frontend/rust job 全部成功。Release 工作流 [37867268496](https://github.com/PLA0185/lumen/actions/runs/37867268496) 完整门禁、签名密钥检查、Windows 安装包构建、签名及篡改拒绝验证、更新清单规范化与公开步骤均成功。
+- [v0.4.35 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.35) 已公开且不是草稿，含 `Lumen_0.4.35_x64-setup.exe`（24,698,995 字节）、对应 `.sig`（436 字节）和 `latest.json`。匿名读取 `https://github.com/PLA0185/lumen/releases/latest/download/latest.json` 实际返回 `0.4.35`，Windows URL 指向该安装包，签名字段 436 字符。
 
 ### 相关文档
 

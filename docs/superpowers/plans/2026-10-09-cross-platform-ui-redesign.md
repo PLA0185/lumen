@@ -65,5 +65,5 @@
 
 - [x] 在隔离数据目录的 Windows Tauri/WebView2 运行环境中检查真实应用截图，并用 Chromium 实际排版测量 48 组标题和命令组合。
 - [x] 以真实 Chromium 的 Android CSS 视口验证 390、760、900、1280px 导航切换、触控目标和底栏留白；实体 Android 未连接。
-- [ ] 执行完整 AGENTS.md 门禁，处理所有失败。
-- [ ] 更新 README 文档索引与 `docs/work-log.md`；检查敏感文件、工作区差异，按类别提交并推送。
+- [x] 执行完整 AGENTS.md 门禁，处理所有失败；远端主分支 CI 与签名 Release 流程均成功。
+- [x] 更新 README 文档索引与 `docs/work-log.md`；检查敏感文件和差异，按类别提交并推送。
