@@ -3773,7 +3773,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 没有可用的 Android 实体设备或模拟器；本轮 Android 验收是通过 WebView/CSS 视口 390、760、900、1280px 检查导航断点、控件高度和溢出，未验证真实系统栏、软键盘、屏幕阅读器和触摸手势。
 - 未对用户实际账户、真实云同步服务或真实 AI 服务做联网验收；流程/备忘增删、搜索、回收站、备份恢复和显示检查只使用仓库外 `%TEMP%` 的隔离 profile。
 - Vite 构建仍输出若干 `INEFFECTIVE_DYNAMIC_IMPORT` 提示，属于既有模块静态/动态混合导入布局；本轮没有为消除提示改动分包。pnpm 仍提示按默认策略忽略 esbuild install script，但构建及测试正常完成。
-- 未在本机安装或重启用户正在使用的程序；发布包需由签名 Release 工作流生成并安装。
+- 未在本机安装或重启用户正在使用的程序；已发布的签名包可通过软件内更新检查获取，实机安装升级未验证。
 
 ### 怎么验证的
 
@@ -3782,6 +3782,10 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 在隔离的真实 Windows WebView2 窗口中验证 23 项备忘/流程操作：独立页面、草稿切换拦截、流程节点排序、按负责人搜索、删除与恢复、流程内容完整性、长备忘末尾、备份预览及真实恢复；过程没有写任务。
 - 真实 WebView 流程/导航可读性脚本 33 项通过，包含三类页面在 4 个窗口宽度、2 个字号下的标题与顶栏间距、长步骤正文和比例正确的图片、横纵布局、导航定位/高亮和悬停标题；另有顶栏 48 组 Chromium 布局及 Android 紧凑导航断点、触控高度和实际鼠标导航检查通过。独立 Windows 全视图检查覆盖 23 个页面，无页面或应用级横向溢出；长备忘确认 `max-height:none` 且尾标记可见。
 - `git diff --check`、Python 实机脚本语法检查和版本三处一致性检查通过。推送前再复查跟踪文件中的密钥、数据库、日志、可执行文件、签名和构建目录。
+- PR #3 的 GitHub CI（[37950183653](https://github.com/PLA0185/lumen/actions/runs/37950183653)）frontend/rust 两个 job 均成功；合并到 `main` 后的 CI（[37951070124](https://github.com/PLA0185/lumen/actions/runs/37951070124)）两个 job 也均成功。
+- `v0.4.36` 发布工作流（[37951139050](https://github.com/PLA0185/lumen/actions/runs/37951139050)）完整门禁、GitHub 签名密钥检查、Windows 安装包构建、安装包验签和篡改拒绝检查、updater 清单规范化及正式发布均通过。
+- [v0.4.36 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.36) 已公开且非草稿，包含 24,695,588 字节 NSIS 安装包、436 字节签名和 `latest.json`。匿名读取 latest 下载地址确认版本为 `0.4.36`，Windows 安装器链接和 436 字符签名均存在。
+- GitHub 给 `actions/checkout@v4`、`actions/setup-node@v4`、`pnpm/action-setup@v4` 发出 Node.js 20 弃用提示；本次工作流已在 Node.js 24 上完成，但这些 action 主版本升级未纳入本轮 UI 整改。
 
 ### 相关文档
 

@@ -89,4 +89,4 @@
 - [x] Execute `cargo fmt --check`, `cargo test --lib`, and `cargo clippy --all-targets --all-features -- -D warnings` after build.
 - [x] Run the complete real WebView audit on isolated data; capture and inspect final screenshots.
 - [x] Record verified outcomes and platform limitations in four-part work-log entry; check secrets/build artifacts.
-- [ ] Commit each concern separately, push to `PLA0185/lumen`, and wait for remote CI before claiming completion.
+- [x] Commit each concern separately, push to `PLA0185/lumen`, and wait for remote CI before claiming completion.
