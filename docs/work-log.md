@@ -3707,7 +3707,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.34）、`pnpm typecheck`、`pnpm test`（50 个文件、374 项）、`pnpm build`、`pnpm lint` 均实际执行并通过。构建有仓库既有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示；安装提示 esbuild 构建脚本按 pnpm 默认设置忽略。
 - `cargo fmt --check`、`cargo test --lib`（578 项通过、4 项按既有条件忽略）、`cargo clippy --all-targets --all-features -- -D warnings` 均实际执行并通过。MSVC 输出的“正在创建库”链接器信息仍随单测出现。
 - `git diff --check` 通过；跟踪文件检查未发现密钥、数据库、日志、可执行文件、签名或构建目录；密钥标记文本只命中安全说明文档。
-- 推送后 CI 与 PR 状态尚未取得，将在后续补记中记录。
+- 初次推送时 PR 与主分支 CI 尚未取得；最终 PR、主分支及 Release 结果见下方补记。
 
 ### 相关文档
 
@@ -3716,3 +3716,10 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 推送后验证补记
 
 - PR [#2](https://github.com/PLA0185/lumen/pull/2) 的 GitHub Actions [CI 37859542642](https://github.com/PLA0185/lumen/actions/runs/37859542642) 已完成，frontend 与 rust 两个 job 均成功；Rust 远端完整格式、编译、测试和严格 Clippy 检查通过。
+- 合并提交 `5181aca322a04b181744ec25961a0f734421232c` 的主分支 GitHub Actions [CI 37860059261](https://github.com/PLA0185/lumen/actions/runs/37860059261) 也已完成，frontend 与 rust 两个 job 均成功。
+
+### 正式发布补记
+
+- 在版本号一致且 `v0.4.34` tag 不存在的前提下，将该合并提交标记为 `v0.4.34` 并推送；GitHub Release 工作流 [37860622350](https://github.com/PLA0185/lumen/actions/runs/37860622350) 的完整门禁、签名包构建、安装包验签、篡改拒绝验证、更新清单规范化及发布步骤全部成功。
+- Release [v0.4.34](https://github.com/PLA0185/lumen/releases/tag/v0.4.34) 已公开且非草稿，包含 `Lumen_0.4.34_x64-setup.exe`（24,692,393 字节）、对应 `.sig`（436 字节）与 `latest.json`。匿名读取最新更新清单实际返回版本 `0.4.34`，安装器链接指向该 Release。
+- 本机没有安装或重启用户正在使用的应用；要在本机使用新功能，仍需在 Lumen 中检查并安装 0.4.34 更新。
