@@ -3723,3 +3723,34 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 在版本号一致且 `v0.4.34` tag 不存在的前提下，将该合并提交标记为 `v0.4.34` 并推送；GitHub Release 工作流 [37860622350](https://github.com/PLA0185/lumen/actions/runs/37860622350) 的完整门禁、签名包构建、安装包验签、篡改拒绝验证、更新清单规范化及发布步骤全部成功。
 - Release [v0.4.34](https://github.com/PLA0185/lumen/releases/tag/v0.4.34) 已公开且非草稿，包含 `Lumen_0.4.34_x64-setup.exe`（24,692,393 字节）、对应 `.sig`（436 字节）与 `latest.json`。匿名读取最新更新清单实际返回版本 `0.4.34`，安装器链接指向该 Release。
 - 本机没有安装或重启用户正在使用的应用；要在本机使用新功能，仍需在 Lumen 中检查并安装 0.4.34 更新。
+
+## 第 77 轮 · 2026-10-09 · Windows 与 Android 跨平台界面重构
+
+### 做了
+
+- 统一全局浅色/深色表面、文字层级、边框、圆角、间距、控件高度和焦点/按下反馈；加强暗色次级文字对比，并让系统减少动态效果和应用关闭动画都能覆盖全局过渡。
+- Windows 顶栏命令可按可用宽度换行，不再把标题、搜索和命令挤在一条不可见的横向滚动带里；Android 小屏保留 5 项底部导航、系统安全区和 48px 触控目标，大屏切换到侧栏。次级页面现在会高亮“更多”入口。
+- 把 Android 与 Windows 壳层规则从饮食页面样式移到独立平台样式表，避免平台导航依附在单一业务页 CSS 中；知识库答案采用限宽正文卡片，依据另行分隔并限制高度。
+- 保留项目自绘 SVG 图标集，统一图标颜色随导航状态变化和按钮按下动效，没有引入 Apple 专有图标或新 UI 依赖。增加 Android 导航选中回归测试与真实 WebView 布局验收脚本。
+- 版本升至 0.4.35；补充重构设计与实施记录、README 文档索引和发布说明。签名配置本机状态检查健康；代码推送和 Release 工作流仍待完成后补记。
+
+### 没做到
+
+- 未连接 Android 实体机或模拟器，未验证安卓系统栏、键盘弹出、屏幕阅读器及真实触摸手势；Android 以实际 Chromium CSS 视口 390/760/900/1280px 验收。
+- 没有为每个业务页面逐屏制作视觉快照或重排页面内部组件；本轮统一共享设计令牌与应用壳层，真实窗口截图检查的是隔离数据下的 Windows 主界面。
+- 没有修改既有流程画布内部节点几何或历史数据；其当前/悬停层级修复来自之前版本，本轮只保留并检查公共交互规则。
+
+### 怎么验证的
+
+- 新增的 Android“更多”选中语义测试先在修复前失败，修复后通过；`pnpm test` 实际运行 50 个文件、375 项通过。
+- 在隔离本机数据目录中启动 0.4.35 Tauri/WebView2；`tools/verify_topbar_layout.py` 的 48 组 Windows 标题/字号/窗口布局全部通过，Android 390/760/900/1280px 导航断点、触控高度和底栏留白通过。脚本对“明天”及“今天”导航派发真实鼠标事件，并确认页面与当前导航同步后还原；真实截图只检查应用壳层和空任务视图。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.35）、`pnpm typecheck`、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（578 项通过、4 项既有条件忽略）及 `cargo clippy --all-targets --all-features -- -D warnings` 均实际通过。Vite 保留原有 `INEFFECTIVE_DYNAMIC_IMPORT` 告警；Rust 测试保留 MSVC“正在创建库”提示。
+- 手算语义文本对比度：浅色次级文字 6.17:1、浅色说明文字 4.71:1、深色次级文字 10.65:1、深色说明文字 7.47:1，均达到普通正文 4.5:1 AA 线。
+- `git diff --check`、三处版本一致性和仓库敏感产物检查均通过；GitHub CI 与 Release 结果将在推送后补记。
+
+### 相关文档
+
+- [跨平台 UI 重构设计](superpowers/specs/2026-10-09-cross-platform-ui-redesign.md)
+- [跨平台 UI 重构实施记录](superpowers/plans/2026-10-09-cross-platform-ui-redesign.md)
+- [0.4.35 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
