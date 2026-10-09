@@ -101,7 +101,7 @@ try:
         assets.append(invoke('content_asset_import', {'name': color + '.png', 'dataBase64': encoded}))
     details = [f'### {i+1}.1 操作甲\n\n点击甲入口。\n\n![原图甲](lumen-asset:{assets[i*2]["id"]})\n图{i*2+1} 甲入口\n### {i+1}.2 操作乙\n\n点击乙入口。\n\n![原图乙](lumen-asset:{assets[i*2+1]["id"]})\n图{i*2+2} 乙入口' for i in range(2)]
     original = invoke('memo_save', {'input': {'id': None, 'expectedRevision': None, 'title': '原文分层验收-' + str(uuid.uuid4())[:8], 'category': '原分类', 'kind': 'flow', 'bodyMd': '## 原始材料\n\n' + '\n\n'.join(details), 'steps': [{'id': str(uuid.uuid4()), 'title': f'{i+1}. 原章节' + ('甲' if i == 0 else '乙'), 'owner': '', 'detail': details[i]} for i in range(2)]}})
-    click('备忘与流程', 'document.querySelector(".sidebar")')
+    click('流程', 'document.querySelector(".sidebar")')
     if t.eval('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="显示记录列表"&&b.getBoundingClientRect().width>0)'):
         click('显示记录列表')
     click('刷新列表')
@@ -131,7 +131,7 @@ try:
     history = invoke('cloud_sync_history', {'id': original['id']})
     check('历史保留旧章节和细分新版本', sorted(len(v['document']['steps']) for v in history['versions']) == [2, 4])
     click('今天', 'document.querySelector(".sidebar")')
-    click('备忘与流程', 'document.querySelector(".sidebar")')
+    click('流程', 'document.querySelector(".sidebar")')
     click(original['title'])
     check('重新打开保留章节分组和四步', t.wait_for('document.querySelectorAll(".flow-canvas__node").length===4&&document.querySelectorAll(".flow-canvas__group").length===2') and invoke('memo_get', {'id': original['id']}) == saved)
     check('图片后原图注按原文换行在下方显示', t.eval('Array.from(document.querySelectorAll(".flow-canvas__body")).every(b=>{const image=b.querySelector("img"),br=b.querySelector(".content-asset")?.nextSibling;return image&&br?.nodeName==="BR"})'))

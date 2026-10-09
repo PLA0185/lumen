@@ -69,7 +69,7 @@ def import_file(area, filename, expected, recognize=True):
         print('PASS: real mouse click explicitly recognizes ' + filename + ' and retains original reference.', flush=True)
 
 
-click('备忘与流程')
+click('流程')
 click('新建流程')
 assert t.eval('!!document.querySelector(`[aria-label="流程画布"]`)')
 click('返回列表')

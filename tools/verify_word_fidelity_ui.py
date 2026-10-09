@@ -72,7 +72,7 @@ previous_config = invoke('ai_get_config')
 try:
     config = {'provider': 'custom', 'baseUrl': f'http://127.0.0.1:{server.server_port}/v1', 'model': 'local-word-fidelity-fixture', 'timeoutSeconds': 30, 'maxOutputTokens': 4096, 'hasApiKey': False}
     invoke('ai_set_config', {'config': config, 'apiKey': str(uuid.uuid4())})
-    click('备忘与流程')
+    click('流程')
     click('AI 生成流程')
     root = t.call('DOM.getDocument')['root']['nodeId']
     node = t.call('DOM.querySelector', {'nodeId': root, 'selector': '.ai-flow-dialog input[type=file]'})['nodeId']
@@ -113,7 +113,7 @@ try:
     assert base64.b64decode(invoke('content_asset_get', {'id': original_id})['dataBase64']) == original_path.read_bytes()
     assert '待确认问题' not in saved['bodyMd']
     click('今天')
-    click('备忘与流程')
+    click('流程')
     # Open saved item with real mouse events after leaving the view.
     probe = 'Array.from(document.querySelectorAll(".memos__list button")).find(b=>b.textContent.includes("原文顺序验收"))'
     assert t.wait_for(probe)

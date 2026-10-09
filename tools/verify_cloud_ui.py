@@ -80,7 +80,7 @@ click('.topbar button[aria-haspopup="dialog"]')
 check('AI对话框关闭再开保留输入', main.eval('document.querySelector(".ai-quick-dialog textarea").value==="明天整理业务流程"'))
 button('关闭助手')
 
-button('备忘与流程')
+button('备忘')
 button('新建备忘')
 ui.set_react_input(main, '.memos input[placeholder="例如：客户订单处理流程"]', '家里整理流程验收')
 ui.set_react_input(main, '.memos textarea', '先核对订单，再准备材料。')
