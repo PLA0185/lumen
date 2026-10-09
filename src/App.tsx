@@ -70,6 +70,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
 
 /** 使用组织管理界面的视图（项目与分类、标签） */
 const ORGANIZE_VIEWS = new Set<ViewId>(['projects', 'tags'])
+const ANDROID_PRIMARY_VIEWS = new Set<ViewId>(['today', 'all', 'memos', 'nutrition'])
 
 export default function App() {
   const {
@@ -113,6 +114,7 @@ export default function App() {
   const [memoDirty, setMemoDirty] = useState(false)
   const [knowledgeMounted, setKnowledgeMounted] = useState(view === 'knowledge')
   const isAndroid = isAndroidPlatform()
+  const androidMoreActive = !ANDROID_PRIMARY_VIEWS.has(view)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [knowledgeFlowTarget, setKnowledgeFlowTarget] = useState<{ flowId: string; stepId: string; requestId: string } | null>(null)
   const [showAi, setShowAi] = useState(false)
@@ -769,7 +771,7 @@ export default function App() {
         <button type="button" className={view === 'all' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('all')}><Icon name="list" size={20} /><span>全部</span></button>
         <button type="button" className={view === 'memos' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('memos')}><Icon name="edit" size={20} /><span>流程</span></button>
         <button type="button" className={view === 'nutrition' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('nutrition')}><Icon name="heart" size={20} /><span>饮食</span></button>
-        <button type="button" className="mobile-nav__item" aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)}><Icon name={mobileMenuOpen ? 'close' : 'list'} size={20} /><span>更多</span></button>
+        <button type="button" className={`mobile-nav__item${androidMoreActive ? ' is-active' : ''}`} aria-label="更多导航" aria-current={androidMoreActive ? 'page' : undefined} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)}><Icon name={mobileMenuOpen ? 'close' : 'list'} size={20} /><span>更多</span></button>
       </nav>}
 
       {/* 完整编辑表单（§4.1 字段集） */}
