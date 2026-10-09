@@ -50,6 +50,17 @@ it('makes the calorie accounting and manual daily goal readable', async () => {
   expect(document.body.textContent).toContain('计划')
 })
 
+it('zero training consumption is displayed as zero without a misleading minus sign', async () => {
+  await mount({
+    ...emptyDashboard,
+    totals: { baseKcal: 0, snackKcal: 0, trainingKcal: 0, netKcal: 0, remainingKcal: 2000 },
+    entries: [],
+  })
+  const training = [...document.querySelectorAll('.nutrition-totals > div')]
+    .find(item => item.querySelector('span')?.textContent === '训练消耗')
+  expect(training?.querySelector('strong')?.textContent).toBe('0 千卡')
+})
+
 it('requires an online food candidate before adding a meal', async () => {
   await mount()
   expect(document.body.textContent).toContain('先联网查询食物热量并选择来源')

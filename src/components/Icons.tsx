@@ -52,6 +52,7 @@ export type IconName =
   | 'search'
   | 'close'
   | 'edit'
+  | 'flow'
   | 'chevron-down'
   | 'chevron-up'
   | 'copy'
@@ -239,6 +240,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M4.2 19.8h3.9l10-10a1.9 1.9 0 0 0 0-2.7l-1.2-1.2a1.9 1.9 0 0 0-2.7 0l-10 10v3.9Z" />
       <path d="M13.4 7.2l3.4 3.4" />
+    </>
+  ),
+  flow: (
+    <>
+      <rect x="3.5" y="3.5" width="6" height="5" rx="1.2" />
+      <rect x="14.5" y="15.5" width="6" height="5" rx="1.2" />
+      <path d="M9.5 6h4a3 3 0 0 1 0 6h-3a3 3 0 0 0 0 6h4" />
     </>
   ),
   'chevron-down': <path d="M6.4 9.6 12 15.2l5.6-5.6" />,

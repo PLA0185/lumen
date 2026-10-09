@@ -36,7 +36,7 @@ def click(label):
     ui.real_click(t, '[data-canvas-verify]')
     t.eval('document.querySelectorAll("[data-canvas-verify]").forEach(b=>delete b.dataset.canvasVerify)')
 try:
-    click('备忘与流程'); click('新建流程')
+    click('流程'); click('新建流程')
     check('默认进入画布，记录列表不挤占画布', t.eval('!!document.querySelector(`[aria-label="流程画布"]`) && getComputedStyle(document.querySelector(".memos__list")).display === "none"'))
     check('保留左侧菜单和顶部栏，画布铺满剩余内容区', t.eval('(()=>{const r=document.querySelector(`[aria-label="流程画布"]`).getBoundingClientRect(), d=document.querySelector(".memos__document").getBoundingClientRect(), sidebar=document.querySelector(".sidebar").getBoundingClientRect(), header=document.querySelector(".topbar").getBoundingClientRect(), toolbar=document.querySelector(".memos__toolbar").getBoundingClientRect();return r.left>=sidebar.right && r.top>=header.bottom && r.top>=toolbar.bottom && Math.abs(r.right-d.right)<2 && Math.abs(r.bottom-d.bottom)<2 && !!document.elementFromPoint(sidebar.left+40,sidebar.top+40)?.closest(".sidebar") && !!document.elementFromPoint(toolbar.left+40,toolbar.top+20)?.closest(".memos__toolbar")})()'))
     click('流程信息')

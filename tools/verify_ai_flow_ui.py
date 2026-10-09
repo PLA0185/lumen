@@ -83,7 +83,7 @@ try:
     private = invoke('memo_save', {'input': {'id': None, 'expectedRevision': None, 'kind': 'memo', 'title': '未选择的私人记录', 'category': '', 'bodyMd': '不应发送给生成请求的私人正文', 'steps': []}})
     asset = invoke('content_asset_import_path', {'path': str(args.image.resolve())})
     source = '张三：先核对订单，再通知仓库。\n![聊天截图](lumen-asset:' + asset['id'] + ')'
-    button('备忘与流程')
+    button('流程')
     button('AI 生成流程')
     check('原生材料对话框实际打开', main.wait_for('document.querySelector("dialog[open] [aria-label=流程原始材料]")'))
     ui.set_react_input(main, '[aria-label="流程原始材料"]', source)

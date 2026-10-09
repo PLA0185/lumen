@@ -61,7 +61,7 @@ def paste_image(label):
 
 invoke('window_apply_action',{'action':'show_main'})
 main.eval('window.__TAURI_INTERNALS__.invoke("plugin:window|unminimize",{label:"main"})')
-button('备忘与流程');button('新建流程')
+button('流程');button('新建流程')
 input_value('备忘标题','图片与流程实机验收')
 input_value('第 1 步标题','核对资料')
 paste_image('备忘内容')
@@ -77,7 +77,7 @@ check('Tauri 文件拖入事件路由到命中的流程步骤',True)
 button('保存并查看')
 wait('document.querySelectorAll(".content-asset__image").length===2')
 wait('Array.from(document.querySelectorAll(".content-asset__image")).every(i=>i.complete&&i.naturalWidth===2)')
-check('备忘与流程图片解码显示，非只保存文件名',True)
+check('流程图片解码显示，非只保存文件名',True)
 docs=invoke('memo_list',{'query':'图片与流程实机验收','deletedOnly':False})
 # API list is an array, not the shape of a task paginated query.
 doc=invoke('memo_get',{'id':docs[0]['id']})

@@ -83,7 +83,7 @@ try:
         {'id': step_ids[0], 'title': '下载本周出货计划Excel表格', 'owner': '', 'detail': original_text + '\n\n![原图](lumen-asset:' + asset['id'] + ')'},
         *[{'id': step_ids[i], 'title': '步骤' + str(i + 1), 'owner': '', 'detail': '原始正文' + str(i + 1)} for i in range(1, 4)],
     ]}})
-    click('备忘与流程', 'document.querySelector(".sidebar")')
+    click('流程', 'document.querySelector(".sidebar")')
     if t.eval('!!document.querySelector(".flow-canvas")'):
         click('返回列表')
     click('刷新列表')
@@ -199,7 +199,7 @@ try:
     target = a.output_dir / '实际批注.png'
     invoke('content_image_export', {'path': str(target.resolve()), 'dataBase64': changed['dataBase64']})
     check('实际导出的 PNG 字节与批注图一致', hashlib.sha256(target.read_bytes()).hexdigest() == changed['sha256'])
-    click('今天', 'document.querySelector(".sidebar")'); click('备忘与流程', 'document.querySelector(".sidebar")'); click(actual['title'])
+    click('今天', 'document.querySelector(".sidebar")'); click('流程', 'document.querySelector(".sidebar")'); click(actual['title'])
     check('保存重开保留顺序、卡片编辑、备注及批注图', t.wait_for('document.querySelector(".flow-canvas__node h3")?.textContent==="实际卡片内编辑"&&document.querySelector(".content-asset__caption")?.textContent==="发货入口箭头备注"'))
     (a.output_dir / 'native-inline-images.json').write_text(json.dumps({'checks': checks, 'flowId': actual['id'], 'originalAsset': asset['id'], 'annotatedAsset': new_id, 'pixel': pixel}, ensure_ascii=False, indent=2), encoding='utf8')
     (a.output_dir / 'native-inline-images.png').write_bytes(base64.b64decode(t.call('Page.captureScreenshot', {'format': 'png'})['data']))

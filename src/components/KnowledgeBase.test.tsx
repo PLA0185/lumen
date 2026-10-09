@@ -53,9 +53,11 @@ async function mount(onOpenFlow = vi.fn(), initialSources: api.KnowledgeSourceSu
 
 it('在提问前明确说明最近对话也会发送给 AI 服务商', async () => {
   await mount()
+  expect(document.querySelector('.knowledge-base__intro h2')).toBeNull()
   expect(document.body.textContent).toContain('当前问题、最近必要对话和少量相关摘录会发送')
   expect(document.body.textContent).toContain('选择“全部业务数据”后，二者会加密同步到其他电脑')
   expect(document.body.textContent).toContain('已保存流程按“备忘与流程”范围同步并自动纳入检索')
+  expect(document.querySelector('.knowledge-base__privacy summary')?.textContent).toBe('云同步与 AI 隐私说明')
   expect(document.body.textContent).toContain('导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别')
   expect(document.body.textContent).toContain('失败后改用本机 PaddleOCR，不会上传整份文件')
 })

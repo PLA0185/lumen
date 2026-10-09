@@ -48,13 +48,15 @@ def snapshot():
         return {table: sorted(db.execute('SELECT * FROM "'+table.replace('"','""')+'"').fetchall(), key=repr) for table in tables}
 
 try:
-    button('备忘与流程')
+    button('流程')
     assert main.wait_for('document.querySelectorAll(".memos__item").length>0')
-    main.eval('const s=document.querySelector("[aria-label=\\"备忘分类筛选\\"]");s.value="业务学习";s.dispatchEvent(new Event("change",{bubbles:true}));true')
-    ui.set_react_input(main, '[aria-label="搜索备忘与流程"]', '不存在的验收词')
+    category = main.eval('document.querySelector("[aria-label=\\"流程分类筛选\\"]")?.options[1]?.value||""')
+    assert category, 'isolated profile must include a categorized flow'
+    main.eval('const s=document.querySelector("[aria-label=\\"流程分类筛选\\"]");s.value='+json.dumps(category)+';s.dispatchEvent(new Event("change",{bubbles:true}));true')
+    ui.set_react_input(main, '[aria-label="搜索流程"]', '不存在的验收词')
     assert main.wait_for('document.querySelectorAll(".memos__item").length===0')
-    check('无搜索结果时分类筛选仍清楚可见', main.eval('document.querySelector("[aria-label=\\"备忘分类筛选\\"]").value') == '业务学习')
-    ui.set_react_input(main, '[aria-label="搜索备忘与流程"]', '')
+    check('无搜索结果时流程分类筛选仍清楚可见', main.eval('document.querySelector("[aria-label=\\"流程分类筛选\\"]").value') == category)
+    ui.set_react_input(main, '[aria-label="搜索流程"]', '')
     button('设置'); button('窗口与启动')
     assert main.wait_for('Array.from(document.querySelectorAll("button")).some(b=>b.textContent.trim()==="恢复默认大小")')
     invoke('window_set_floating_size', {'width': 320, 'height': 460})

@@ -33,11 +33,13 @@ function errorText(e: unknown) {
 
 export function MemosView({
   query = '',
+  kindFilter = 'all',
   onDirtyChange,
   initialFlowTarget,
   onFlowTargetHandled,
 }: {
   query?: string
+  kindFilter?: 'memo' | 'flow' | 'all'
   onDirtyChange?: (dirty: boolean) => void
   initialFlowTarget?: { flowId: string; stepId: string; requestId: string } | null
   onFlowTargetHandled?: () => void
@@ -259,9 +261,10 @@ export function MemosView({
   const removeOrRestore = async () => {
     if (!selected || !canLeave()) return
     const deleted = !selected.deletedAt
+    const recordType = selected.kind === 'flow' ? '流程' : '备忘'
     if (
       deleted &&
-      !window.confirm(`把「${selected.title}」放入备忘回收站？可以恢复。`)
+      !window.confirm(`把「${selected.title}」放入${recordType}回收站？可以恢复。`)
     )
       return
     setBusy(true)
@@ -271,7 +274,7 @@ export function MemosView({
       setSelected(null)
       setDraft(null)
       setEditing(false)
-      setNotice(deleted ? '已放入备忘回收站' : '已恢复')
+      setNotice(deleted ? `已放入${recordType}回收站` : '已恢复')
       await reload()
     } catch (e) {
       setError(errorText(e))
@@ -299,12 +302,10 @@ export function MemosView({
     ;[steps[index], steps[target]] = [steps[target]!, steps[index]!]
     patch({ steps })
   }
-  const categories = [
-    ...new Set([category, ...items.map((i) => i.category)].filter(Boolean)),
-  ].sort()
-  const visible = category
-    ? items.filter((i) => i.category === category)
-    : items
+  const kindItems = kindFilter === 'all' ? items : items.filter(item => item.kind === kindFilter)
+  const categories = [...new Set(kindItems.map(item => item.category).filter(Boolean))].sort()
+  const visible = category ? kindItems.filter(item => item.category === category) : kindItems
+  const kindLabel = kindFilter === 'flow' ? '流程' : '备忘'
 
   const fullCanvas = draft?.kind === 'flow' && flowView === 'canvas'
   const metadataFields = draft ? <>
@@ -432,23 +433,23 @@ export function MemosView({
       <FitToolbar>
         {documentActions}
         {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
-        <button
+        {kindFilter !== 'flow' && <button
           className="btn btn--primary"
           disabled={busy || trash}
           onClick={() => create('memo')}
         >
           <Icon name="plus" size={15} />
           新建备忘
-        </button>
-        <button
+        </button>}
+        {kindFilter !== 'memo' && <button
           className="btn btn--primary"
           disabled={busy || trash}
           onClick={() => create('flow')}
         >
           <Icon name="plus" size={15} />
           新建流程
-        </button>
-        <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => {
+        </button>}
+        {kindFilter !== 'memo' && <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => {
           if (!canLeave()) return
           if (dirty) {
             setDraft(selected ? draftOf(selected) : null)
@@ -458,19 +459,18 @@ export function MemosView({
             setNotice(null)
           }
           setAiOpen(true)
-        }}>AI 生成流程</button>
-        <select
+        }}>AI 生成流程</button>}
+        {categories.length > 0 && <select
           className="input input--compact"
-          aria-label="备忘分类筛选"
+          aria-label={`${kindLabel}分类筛选`}
           value={category}
           onChange={(e) => setCategory(e.target.value)}
         >
           <option value="">全部分类</option>
-          {categories.length === 0 && <option disabled>保存分类后可筛选</option>}
           {categories.map((c) => (
             <option key={c}>{c}</option>
           ))}
-        </select>
+        </select>}
         <button
           className="btn btn--ghost"
           aria-pressed={trash}
@@ -484,7 +484,7 @@ export function MemosView({
             setEditing(false)
           }}
         >
-          {trash ? '返回备忘' : '备忘回收站'}
+          {trash ? `返回${kindLabel}` : `${kindLabel}回收站`}
         </button>
         <button
           className="btn btn--ghost"
@@ -505,9 +505,9 @@ export function MemosView({
         </p>
       )}
       <div className={`memos__workspace${draft?.kind === 'flow' && flowView === 'canvas' && !showList ? ' memos__workspace--canvas' : ''}`}>
-        <aside className="memos__list" aria-label="备忘与流程列表">
+        <aside className={`memos__list memos__list--${kindFilter}`} aria-label={`${kindLabel}列表`}>
           <div className="memos__count">
-            {trash ? '回收站' : '全部记录'} · {visible.length} 条
+            {trash ? `${kindLabel}回收站` : `全部${kindLabel}`} · {visible.length} 条
           </div>
           {loading && <p className="setgroup__hint">读取中…</p>}
           {!loading && visible.length === 0 && (
@@ -516,7 +516,7 @@ export function MemosView({
                 ? '没有匹配的记录'
                 : trash
                   ? '回收站为空'
-                  : '把容易忘的业务步骤记在这里。'}
+                  : kindFilter === 'flow' ? '还没有流程。新建一个流程，按步骤记录操作、负责人和注意事项。' : '还没有备忘。记录业务要点、术语和常用资料，之后可搜索查阅。'}
             </p>
           )}
           {visible.map((item) => (
@@ -528,19 +528,16 @@ export function MemosView({
               aria-pressed={selected?.id === item.id}
             >
               <strong>{item.title}</strong>
-              <span>
-                {item.kind === 'flow' ? '流程' : '备忘'} ·{' '}
-                {item.category || '未分类'}
-              </span>
+              {(kindFilter === 'all' || item.category) && <span>{kindFilter === 'all' ? `${item.kind === 'flow' ? '流程' : '备忘'} · ` : ''}{item.category || '未分类'}</span>}
             </button>
           ))}
         </aside>
         <article className="memos__document">
           {!draft ? (
             <div className="memos__empty">
-              <h2>把业务流程变成自己的随身手册</h2>
+              <h2>{kindFilter === 'flow' ? '选择一个业务流程' : kindFilter === 'memo' ? '选择一条备忘' : '选择一条记录'}</h2>
               <p>
-                选择一条记录查看，或新建备忘、流程。流程中可记录操作顺序、负责人、所需材料和容易漏掉的注意事项。
+                {kindFilter === 'flow' ? '流程按步骤组织，可查看每一步的负责人、所需材料和注意事项。' : kindFilter === 'memo' ? '备忘会完整显示在这里，支持长文本和 Markdown。' : '选择一条记录查看完整内容。'}
               </p>
               <p className="setgroup__hint">
                 内容保存在本机，并纳入「设置 → 数据与备份」的完整备份。

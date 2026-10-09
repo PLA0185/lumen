@@ -10,7 +10,7 @@ t=ui.connect(a.port)
 def invoke(name,args=None): return t.eval('window.__TAURI_INTERNALS__.invoke('+json.dumps(name)+','+json.dumps(args or {})+')')
 profile=a.data_dir.resolve();repo=Path(__file__).resolve().parents[1]
 assert Path(invoke('app_data_paths')['dataDir']).resolve()==profile
-assert profile.name=='flow-ai-test-data' and not profile.is_relative_to(repo)
+assert (profile.name=='flow-ai-test-data' or profile.name.startswith('flow-ai-test-data-')) and not profile.is_relative_to(repo)
 assert profile!=(Path(os.environ['APPDATA'])/'com.pla0185.lumen').resolve()
 assert not invoke('cloud_sync_status')['config']
 assert not a.output_dir.resolve().is_relative_to(repo)
@@ -51,6 +51,12 @@ def click(label,scope='document'):
     t.eval('document.querySelector("[data-readability-verify]").scrollIntoView({block:"center",behavior:"instant"})')
     ui.real_click(t,'[data-readability-verify]')
     t.eval('document.querySelectorAll("[data-readability-verify]").forEach(e=>delete e.dataset.readabilityVerify)')
+def double_click(selector):
+    t.eval('document.querySelector('+json.dumps(selector)+').scrollIntoView({block:"center",behavior:"instant"})')
+    box=t.eval('(()=>{const r=document.querySelector('+json.dumps(selector)+').getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}})()')
+    for count in (1,2):
+        for kind in ('mousePressed','mouseReleased'):
+            t.call('Input.dispatchMouseEvent',{'type':kind,'x':box['x'],'y':box['y'],'button':'left','buttons':1 if kind=='mousePressed' else 0,'clickCount':count})
 def select(selector,value):
     t.eval('(()=>{const e=document.querySelector('+json.dumps(selector)+');e.value='+json.dumps(value)+';e.dispatchEvent(new Event("change",{bubbles:true}))})()')
 def screenshot(name):
@@ -65,20 +71,20 @@ try:
         t.eval('new Promise(resolve=>setTimeout(resolve,80))')
     check('十次真实刷新保留同一个空态节点，没有切换加载骨架',t.eval('!window.__emptyRemoved&&document.querySelector(".state")===window.__steadyEmpty&&!document.querySelector(".skeleton")'))
     t.eval('window.__emptyObserver.disconnect()')
-    for page in ['今天','备忘与流程']:
+    for page in ['今天','备忘','流程']:
         click(page,'document.querySelector(".sidebar")')
         for width in [1000,1180,1500,1920]:
             for font in [14,18]:
                 resize(width,900)
                 t.eval('localStorage.setItem("lumen.fontSize",'+json.dumps(str(font))+');window.dispatchEvent(new StorageEvent("storage",{key:"lumen.fontSize"}))')
                 t.eval('new Promise(resolve=>setTimeout(resolve,180))')
-                result=t.eval('(()=>{const h=document.querySelector(\'.topbar__heading\'),c=document.querySelector(\'.topbar__controls\'),e=document.querySelector(\'.topbar__end\'),s=e.querySelector(\'.search\'),a=document.querySelector(\'.topbar__actions\'),r=n=>n.getBoundingClientRect();const buttons=Array.from(c.children);return {width:innerWidth,font:getComputedStyle(h).fontSize,scroll:a.scrollWidth-a.clientWidth,titleAbove:r(h.querySelector(\'h1\')).bottom<=r(h.querySelector(\'.topbar__subtitle\')).top+1,spacing:r(c).left-r(h).right,searchRight:r(s).right<=r(e).right,endVisible:r(e).right<=r(a).right+1,nonOverlap:buttons.every((b,i)=>!i||r(b).left>=r(buttons[i-1]).right+7),exportLast:!e.querySelector(\'button[title^="把当前列表"]\')||e.lastElementChild.matches(\'button[title^="把当前列表"]\')}})()')
+                result=t.eval('(()=>{const h=document.querySelector(\'.topbar__heading\'),c=document.querySelector(\'.topbar__controls\'),e=document.querySelector(\'.topbar__end\'),s=e.querySelector(\'.search\'),a=document.querySelector(\'.topbar__actions\'),r=n=>n.getBoundingClientRect();const buttons=Array.from(c.children);return {width:innerWidth,font:getComputedStyle(h).fontSize,scroll:a.scrollWidth-a.clientWidth,titleAbove:r(h.querySelector(\'h1\')).bottom<=r(h.querySelector(\'.topbar__subtitle\')).top+1,spacing:r(c).left-r(h).right,rowGap:r(c).top-r(h).bottom,searchRight:r(s).right<=r(e).right,endVisible:r(e).right<=r(a).right+1,nonOverlap:buttons.every((b,i)=>!i||r(b).left>=r(buttons[i-1]).right+7),exportLast:!e.querySelector(\'button[title^="把当前列表"]\')||e.lastElementChild.matches(\'button[title^="把当前列表"]\')}})()')
                 sizes.append({'page':page,'requestedWidth':width,'font':font,**result})
-                check(f'{page} {width}/{font} 标题上下排列且模块不重叠',result['titleAbove'] and result['spacing']>=8 and result['nonOverlap'] and result['searchRight'] and result['exportLast'] and result['endVisible'] and result['scroll']<=1)
+                check(f'{page} {width}/{font} 标题上下排列且模块不重叠',result['titleAbove'] and (result['spacing']>=8 or result['rowGap']>=8) and result['nonOverlap'] and result['searchRight'] and result['exportLast'] and result['endVisible'] and result['scroll']<=1)
     resize(1500,950)
     t.eval('localStorage.setItem("lumen.fontSize","14");window.dispatchEvent(new StorageEvent("storage",{key:"lumen.fontSize"}))')
     click('新建流程');click('流程信息');ui.set_react_input(t,'[aria-label="备忘标题"]','完整卡片与导航隔离验收')
-    ui.real_click(t,'.flow-canvas__node .flow-canvas__title')
+    double_click('.flow-canvas__node .flow-canvas__title')
     def chunk(kind,data): return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
     raw=b''.join(b'\0'+bytes([40,80,200])*640 for _ in range(240))
     fixture=a.output_dir/'step-image.png';fixture.write_bytes(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',640,240,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b''))
@@ -86,12 +92,13 @@ try:
     ui.set_react_input(t,'[aria-label="第 1 步标题"]','下载本周出货计划Excel表格')
     detail='首段完整说明。\n\n**最后一段必须完整显示，不能被两行摘要截断。**\n\n![原图](lumen-asset:'+asset['id']+')'
     ui.set_react_input(t,'[aria-label="第 1 步说明"]',detail)
+    click('完成编辑')
     assert t.wait_for('document.querySelector(".flow-canvas__body img")?.naturalWidth===640')
-    check('卡片无需展开即可显示尾段和完整原图',t.eval("(()=>{const n=document.querySelector('.flow-canvas__node'),img=n.querySelector('img');return n.querySelector('strong')?.textContent.includes('不能被两行摘要截断')&&img.naturalWidth===640&&Math.abs(img.getBoundingClientRect().width/img.getBoundingClientRect().height-640/240)<.01&&n.scrollHeight<=n.clientHeight+1})()"))
-    check('原步骤标题完整并未残留单字一行',t.eval("(()=>{const e=document.querySelector('.flow-canvas__title'),n=e.firstChild,lines=new Map();for(let i=0;i<n.textContent.length;i++){const r=document.createRange();r.setStart(n,i);r.setEnd(n,i+1);const b=r.getBoundingClientRect();lines.set(b.top,(lines.get(b.top)||'')+n.textContent[i])}return e.textContent==='下载本周出货计划Excel表格'&&Array.from(lines.values()).every(line=>line.length>1)})()"))
+    check('卡片无需展开即可显示尾段和完整原图',t.eval("(()=>{const n=document.querySelector('.flow-canvas__node'),b=n.querySelector('.flow-canvas__body'),img=n.querySelector('img');return b.textContent.includes('不能被两行摘要截断')&&img.naturalWidth===640&&Math.abs(img.getBoundingClientRect().width/img.getBoundingClientRect().height-640/240)<.01&&b.scrollHeight===b.clientHeight&&b.getBoundingClientRect().bottom<=n.getBoundingClientRect().bottom-8})()"))
+    check('原步骤标题完整并未残留单字一行',t.eval("(()=>{const e=document.querySelector('.flow-canvas__title'),lines=new Map(),w=document.createTreeWalker(e,NodeFilter.SHOW_TEXT);let n;while(n=w.nextNode())for(let i=0;i<n.textContent.length;i++){const r=document.createRange();r.setStart(n,i);r.setEnd(n,i+1);const b=r.getBoundingClientRect(),top=Math.round(b.top);lines.set(top,(lines.get(top)||'')+n.textContent[i])}return e.textContent==='下载本周出货计划Excel表格'&&Array.from(lines.values()).every(line=>line.length>1)})()"))
     for i in range(2,6):
         click('添加步骤');ui.set_react_input(t,f'[aria-label="第 {i} 步标题"]',f'顺序步骤 {i}');ui.set_react_input(t,f'[aria-label="第 {i} 步说明"]','完整操作说明。\n\n第二段仍然显示。')
-    click('收起详情')
+    click('完成编辑')
     check('五个节点横向一字排列且间距适当',t.eval("(()=>{const n=Array.from(document.querySelectorAll('.flow-canvas__node'));return n.every((e,i)=>!i||e.offsetLeft-n[i-1].offsetLeft-n[i-1].offsetWidth>=90)&&n.every(e=>e.offsetTop===0)})()"))
     select('[aria-label="流程排列方向"]','vertical')
     check('纵向按实际内容高度留空隙，不折返且无图片重叠',t.wait_for("(()=>{const n=Array.from(document.querySelectorAll('.flow-canvas__node'));return n.every(e=>e.offsetLeft===0)&&n.every((e,i)=>!i||e.offsetTop-n[i-1].offsetTop-n[i-1].offsetHeight>=90)})()"))

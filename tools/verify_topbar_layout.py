@@ -30,7 +30,7 @@ def main():
                 for title, subtitle in [
                     ('今天', '计划时间落在今天的所有任务'),
                     ('设置', '外观、窗口、提醒、AI 与数据管理'),
-                    ('备忘与流程', '随手记录业务要点，把操作步骤整理成随时可查的流程'),
+                    ('备忘', '记录业务要点、术语和常用资料，随时查阅完整内容'),
                 ]:
                     layout = target.eval(r'''(async () => {
                       const frame = document.querySelector('#topbar-layout-check');

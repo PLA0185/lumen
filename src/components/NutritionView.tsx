@@ -285,7 +285,7 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
           <div className="nutrition-totals">
             <div><span>基础饮食</span><strong>{totals.baseKcal.toLocaleString()} <small>千卡</small></strong></div>
             <div><span>加餐</span><strong>{totals.snackKcal.toLocaleString()} <small>千卡</small></strong></div>
-            <div><span>训练消耗</span><strong>−{totals.trainingKcal.toLocaleString()} <small>千卡</small></strong></div>
+            <div><span>训练消耗</span><strong>{totals.trainingKcal > 0 ? '−' : ''}{totals.trainingKcal.toLocaleString()} <small>千卡</small></strong></div>
             <div className="nutrition-totals__remaining"><span>{totals.remainingKcal === null ? '尚未设置目标' : totals.remainingKcal >= 0 ? '目标剩余' : '超过目标'}</span><strong>{totals.remainingKcal === null ? '—' : Math.abs(totals.remainingKcal).toLocaleString()} <small>千卡</small></strong></div>
           </div>
           <p className="nutrition-footnote">只有标记“已吃”的食物计入摄入；净摄入 = 基础饮食 + 加餐 − 训练消耗。估算值用于个人记录，不代替专业营养建议。</p>

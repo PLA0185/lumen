@@ -59,7 +59,7 @@ try:
     check('设置显示当前默认类型',t.wait_for('document.querySelector("[aria-label=默认同步内容]")?.value==="memos"'))
     select('[aria-label="默认同步内容"]','tasks');select('[aria-label="默认同步方向"]','upload');button('保存默认同步类型','document.querySelector(".content")')
     check('默认类型通过真实 IPC 保存且连接与暂停状态保留',t.wait_for('document.querySelector(".content").textContent.includes("默认同步类型已保存")') and invoke('cloud_sync_status')['config']['defaultSync']=={'scope':'tasks','direction':'upload'} and invoke('cloud_sync_status')['config']['connectionId']==connection and not invoke('cloud_sync_status')['config']['enabled'])
-    for page in ['今天','备忘与流程','AI 助手','设置']:
+    for page in ['今天','备忘','流程','AI 助手','设置']:
         button(page,'document.querySelector(".sidebar")');button('同步','document.querySelector(".topbar")')
         check(page+'顶部同步按钮实际可点且默认类型一致',t.wait_for('document.querySelector(".sync-dialog[open] [aria-label=本次同步内容]")?.value==="tasks"'))
         if page=='今天':

@@ -63,7 +63,7 @@ try:
     click('日历')
     assert t.wait_for('document.querySelector(".calcell[role=gridcell]")')
     check('月历可选日期使用手型指针', t.eval('getComputedStyle(document.querySelector(".calcell[role=gridcell]")).cursor==="pointer"'))
-    click('备忘与流程')
+    click('流程')
     if t.eval('!!document.querySelector(".flow-canvas")'):
         click('返回列表')
     click('刷新列表'); click(doc['title'])
