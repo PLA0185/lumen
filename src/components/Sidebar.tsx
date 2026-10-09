@@ -53,7 +53,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '整理',
     items: [
-      { id: 'memos', icon: 'edit', label: '备忘与流程' },
+      { id: 'memos', icon: 'edit', label: '备忘' },
+      { id: 'flows', icon: 'flow', label: '流程' },
       { id: 'knowledge', icon: 'document', label: '知识库问答' },
       { id: 'nutrition', icon: 'heart', label: '食谱与采购' },
       { id: 'projects', icon: 'projects', label: '项目与分类' },
@@ -75,7 +76,8 @@ export const NAV_GROUPS: NavGroup[] = [
 /** 视图标题与说明。说明文字用于向用户解释该视图的口径（§4.2 要求规则明确）。 */
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
   'weekly-recurring': { title: '每周重复', subtitle: '查看每周特定一天或几天执行的重复任务，编辑星期和节假日规则' },
-  memos: { title: '备忘与流程', subtitle: '随手记录业务要点，把操作步骤整理成随时可查的流程' },
+  memos: { title: '备忘', subtitle: '记录业务要点、术语和常用资料，随时查阅完整内容' },
+  flows: { title: '业务流程', subtitle: '按步骤整理操作路线，查看负责人、材料和注意事项' },
   knowledge: { title: '知识库问答', subtitle: '检索导入资料与已保存流程，答案附带可核实的来源' },
   nutrition: { title: '食谱与采购', subtitle: '按来源核实食物热量，记录每日摄入、加餐、训练和采购' },
   assistant: { title: 'AI 助手', subtitle: '一段话生成计划待办，日、周、月、年总结' },

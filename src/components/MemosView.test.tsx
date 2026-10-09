@@ -23,14 +23,18 @@ afterEach(() => {
 async function mount(
   query = '',
   rows: memo.MemoSummary[] | Promise<memo.MemoSummary[]> = [],
+  kindFilter?: 'memo' | 'flow',
 ) {
+  if (root) await act(async () => root!.unmount())
+  root = undefined
+  document.body.innerHTML = ''
   vi.useFakeTimers()
   vi.spyOn(memo, 'memoList').mockImplementation(() => Promise.resolve(rows))
   window.confirm = vi.fn(() => true)
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
-  await act(async () => root!.render(<MemosView query={query} />))
+  await act(async () => root!.render(<MemosView query={query} {...(kindFilter ? { kindFilter } : {})} />))
   await act(async () => vi.advanceTimersByTimeAsync(250))
 }
 async function click(text: string) {
@@ -53,6 +57,31 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('备忘与流程模式只展示本类型记录和对应的新建操作', async () => {
+    const rows: memo.MemoSummary[] = [
+      { id: 'memo-1', title: '报关术语', category: '常用资料', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null },
+      { id: 'flow-1', title: '出货流程', category: '物流', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null },
+    ]
+
+    await mount('', rows, 'memo')
+    expect([...document.querySelectorAll('.memos__item strong')].map(node => node.textContent)).toEqual(['报关术语'])
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).toContain('新建备忘')
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).not.toContain('新建流程')
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).not.toContain('AI 生成流程')
+
+    await mount('', rows, 'flow')
+    expect([...document.querySelectorAll('.memos__item strong')].map(node => node.textContent)).toEqual(['出货流程'])
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).toContain('新建流程')
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).toContain('AI 生成流程')
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).not.toContain('新建备忘')
+  })
+
+  it('没有可选分类时不显示无效的分类筛选框', async () => {
+    const row: memo.MemoSummary = { id: 'memo-uncategorized', title: '未分类备忘', category: '', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }
+    await mount('', [row], 'memo')
+    expect(document.querySelector('[aria-label="备忘分类筛选"]')).toBeNull()
+  })
+
   it('自动保存后的字段顺序变化不算新编辑，不会每秒重复写入或切换保存按钮文案', async () => {
     const doc: memo.MemoDocument = { id: 'order', title: '发票流程', category: '', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '', steps: [{ id: 'one', title: '填写发票', owner: '', detail: '原说明', group: { id: 'invoice', title: '6. 发票', path: [] }, layout: { width: 605, minHeight: 289 } }] }
     vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
@@ -135,7 +164,8 @@ describe('独立备忘与业务流程', () => {
     const switcher = document.querySelector('[aria-label="切换流程：流程甲"]') as HTMLButtonElement
     expect(switcher).not.toBeNull()
     await act(async () => switcher.click())
-    await click('流程乙')
+    const secondFlowOption = [...document.querySelectorAll<HTMLButtonElement>('.flow-switcher__menu .flow-switcher__item')].find(button => button.textContent === '流程乙')!
+    await act(async () => secondFlowOption.click())
     expect(saved).toHaveBeenCalledOnce()
     expect(get).not.toHaveBeenCalledWith(second.id)
     expect((document.querySelector('[aria-label="第 1 步标题"]') as HTMLInputElement).value).toBe('未保存的新操作')

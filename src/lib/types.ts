@@ -290,6 +290,7 @@ export interface BackendError {
 export type ViewId =
   | 'weekly-recurring'
   | 'memos'
+  | 'flows'
   | 'knowledge'
   | 'nutrition'
   | 'assistant'

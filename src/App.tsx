@@ -45,6 +45,7 @@ import { Icon } from './components/Icons'
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'weekly-recurring',
   'memos',
+  'flows',
   'knowledge',
   'nutrition',
   'assistant',
@@ -70,7 +71,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
 
 /** 使用组织管理界面的视图（项目与分类、标签） */
 const ORGANIZE_VIEWS = new Set<ViewId>(['projects', 'tags'])
-const ANDROID_PRIMARY_VIEWS = new Set<ViewId>(['today', 'all', 'memos', 'nutrition'])
+const ANDROID_PRIMARY_VIEWS = new Set<ViewId>(['today', 'all', 'flows', 'nutrition'])
 
 export default function App() {
   const {
@@ -111,9 +112,11 @@ export default function App() {
 
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [memoSearch, setMemoSearch] = useState('')
+  const [flowSearch, setFlowSearch] = useState('')
   const [memoDirty, setMemoDirty] = useState(false)
   const [knowledgeMounted, setKnowledgeMounted] = useState(view === 'knowledge')
   const isAndroid = isAndroidPlatform()
+  const isHandbookView = view === 'memos' || view === 'flows'
   const androidMoreActive = !ANDROID_PRIMARY_VIEWS.has(view)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [knowledgeFlowTarget, setKnowledgeFlowTarget] = useState<{ flowId: string; stepId: string; requestId: string } | null>(null)
@@ -124,11 +127,11 @@ export default function App() {
     else aiDialog.current?.close()
   }, [showAi])
   const navigate = useCallback((next: ViewId) => {
-    if (view === 'memos' && next !== view && memoDirty && !window.confirm('备忘修改尚未保存。放弃修改并离开吗？')) return
+    if (isHandbookView && next !== view && memoDirty && !window.confirm('当前内容尚未保存。放弃修改并离开吗？')) return
     setShowQuickAdd(false)
     setMobileMenuOpen(false)
     setView(next)
-  }, [view, memoDirty, setView])
+  }, [view, isHandbookView, memoDirty, setView])
   const [creationContext, setCreationContext] = useState<TaskCreationContext>()
   const [calendarDate, setCalendarDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
   const defaults = creationDefaults(view, calendarDate)
@@ -136,7 +139,7 @@ export default function App() {
   useEffect(() => { if (view === 'knowledge') setKnowledgeMounted(true) }, [view])
   const openKnowledgeFlow = useCallback((flowId: string, stepId: string) => {
     setKnowledgeFlowTarget({ flowId, stepId, requestId: crypto.randomUUID() })
-    navigate('memos')
+    navigate('flows')
   }, [navigate])
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
@@ -314,8 +317,8 @@ export default function App() {
       if (!mod) return
       if (e.key === 'n') {
         e.preventDefault()
-        if (view === 'memos') {
-          pushToast('info', '请使用「新建备忘」或「新建流程」')
+        if (isHandbookView) {
+          pushToast('info', view === 'flows' ? '请使用「新建流程」或「AI 生成流程」' : '请使用「新建备忘」')
           return
         }
         if (ORGANIZE_VIEWS.has(view)) {
@@ -334,7 +337,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [reload, view, pushToast, setView])
+  }, [isHandbookView, reload, view, pushToast, setView])
 
   const onCreated = useCallback(
     async (t: Task) => {
@@ -520,7 +523,7 @@ export default function App() {
               悬浮窗
             </button>}
 
-            {view !== 'memos' && view !== 'knowledge' && view !== 'nutrition' && <><button
+            {!isHandbookView && view !== 'knowledge' && view !== 'nutrition' && <><button
               type="button"
               className={`btn btn--ghost btn--sm${overdueOnly ? ' btn--filter-on' : ''}`}
               aria-pressed={overdueOnly}
@@ -587,22 +590,23 @@ export default function App() {
               <input
                 className="search__input selectable"
                 type="search"
-                value={view === 'memos' ? memoSearch : search}
-                placeholder={view === 'memos' ? '搜索备忘、分类、流程步骤和负责人' : '搜索标题、描述、备注、项目、标签'}
-                aria-label={view === 'memos' ? '搜索备忘与流程' : '搜索任务'}
-                onChange={(e) => view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
+                value={isHandbookView ? (view === 'flows' ? flowSearch : memoSearch) : search}
+                placeholder={view === 'flows' ? '搜索流程、步骤、负责人和分类' : view === 'memos' ? '搜索备忘和分类' : '搜索标题、描述、备注、项目、标签'}
+                aria-label={view === 'flows' ? '搜索流程' : view === 'memos' ? '搜索备忘' : '搜索任务'}
+                onChange={(e) => view === 'flows' ? setFlowSearch(e.target.value) : view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
-                  if (e.key === 'Enter' && view !== 'memos') void reload()
+                  if (e.key === 'Enter' && !isHandbookView) void reload()
                 }}
               />
-              {(view === 'memos' ? memoSearch : search) && (
+              {(isHandbookView ? (view === 'flows' ? flowSearch : memoSearch) : search) && (
                 <button
                   type="button"
                   className="search__clear"
                   aria-label="清除搜索"
                   onClick={() => {
                     if (view === 'memos') { setMemoSearch(''); return }
+                    if (view === 'flows') { setFlowSearch(''); return }
                     setSearch('')
                     void reload()
                   }}
@@ -612,7 +616,7 @@ export default function App() {
               )}
             </div>
             </>}
-            {view !== 'memos' && view !== 'knowledge' && view !== 'nutrition' && <>
+            {!isHandbookView && view !== 'knowledge' && view !== 'nutrition' && <>
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -637,7 +641,7 @@ export default function App() {
         </header>
 
         <main className="content">
-          {view === 'memos' ? <MemosView query={memoSearch} onDirtyChange={setMemoDirty} initialFlowTarget={knowledgeFlowTarget} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
+          {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd
@@ -769,7 +773,7 @@ export default function App() {
       {isAndroid && <nav className="mobile-nav" aria-label="主要导航">
         <button type="button" className={view === 'today' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('today')}><Icon name="today" size={20} /><span>今天</span></button>
         <button type="button" className={view === 'all' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('all')}><Icon name="list" size={20} /><span>全部</span></button>
-        <button type="button" className={view === 'memos' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('memos')}><Icon name="edit" size={20} /><span>流程</span></button>
+        <button type="button" className={view === 'flows' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('flows')}><Icon name="flow" size={20} /><span>流程</span></button>
         <button type="button" className={view === 'nutrition' ? 'mobile-nav__item is-active' : 'mobile-nav__item'} onClick={() => navigate('nutrition')}><Icon name="heart" size={20} /><span>饮食</span></button>
         <button type="button" className={`mobile-nav__item${androidMoreActive ? ' is-active' : ''}`} aria-label="更多导航" aria-current={androidMoreActive ? 'page' : undefined} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(v => !v)}><Icon name={mobileMenuOpen ? 'close' : 'list'} size={20} /><span>更多</span></button>
       </nav>}
