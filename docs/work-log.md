@@ -3817,3 +3817,30 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [0.4.36 发布说明](../RELEASE_NOTES.md)
 - [Lumen GitHub v0.4.36 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.36)
+
+## 第 80 轮 · 2026-10-10 · 修复剪贴板文本复制权限
+
+### 做了
+
+- 根据用户截图中的 `plugin:clipboard-manager|write_text not allowed by ACL` 追踪到 Tauri 能力清单：前端同步设置、备忘和 AI 都调用文本复制命令，但主窗口及悬浮/快速添加窗口只获准读取剪贴板。
+- 在主窗口与悬浮窗口能力集中加入最小的 `clipboard-manager:allow-write-text` 权限。新增 Rust 回归测试读取两份实际能力 JSON，防止以后添加文本复制入口却漏配 ACL。
+- 版本升至 0.4.37，发布说明补充修复内容；签名 Release 已公开。本机旧安装已在原目录升级，重新启动为 0.4.37，用户数据库位置和字节数保持不变。
+
+### 没做到
+
+- 没有在用户真实设置页点击复制按钮，以免把真实同步密钥写入或替换系统剪贴板；因此实际按钮点击后的系统剪贴板内容未作桌面实机验收。
+- 未连接 Android 实体机验证剪贴板行为；本轮修复针对 Tauri 主窗口及悬浮/快速添加窗口的权限清单。
+
+### 怎么验证的
+
+- 新增的权限测试先在旧能力清单上失败（主窗口缺少写权限），加入两份能力后通过。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.37）、`pnpm typecheck`、`pnpm test`（379 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo check --all-targets`、`cargo test --lib`（579 项通过、4 项忽略）和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过。
+- 本机 NSIS 安装器签名验证通过，篡改拒绝检查通过。GitHub 主分支 CI [38009743029](https://github.com/PLA0185/lumen/actions/runs/38009743029) 与签名 Release 工作流 [38010148473](https://github.com/PLA0185/lumen/actions/runs/38010148473) 均成功。
+- [v0.4.37 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.37) 已公开；下载的官方安装器签名验证通过，`latest.json` 指向该匿名 Release 下载地址。
+- 覆盖安装退出码为 0；启动后版本为 0.4.37，主窗口与 WebView2 进程正常。SQLite `quick_check` 为 `ok`，迁移记录未变，数据库大小仍为 103,780,352 字节；没有新增 Lumen 崩溃事件。
+
+### 相关文档
+
+- [0.4.37 发布说明](../RELEASE_NOTES.md)
+- [Lumen GitHub v0.4.37 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.37)
+- [主窗口与悬浮窗口能力清单](../src-tauri/capabilities/default.json)、[悬浮窗口能力清单](../src-tauri/capabilities/floating.json)
