@@ -921,3 +921,23 @@ pub fn refresh_tray_menu(app: &AppHandle) {
         Err(e) => log::warn!("构建托盘菜单失败：{e}"),
     }
 }
+
+#[cfg(test)]
+mod capability_tests {
+    #[test]
+    fn text_copying_windows_have_clipboard_write_permission() {
+        for (name, capability) in [
+            ("main", include_str!("../capabilities/default.json")),
+            ("floating", include_str!("../capabilities/floating.json")),
+        ] {
+            let capability: serde_json::Value = serde_json::from_str(capability).unwrap();
+            let permissions = capability["permissions"].as_array().unwrap();
+            assert!(
+                permissions
+                    .iter()
+                    .any(|permission| permission == "clipboard-manager:allow-write-text"),
+                "{name} window must be allowed to copy text"
+            );
+        }
+    }
+}
