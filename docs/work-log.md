@@ -3933,7 +3933,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 按用户最新要求，设置页和顶部同步入口只显示 GitHub 私有仓库；新的连接请求固定使用 GitHub，缺少服务商字段时也默认 GitHub。
 - 升级后检测到旧 WebDAV 配置会暂停自动同步；后台只为 GitHub 配置发起请求，手动同步或重新启用旧连接会返回明确错误。旧本机数据、同步密钥和待上传记录保留，旧 WebDAV 云端内容不自动复制到 GitHub。
 - 更新 GitHub-only 的连接提示、README、实现说明和 0.4.41 发布说明；0.4.40 发布流程按用户要求取消，版本改为 0.4.41，未改数据库或添加迁移。
-- 第 83 轮 PR #6 已合并，主分支 CI 成功；0.4.41 的新 PR、最终 CI、发布及安装仍待本轮提交后完成。
+- 第 83 轮 PR #6 已合并，主分支 CI 成功；本轮 PR #7（GitHub-only）已通过 PR CI run 118，合并、0.4.41 发布及安装仍待完成。
 
 ### 没做到
 
@@ -3945,7 +3945,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.41）、`pnpm typecheck`、云同步界面定向测试（11 项）、`pnpm test`（52 个文件、387 项）、`pnpm build`、`pnpm lint` 均实际运行并通过；生产构建保留已有动态导入提示。
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` 与 `git diff --check` 通过。`cargo test --lib cloud_sync::tests::legacy_webdav_config_is_paused_and_never_used_for_sync` 未完成，本机 `ort-sys` 步骤无进展后中止。
-- v0.4.40 Release run 29 按用户要求取消；PR #6 的 PR CI run 115 和合并后 main CI run 116 均成功。上述 CI 覆盖的是 0.4.40 GitHub + WebDAV 版本，不代表本轮 GitHub-only 代码已通过 Rust CI。
+- v0.4.40 Release run 29 按用户要求取消；PR #6 的 PR CI run 115 和合并后 main CI run 116 均成功。PR #7 的 run 117 暴露新 Rust 用例直接比较未实现 `PartialEq` 的错误码，已改为 `matches!`；run 118 对修复后的代码完成前端工作流及 Rust 格式、编译、单测（582 项通过、4 项忽略）和严格 Clippy，全部成功。
 
 ### 相关文档
 
