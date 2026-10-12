@@ -1,4 +1,5 @@
 import { WeeklyRecurringView } from './components/WeeklyRecurringView'
+import { TodayDateSelector } from './components/TodayDateSelector'
 /**
  * 应用外壳：侧边栏 + 顶栏 + 内容区。
  *
@@ -82,6 +83,7 @@ export default function App() {
     overview,
     appInfo,
     view,
+    todayDate,
     search,
     sortBy,
     sortDesc,
@@ -90,6 +92,7 @@ export default function App() {
     init,
     reload,
     setView,
+    setTodayDate,
     setSearch,
     setSort,
     setOverdueOnly,
@@ -134,7 +137,7 @@ export default function App() {
   }, [view, isHandbookView, memoDirty, setView])
   const [creationContext, setCreationContext] = useState<TaskCreationContext>()
   const [calendarDate, setCalendarDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
-  const defaults = creationDefaults(view, calendarDate)
+  const defaults = creationDefaults(view, view === 'today' ? todayDate : calendarDate)
   useEffect(() => { setCreationContext(undefined) }, [view])
   useEffect(() => { if (view === 'knowledge') setKnowledgeMounted(true) }, [view])
   const openKnowledgeFlow = useCallback((flowId: string, stepId: string) => {
@@ -220,6 +223,14 @@ export default function App() {
     const timer = window.setInterval(() => void maintain(), 24 * 60 * 60 * 1000)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [init, pushToast])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const state = useApp.getState()
+      if (state.todayDateFollowsSystem) state.setTodayDate(format(new Date(), 'yyyy-MM-dd'))
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   // 打印视图开关现在由 `doExportPdf` 在导出流程里直接控制
   // （`document.body.dataset.print`）——报告 DOM 由 buildPrintDocument 动态挂载，
@@ -349,7 +360,10 @@ export default function App() {
     [reload, pushToast, creationContext],
   )
 
-  const meta = VIEW_META[view] ?? { title: '任务', subtitle: '' }
+  const baseMeta = VIEW_META[view] ?? { title: '任务', subtitle: '' }
+  const meta = view === 'today' && todayDate !== format(new Date(), 'yyyy-MM-dd')
+    ? { ...baseMeta, subtitle: `计划时间落在 ${format(new Date(`${todayDate}T00:00:00`), 'yyyy年M月d日')}` }
+    : baseMeta
 
   // 侧边栏计数：只展示有真实数据的项，不硬编码假数字
   const counts = useMemo(() => {
@@ -642,6 +656,7 @@ export default function App() {
 
         <main className="content">
           {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
+          {view === 'today' && <TodayDateSelector selectedDate={todayDate} onChange={setTodayDate} />}
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
               <QuickAdd

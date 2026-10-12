@@ -684,7 +684,7 @@ fn knowledge_asset_id(hash: &str) -> String {
 }
 async fn upload_knowledge_asset(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     row: &Value,
@@ -746,7 +746,7 @@ async fn ensure_asset_alias(
 }
 async fn import_knowledge_asset(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     row: &Value,
@@ -884,7 +884,7 @@ async fn cache_attachment(
 }
 async fn attachment_upload(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     event: &Event,
@@ -928,7 +928,7 @@ fn validate_file(body: &AttachmentBody, id: &str) -> AppResult<Vec<u8>> {
 
 async fn attachment_download(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     row: &Value,
@@ -1208,7 +1208,7 @@ async fn make_packet(db: &Db, knowledge: bool) -> AppResult<()> {
 }
 pub async fn upload_scope(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     include_knowledge: bool,
@@ -1293,7 +1293,7 @@ pub async fn published_knowledge_heads(db: &Db) -> AppResult<Vec<String>> {
 }
 pub async fn fetch(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     root: &str,

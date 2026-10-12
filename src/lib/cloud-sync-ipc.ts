@@ -10,7 +10,9 @@ export function defaultSync(config: CloudConfig | null): SyncOptions {
   return config?.defaultSync ?? { scope: config?.inheritAll === false ? 'memos' : 'all', direction: 'both' }
 }
 export interface CloudConfig {
+  provider: 'webDav' | 'github'
   server: string; account: string; folder: string; connectionId: string
+  owner: string; repository: string; branch: string
   workspaceId: string; enabled: boolean; inheritAll: boolean
   defaultSync?: SyncOptions | null
 }
@@ -27,7 +29,7 @@ export interface BusinessRevision {
 }
 export interface BusinessConflict { id: string; table: string; heads: string[]; versions: BusinessRevision[] }
 export const cloudStatus = () => call<CloudStatus>('cloud_sync_status')
-export const cloudConnect = (input: { server: string; account: string; folder: string; password: string; recoveryCode: string; inheritAll: boolean }) =>
+export const cloudConnect = (input: { provider: 'webDav' | 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; recoveryCode: string; inheritAll: boolean }) =>
   call<CloudStatus>('cloud_sync_connect', { input })
 export const cloudEnable = (enabled: boolean) => call<CloudStatus>('cloud_sync_set_enabled', { enabled })
 export const cloudInheritance = (inheritAll: boolean) => call<CloudStatus>('cloud_sync_set_inheritance', { inheritAll })

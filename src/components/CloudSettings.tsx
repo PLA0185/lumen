@@ -15,7 +15,7 @@ function versionText(row: Record<string, unknown> | null): string {
 }
 export function CloudSettings() {
   const [status, setStatus] = useState<cloud.CloudStatus | null>(null)
-  const [form, setForm] = useState({ server: 'https://dav.jianguoyun.com/dav/', account: '', folder: 'Lumen', password: '', recoveryCode: '', inheritAll: true })
+  const [form, setForm] = useState({ provider: 'webDav' as 'webDav' | 'github', server: 'https://dav.jianguoyun.com/dav/', account: '', folder: 'Lumen', owner: '', repository: '', branch: 'main', password: '', recoveryCode: '', inheritAll: true })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -32,7 +32,7 @@ export function CloudSettings() {
       const key = s.config ? await cloud.cloudRecoveryCode() : ''
       if (active) {
         setDefaults(cloud.defaultSync(s.config))
-        if (s.config) setForm(f => ({ ...f, server: s.config!.server, account: s.config!.account, folder: s.config!.folder, inheritAll: s.config!.inheritAll }))
+        if (s.config) setForm(f => ({ ...f, provider: s.config!.provider, server: s.config!.server, account: s.config!.account, folder: s.config!.folder, owner: s.config!.owner, repository: s.config!.repository, branch: s.config!.branch, inheritAll: s.config!.inheritAll }))
         setSyncKey(key)
       }
     }).catch(e => { if (active) setError(message(e)) })
@@ -59,28 +59,42 @@ export function CloudSettings() {
   }
   const updateForm = (patch: Partial<typeof form>) => { setForm(current => ({ ...current, ...patch })); setConnectionFeedback(null) }
   return <section className="setgroup">
-    <h2>云同步 · 坚果云 / WebDAV</h2>
-    <p className="setgroup__hint">修改先保存在本机，再按默认内容和方向同步。顶部“同步”可单独选择本次类型。无需运行坚果云客户端，云端内容加密保存。</p>
+    <h2>云同步 · {form.provider === 'github' ? 'GitHub 私有仓库' : '坚果云 / WebDAV'}</h2>
+    <p className="setgroup__hint">修改先保存在本机，再按默认内容和方向同步。顶部“同步”可单独选择本次类型。上传前由 Lumen 加密，云端保存加密内容。</p>
     {((error || status?.lastError) && !connectionFeedback) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
     {notice && <p role="status">{notice}</p>}
     {status?.config ? <div className="cloud-sync-key">
       <h3>连接其他电脑</h3>
-      <p className="setgroup__hint">把这把 Lumen 同步密钥复制到另一台电脑的云同步设置中。坚果云不保存此密钥。</p>
+      <p className="setgroup__hint">把这把 Lumen 同步密钥复制到另一台电脑的云同步设置中。云服务只保存 Lumen 加密后的内容，不保存这把密钥。</p>
       <div className="cloud-sync-key__row">
         <input className="input" aria-label="Lumen 同步密钥" type={showSyncKey ? 'text' : 'password'} readOnly value={syncKey} placeholder="正在读取本机密钥…" />
         <button className="btn" disabled={!syncKey} onClick={() => setShowSyncKey(value => !value)}>{showSyncKey ? '隐藏密钥' : '显示密钥'}</button>
-        <button className="btn" disabled={busy || !syncKey} onClick={() => void run(async () => { await writeText(syncKey); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。坚果云不会保存或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
+        <button className="btn" disabled={busy || !syncKey} onClick={() => void run(async () => { await writeText(syncKey); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。云服务无法替你找回或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
       </div>
     </div> : <p className="setgroup__hint">尚未连接，首次连接成功后会生成同步密钥；连接成功后可在这里查看或复制。</p>}
     <fieldset disabled={busy} className="cloud-settings__fields">
-      <label>服务器地址<input className="input" value={form.server} onChange={e => updateForm({ server: e.target.value })} /></label>
-      <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => updateForm({ account: e.target.value })} /></label>
-      <label>同步文件夹<input className="input" value={form.folder} onChange={e => updateForm({ folder: e.target.value })} /></label>
-      <label>第三方应用密码<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} /></label>
+      <label>同步方式<select className="input" aria-label="同步方式" value={form.provider} onChange={e => updateForm({ provider: e.target.value as 'webDav' | 'github' })}><option value="webDav">坚果云 / WebDAV</option><option value="github">GitHub 私有仓库</option></select></label>
+      {form.provider === 'github' ? <>
+        <div className="cloud-settings__fields-row">
+          <label>GitHub 用户名或组织<input className="input" autoComplete="off" value={form.owner} onChange={e => updateForm({ owner: e.target.value })} placeholder="例如 PLA0185" /></label>
+          <label>私有仓库名<input className="input" autoComplete="off" value={form.repository} onChange={e => updateForm({ repository: e.target.value })} placeholder="例如 lumen-sync" /></label>
+        </div>
+        <div className="cloud-settings__fields-row">
+          <label>分支<input className="input" autoComplete="off" value={form.branch} onChange={e => updateForm({ branch: e.target.value })} placeholder="main" /></label>
+          <label>仓库内同步目录<input className="input" value={form.folder} onChange={e => updateForm({ folder: e.target.value })} placeholder="Lumen" /></label>
+        </div>
+        <label>GitHub Fine-grained Token<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} placeholder="仅授予这个私有仓库 Contents 读写权限" /></label>
+        <p className="setgroup__hint">请先在 GitHub 建立并初始化私有仓库（例如添加 README，确保所选分支存在），再创建只授权该仓库、Contents 读写权限的 Fine-grained Token。Token 加密保存在本机凭据库，不会同步。GitHub 提交历史可作为额外回溯记录；Lumen 的冲突版本仍会分别保留。</p>
+      </> : <>
+        <label>服务器地址<input className="input" value={form.server} onChange={e => updateForm({ server: e.target.value })} /></label>
+        <label>坚果云账号<input className="input" autoComplete="username" value={form.account} onChange={e => updateForm({ account: e.target.value })} /></label>
+        <label>同步文件夹<input className="input" value={form.folder} onChange={e => updateForm({ folder: e.target.value })} /></label>
+        <label>第三方应用密码<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} /></label>
+      </>}
       <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => updateForm({ recoveryCode: e.target.value })} /></label>
-      <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是坚果云提供的密码。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。坚果云无法重置此密钥。</p>
+      <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是网盘密码或 GitHub Token。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。云服务无法重置此密钥。</p>
       <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => updateForm({ inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
-      <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.account.trim() || !form.password} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })) }, { pending: '正在验证服务器、账号和云空间，请稍候…', success: '云空间连接成功。同步密钥已显示，自动同步会按默认类型开始运行。', failure: '云空间连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接云空间'}</button>
+      <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.password || (form.provider === 'webDav' ? !form.account.trim() : !form.owner.trim() || !form.repository.trim() || !form.branch.trim())} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })) }, { pending: form.provider === 'github' ? '正在验证 GitHub 仓库权限并连接…' : '正在验证服务器、账号和云空间，请稍候…', success: '云空间连接成功。同步密钥已显示，自动同步会按默认类型开始运行。', failure: '云空间连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接云空间'}</button>
     </fieldset>
     {connectionFeedback && <div className={`cloud-settings__connect-feedback ${connectionFeedback.type === 'success' ? 'alert alert--ok' : connectionFeedback.type === 'error' ? 'alert alert--error' : connectionFeedback.type === 'waiting' ? 'alert alert--warn' : 'setgroup__hint'}`} role={connectionFeedback.type === 'error' ? 'alert' : 'status'} aria-live={connectionFeedback.type === 'error' ? 'assertive' : 'polite'}>{connectionFeedback.message}</div>}
     {status?.config && <>

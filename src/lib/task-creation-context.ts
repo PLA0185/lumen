@@ -17,7 +17,7 @@ export function creationDefaults(view: ViewId, calendarDate: string, now = new D
   }
   return {
     plannedDate: view === 'tomorrow' ? format(addDays(now, 1), 'yyyy-MM-dd')
-      : view === 'today' || view === 'week' ? format(now, 'yyyy-MM-dd')
+      : view === 'today' || view === 'week' ? calendarDate || format(now, 'yyyy-MM-dd')
         : view === 'calendar' ? calendarDate : undefined,
     periodType: periods[view] ?? 'none',
   }
