@@ -8,7 +8,7 @@ import { ContentEditor } from './ContentEditor'
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { addDays, addWeeks, format, startOfWeek } from 'date-fns'
 import * as ipc from '../lib/ipc'
 import { IpcError } from '../lib/ipc'
 import { parseQuickInput } from '../lib/nlp'
@@ -224,6 +224,11 @@ export function QuickAdd({
     parsed.matched || parsed.tags.length > 0 || parsed.priority,
   )
 
+  const selectDatePreset = (date: Date) => {
+    setDateStr(format(date, 'yyyy-MM-dd'))
+    setDateTouched(true)
+  }
+
   return (
     <div className={`quickadd${compact ? ' quickadd--compact' : ''}`}>
       {context && (
@@ -297,11 +302,12 @@ export function QuickAdd({
         <div className="quickadd__row quickadd__row--meta">
           {repeat === 'none' && (
             <label className="field">
-              计划
+              计划日期
               <input
                 type="date"
                 value={dateStr}
                 aria-label="计划执行日期"
+                title="选择任务安排的具体日期"
                 onChange={(e) => {
                   setDateStr(e.target.value)
                   setDateTouched(true)
@@ -316,12 +322,32 @@ export function QuickAdd({
                 type="time"
                 value={timeStr}
                 aria-label="计划执行时间（留空表示仅日期）"
+                title="选择具体执行时间；留空表示仅安排日期"
                 onChange={(e) => {
                   setTimeStr(e.target.value)
                   setDateTouched(true)
                 }}
               />
             </label>
+          )}
+          {repeat === 'none' && (
+            <div className="quickadd__date-presets" role="group" aria-label="计划日期快捷选择">
+              <span>快捷选择</span>
+              <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(new Date())}>
+                今天
+              </button>
+              <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(addDays(new Date(), 1))}>
+                明天
+              </button>
+              <button
+                type="button"
+                className="btn btn--quiet btn--sm"
+                title="设为下周一；之后可以在日期控件里改成下周其他日期"
+                onClick={() => selectDatePreset(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }))}
+              >
+                下周
+              </button>
+            </div>
           )}
           <label className="field">
             优先级

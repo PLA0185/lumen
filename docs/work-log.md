@@ -3844,3 +3844,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.37 发布说明](../RELEASE_NOTES.md)
 - [Lumen GitHub v0.4.37 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.37)
 - [主窗口与悬浮窗口能力清单](../src-tauri/capabilities/default.json)、[悬浮窗口能力清单](../src-tauri/capabilities/floating.json)
+
+## 第 81 轮 · 2026-10-12 · 快速新建支持下周排期
+
+### 做了
+
+- 快速新建日期字段明确标为“计划日期”，增加“今天 / 明天 / 下周”快捷选择。“下周”定位到下周一，用户仍可用日期控件改到下周其他日期；已选择的具体时分会保留。
+- 为“计划日期”和“时间”添加用途提示；手动选快捷日期后，自然语言解析不再覆盖用户选择。
+- 为“下周”按钮增加交互回归用例；版本升至 0.4.38，补充发布说明。
+
+### 没做到
+
+- 本机 Rust 单测卡在下载 ONNX Runtime 的 `ort-sys` 构建步骤，网络连接持续但约 6 分钟没有下载进度；已中止。Rust 单测和严格 Clippy 尚未完成。
+- 新安装包仍待 GitHub CI 完成构建和签名；用户电脑当前运行 0.4.36，尚未安装本轮改动。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.38）、`pnpm typecheck`、定向快速新建用例（6 项）、`pnpm test`（51 个文件、380 项）、`pnpm build` 与 `pnpm lint` 均退出 0。Vite 保留已有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示。
+- `cargo fmt --check` 退出 0；Rust 单测未完成，严格 Clippy 未运行，等待远端 CI 验证。
+- `git diff --check` 通过；未构建或安装本地 Tauri 包。
+
+### 相关文档
+
+- [快速新建组件](../src/components/QuickAdd.tsx)、[快速新建行为用例](../src/components/QuickAdd.behavior.test.tsx)、[发布说明](../RELEASE_NOTES.md)。
