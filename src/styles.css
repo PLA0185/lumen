@@ -979,6 +979,15 @@ select {
   border-top: 1px solid var(--c-border);
 }
 
+.quickadd__date-presets {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  color: var(--c-text-3);
+  font-size: 0.85em;
+}
+
 .field {
   display: flex;
   gap: 5px;

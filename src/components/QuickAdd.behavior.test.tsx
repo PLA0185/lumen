@@ -10,6 +10,7 @@ vi.mock('./AiAssistant', () => ({ AiAssistant: () => null }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
 afterEach(() => {
+  vi.useRealTimers()
   act(() => root?.unmount())
   root = undefined
   vi.restoreAllMocks()
@@ -88,4 +89,18 @@ it('保存期间仅修改日期和周期也保留，未改草稿才会清空', a
   expect(field(TITLE).value).toBe('同一标题')
   expect(field('计划执行日期').value).toBe('2026-10-05')
   expect(field('周期跨度').value).toBe('week')
+})
+
+it('下周快捷选择定位到下周一并保留已选的具体时间', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(2026, 9, 12, 12))
+  await mount()
+  await input('计划执行时间（留空表示仅日期）', '10:00')
+
+  const button = [...document.querySelectorAll('button')].find(el => el.textContent?.trim() === '下周')
+  expect(button).toBeTruthy()
+  await act(async () => button!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+
+  expect(field('计划执行日期').value).toBe('2026-10-19')
+  expect(field('计划执行时间（留空表示仅日期）').value).toBe('10:00')
 })
