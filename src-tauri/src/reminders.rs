@@ -105,6 +105,8 @@ pub struct Reminder {
     /// 停用原因：NULL=启用中 / `user`=用户主动关闭 /
     /// `missing_base_time`=系统因缺少依赖时间临时停用（migration 0005）
     pub disabled_reason: Option<String>,
+    /// 由重复规则自动生成；修改此提醒时应保留为单次例外。
+    pub series_default: i64,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -298,6 +300,36 @@ async fn get_reminder(state: &AppState, id: &str) -> AppResult<Reminder> {
     r.ok_or_else(|| AppError::not_found("提醒", id))
 }
 
+/// A user action on an automatically generated series reminder is an edit to
+/// this occurrence only. Mark it as an exception before changing the reminder
+/// so a later rule rebuild cannot recreate or overwrite it.
+async fn preserve_series_occurrence_for_reminder_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    id: &str,
+    now: &str,
+) -> AppResult<()> {
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT task_id, series_default FROM reminders WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    let Some((task_id, series_default)) = row else {
+        return Err(AppError::not_found("提醒", id));
+    };
+    if series_default == 1 {
+        sqlx::query(
+            "UPDATE tasks SET occurrence_kind = 'exception', is_exception = 1,
+             is_user_modified = 1, updated_at = ?1
+             WHERE id = ?2 AND series_id IS NOT NULL",
+        )
+        .bind(now)
+        .bind(task_id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
 /// 列出某任务的提醒
 #[tauri::command]
 pub async fn reminder_list(
@@ -320,7 +352,6 @@ pub async fn reminder_set_enabled(
     id: String,
     enabled: bool,
 ) -> AppResult<Reminder> {
-    get_reminder(&state, &id).await?;
     let now = to_db_time(utc_now());
     // 用户的操作必须把"停用原因"一并写清楚（整改任务书 §6.2）：
     // - 用户打开 → 清空原因（恢复正常启用）；
@@ -332,6 +363,8 @@ pub async fn reminder_set_enabled(
     } else {
         Some(DISABLED_BY_USER)
     };
+    let mut tx = state.db.pool().begin().await?;
+    preserve_series_occurrence_for_reminder_tx(&mut tx, &id, &now).await?;
     sqlx::query(
         "UPDATE reminders SET is_enabled = ?1, disabled_reason = ?2, updated_at = ?3 WHERE id = ?4",
     )
@@ -339,22 +372,27 @@ pub async fn reminder_set_enabled(
     .bind(reason)
     .bind(&now)
     .bind(&id)
-    .execute(state.db.pool())
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     get_reminder(&state, &id).await
 }
 
 /// 删除提醒
 #[tauri::command]
 pub async fn reminder_delete(state: State<'_, AppState>, id: String) -> AppResult<i64> {
+    let now = to_db_time(utc_now());
+    let mut tx = state.db.pool().begin().await?;
+    preserve_series_occurrence_for_reminder_tx(&mut tx, &id, &now).await?;
     let n = sqlx::query("DELETE FROM reminders WHERE id = ?1")
         .bind(&id)
-        .execute(state.db.pool())
+        .execute(&mut *tx)
         .await?
         .rows_affected() as i64;
     if n == 0 {
         return Err(AppError::not_found("提醒", &id));
     }
+    tx.commit().await?;
     Ok(n)
 }
 
@@ -381,6 +419,8 @@ pub async fn reminder_snooze(
     let next = to_db_time(from + chrono::Duration::minutes(minutes));
 
     let ts = to_db_time(now);
+    let mut tx = state.db.pool().begin().await?;
+    preserve_series_occurrence_for_reminder_tx(&mut tx, &id, &ts).await?;
     sqlx::query(
         "UPDATE reminders SET remind_at = ?1, snoozed_until = ?1, fired_at = NULL, updated_at = ?2
          WHERE id = ?3",
@@ -388,8 +428,9 @@ pub async fn reminder_snooze(
     .bind(&next)
     .bind(&ts)
     .bind(&id)
-    .execute(state.db.pool())
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
 
     get_reminder(&state, &id).await
 }

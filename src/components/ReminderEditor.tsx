@@ -31,9 +31,17 @@ interface ReminderEditorProps {
   hasDue: boolean
   /** 任务是否已完成（已完成任务的提醒不会触发） */
   taskDone: boolean
+  /** 打开该重复系列的设置，让固定时刻应用到每一次重复发生。 */
+  onEditRecurringRule?: () => void
 }
 
-export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: ReminderEditorProps) {
+export function ReminderEditor({
+  taskId,
+  hasPlanned,
+  hasDue,
+  taskDone,
+  onEditRecurringRule,
+}: ReminderEditorProps) {
   const [items, setItems] = useState<Reminder[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -123,6 +131,7 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
 
   /** 人类可读的提醒描述 */
   const describe = (r: Reminder): string => {
+    if (r.seriesDefault === 1) return '重复任务提醒'
     const base = kindLabel[r.kind] ?? r.kind
     if ((r.kind === 'before_due' || r.kind === 'before_planned') && r.offsetMinutes) {
       const m = r.offsetMinutes
@@ -149,6 +158,11 @@ export function ReminderEditor({ taskId, hasPlanned, hasDue, taskDone }: Reminde
     <div className="reminders">
       <div className="reminders__head">
         <span>提醒</span>
+        {onEditRecurringRule && (
+          <button type="button" className="btn btn--quiet btn--sm" onClick={onEditRecurringRule}>
+            设置每次重复提醒
+          </button>
+        )}
         {taskDone && (
           <span className="chip chip--muted" title="任务已完成，所有提醒都不会再触发">
             任务已完成

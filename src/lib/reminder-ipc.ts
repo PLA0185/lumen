@@ -27,6 +27,8 @@ export interface Reminder {
   snoozedUntil: string | null
   createdAt: string
   updatedAt: string
+  /** 是否由重复系列的固定提醒时间自动生成 */
+  seriesDefault?: number
 }
 
 /** 待触发提醒（含任务标题，设置页展示用） */
