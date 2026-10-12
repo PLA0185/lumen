@@ -3882,14 +3882,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 本机 `cargo check --lib` 在 `ort-sys` 原生依赖步骤连续约 6 分钟没有输出，随后中止；Rust 编译、Rust 单测与严格 Clippy 尚未在本机完成，等待本轮 GitHub CI 验证。
-- 本轮功能尚未构建签名安装包或安装到用户程序；需要先由远端 CI 验证 Rust 代码和迁移。
+- 本轮没有构建签名安装包或安装到用户程序，因此桌面端实机交互尚未验证。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.39）、`pnpm typecheck`、`pnpm test`（51 个文件、382 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`git diff --check` 均实际运行并通过。构建输出保留既有 dynamic-import 提示。
 - 定向子任务界面用例 13 项通过，覆盖排序调用、按顺序禁用后续步骤、重复任务模式变更先选作用范围。
-- 首次 PR CI 的前端检查通过，Rust 编译发现 SQLx 不能把 `Subtask` 作为元组字段解码；已修正为两次批量查询，避免逐任务查询。后续 Rust 编译通过，但生命周期集成用例发现软删除任务的子任务完成操作被错误拒绝；已改为读取仍保留的父任务完成模式，保持回收站中的子任务行为。再后一次 Rust CI 的 580 项测试全部通过，但严格 Clippy 报出新增排序函数参数过多；现已把参数收进上下文结构体。
-- 本机 Rust 检查因 `ort-sys` 无进展中止；上下文结构体修复后的远端 Clippy 与最终 CI 结果待重跑验证。
+- GitHub CI 最终全部通过：前端类型检查、版本一致性、382 项测试、构建与 Lint 成功；Rust 格式检查、编译、580 项测试（4 项忽略）和严格 Clippy 成功。前两轮 CI 分别发现 SQLx 行解码、回收站子任务行为和 Clippy 参数过多问题，均已修复并由最终 CI 复验。
+- 本机 Rust 检查因 `ort-sys` 无进展中止，Rust 结果以最终 GitHub CI 验证为准。
 
 ### 相关文档
 
