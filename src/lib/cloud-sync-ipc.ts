@@ -29,7 +29,7 @@ export interface BusinessRevision {
 }
 export interface BusinessConflict { id: string; table: string; heads: string[]; versions: BusinessRevision[] }
 export const cloudStatus = () => call<CloudStatus>('cloud_sync_status')
-export const cloudConnect = (input: { provider: 'webDav' | 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; recoveryCode: string; inheritAll: boolean }) =>
+export const cloudConnect = (input: { provider: 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; recoveryCode: string; inheritAll: boolean }) =>
   call<CloudStatus>('cloud_sync_connect', { input })
 export const cloudEnable = (enabled: boolean) => call<CloudStatus>('cloud_sync_set_enabled', { enabled })
 export const cloudInheritance = (inheritAll: boolean) => call<CloudStatus>('cloud_sync_set_inheritance', { inheritAll })

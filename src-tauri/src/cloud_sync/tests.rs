@@ -438,8 +438,38 @@ fn legacy_cloud_config_defaults_to_webdav_and_github_requires_private_repo_token
         serde_json::from_str::<Provider>("\"github\"").unwrap(),
         Provider::GitHub
     );
+    let input: ConnectInput = serde_json::from_value(serde_json::json!({
+        "server": "https://api.github.com",
+        "account": "",
+        "folder": "Lumen",
+        "password": "token",
+        "recoveryCode": "",
+        "inheritAll": true
+    }))
+    .unwrap();
+    assert_eq!(input.provider, Provider::GitHub);
     assert!(GitHub::new("owner", "repo", "main", "Lumen", "").is_err());
     assert!(GitHub::new("owner", "repo", "main", "Lumen", "token").is_ok());
+}
+
+#[tokio::test]
+async fn legacy_webdav_config_is_paused_and_never_used_for_sync() {
+    let db = db().await;
+    runtime(&db).await.unwrap();
+    let mut legacy = cfg();
+    legacy.enabled = true;
+    store_config(&db, &legacy).await.unwrap();
+
+    pause_legacy_sync(&db).await.unwrap();
+    let stored = config(&db).await.unwrap().unwrap();
+    assert_eq!(stored.provider, Provider::WebDav);
+    assert!(!stored.enabled);
+
+    let error = sync_with_config(&db, true, &legacy).await.unwrap_err();
+    assert_eq!(error.code, crate::error::ErrorCode::NotConfigured);
+    assert!(error.message.contains("旧版 WebDAV 云同步已停用"));
+    assert!(require_github(Provider::GitHub).is_ok());
+    assert!(require_github(Provider::WebDav).is_err());
 }
 #[tokio::test]
 async fn waiting_rate_limit_does_not_extend_retry_or_hide_original_error() {
