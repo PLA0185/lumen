@@ -466,7 +466,7 @@ async fn legacy_webdav_config_is_paused_and_never_used_for_sync() {
     assert!(!stored.enabled);
 
     let error = sync_with_config(&db, true, &legacy).await.unwrap_err();
-    assert_eq!(error.code, crate::error::ErrorCode::NotConfigured);
+    assert!(matches!(error.code, crate::error::ErrorCode::NotConfigured));
     assert!(error.message.contains("旧版 WebDAV 云同步已停用"));
     assert!(require_github(Provider::GitHub).is_ok());
     assert!(require_github(Provider::WebDav).is_err());
