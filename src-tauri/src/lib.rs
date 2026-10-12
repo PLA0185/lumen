@@ -415,6 +415,7 @@ pub fn run() {
             // ---- 子任务与依赖（§4.1）----
             subtasks::subtask_create,
             recurrence_subtasks::subtask_change,
+            recurrence_subtasks::subtask_completion_mode_get,
             subtasks::subtask_list,
             subtasks::subtask_update,
             subtasks::subtask_delete,

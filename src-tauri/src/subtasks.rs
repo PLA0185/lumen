@@ -46,6 +46,7 @@ pub struct SubtaskProgress {
     pub task_id: String,
     pub total: i64,
     pub done: i64,
+    pub completion_mode: String,
     /// 0–100 的整数百分比；无子任务时为 None（而不是 0，
     /// 因为"没有子任务"与"完成 0%"是两件不同的事）
     pub percent: Option<i64>,
@@ -122,7 +123,7 @@ async fn get_subtask(db: &Db, id: &str) -> AppResult<Subtask> {
 #[tauri::command]
 pub async fn subtask_list(state: State<'_, AppState>, task_id: String) -> AppResult<Vec<Subtask>> {
     let rows = sqlx::query_as::<_, Subtask>(
-        "SELECT * FROM subtasks WHERE task_id = ?1 ORDER BY sort_order ASC, created_at ASC",
+        "SELECT * FROM subtasks WHERE task_id = ?1 ORDER BY sort_order ASC, id ASC",
     )
     .bind(&task_id)
     .fetch_all(state.db.pool())
@@ -186,6 +187,60 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
     };
 
     let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
+    let completion_mode: String = sqlx::query_scalar(
+        "SELECT subtask_completion_mode FROM tasks WHERE id=?1 AND deleted_at IS NULL",
+    )
+    .bind(&existing.task_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("任务", &existing.task_id))?;
+
+    if completion_mode == "sequential" {
+        if patch.is_done == Some(true) && existing.is_done == 0 {
+            let earlier_open: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM subtasks current
+                 JOIN subtasks earlier ON earlier.task_id=current.task_id
+                   AND (earlier.sort_order < current.sort_order
+                     OR (earlier.sort_order = current.sort_order AND earlier.id < current.id))
+                 WHERE current.id=?1 AND earlier.is_done=0",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if earlier_open > 0 {
+                return Err(AppError::validation("请先完成前面的子任务，再完成这一步"));
+            }
+        }
+        if patch.is_done == Some(false) && existing.is_done == 1 {
+            let later_done: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM subtasks current
+                 JOIN subtasks later ON later.task_id=current.task_id
+                   AND (later.sort_order > current.sort_order
+                     OR (later.sort_order = current.sort_order AND later.id > current.id))
+                 WHERE current.id=?1 AND later.is_done=1",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if later_done > 0 {
+                return Err(AppError::validation("请先取消后面的子任务，再撤销这一步"));
+            }
+        }
+        if patch.sort_order.is_some() {
+            let completed: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM subtasks WHERE task_id=?1 AND is_done=1")
+                    .bind(&existing.task_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if completed > 0 {
+                return Err(AppError::validation(
+                    "已有子任务完成时，不能调整按顺序任务的顺序",
+                ));
+            }
+        }
+    }
+
     let mut b = QueryBuilder::<Sqlite>::new("UPDATE subtasks SET ");
     let mut sep = b.separated(", ");
     if let Some(t) = &new_title {
@@ -208,7 +263,6 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
     sep.push("updated_at = ").push_bind_unseparated(now.clone());
     b.push(" WHERE id = ").push_bind(id);
 
-    let mut tx = db.pool().begin().await?;
     b.build().execute(&mut *tx).await?;
     if patch.is_done == Some(true) {
         // 与最后一步在同一事务提交，失败时两者一起回滚；仅完成本次实例。
@@ -259,10 +313,18 @@ pub async fn subtask_progress(
     .await?;
     let total: i64 = row.try_get("total")?;
     let done: i64 = row.try_get("done")?;
+    let completion_mode: String = sqlx::query_scalar(
+        "SELECT subtask_completion_mode FROM tasks WHERE id=?1 AND deleted_at IS NULL",
+    )
+    .bind(&task_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or_else(|| AppError::not_found("任务", &task_id))?;
     Ok(SubtaskProgress {
         task_id,
         total,
         done,
+        completion_mode,
         items: Vec::new(),
         percent: if total > 0 {
             Some((done * 100) / total)
@@ -292,22 +354,30 @@ pub async fn subtask_progress_batch_impl(
         return Err(AppError::validation("单次查询最多 2000 个任务"));
     }
 
-    let mut b = QueryBuilder::<Sqlite>::new("SELECT * FROM subtasks WHERE task_id IN (");
+    let mut b = QueryBuilder::<Sqlite>::new(
+        "SELECT s.id,s.task_id,s.title,s.is_done,s.sort_order,s.completed_at,s.created_at,s.updated_at,
+                t.subtask_completion_mode
+         FROM subtasks s JOIN tasks t ON t.id=s.task_id WHERE s.task_id IN (",
+    );
     let mut sep = b.separated(", ");
     for id in task_ids {
         sep.push_bind(id.clone());
     }
-    sep.push_unseparated(") ORDER BY task_id, sort_order, id");
+    sep.push_unseparated(") ORDER BY s.task_id, s.sort_order, s.id");
 
-    let rows = b.build_query_as::<Subtask>().fetch_all(db.pool()).await?;
+    let rows = b
+        .build_query_as::<(Subtask, String)>()
+        .fetch_all(db.pool())
+        .await?;
     let mut grouped: std::collections::BTreeMap<String, SubtaskProgress> = Default::default();
-    for item in rows {
+    for (item, completion_mode) in rows {
         let summary = grouped
             .entry(item.task_id.clone())
             .or_insert_with(|| SubtaskProgress {
                 task_id: item.task_id.clone(),
                 total: 0,
                 done: 0,
+                completion_mode: completion_mode.clone(),
                 percent: None,
                 items: Vec::new(),
             });

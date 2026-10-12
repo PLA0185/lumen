@@ -73,7 +73,7 @@ function makeTasks(from: number, to: number): Task[] {
  * 这样断言 `progressMap` 的键就能直接看出"这份进度到底属于哪一批任务"。
  */
 function progressRows(ids: string[]): SubtaskProgress[] {
-  return ids.map((taskId) => ({ taskId, total: 2, done: 1, percent: 50 }))
+  return ids.map((taskId) => ({ taskId, total: 2, done: 1, percent: 50, completionMode: 'free' }))
 }
 
 /** 把 store 恢复到干净的初始状态 */

@@ -44,7 +44,7 @@ describe('任务卡片中的文本与子任务', () => {
         task={task}
         onToggle={() => {}}
         onDelete={() => {}}
-        progress={{ total: 1, done: 0, percent: 0, items: children }}
+        progress={{ total: 1, done: 0, percent: 0, completionMode: 'free', items: children }}
       />,
     )
     expect(html).toContain('CA 关键词')

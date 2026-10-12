@@ -3855,15 +3855,43 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 没做到
 
-- 本机 Rust 单测卡在下载 ONNX Runtime 的 `ort-sys` 构建步骤，网络连接持续但约 6 分钟没有下载进度；已中止。Rust 单测和严格 Clippy 尚未完成。
-- 新安装包仍待 GitHub CI 完成构建和签名；用户电脑当前运行 0.4.36，尚未安装本轮改动。
+- 本机 Rust 单测卡在下载 ONNX Runtime 的 `ort-sys` 构建步骤，约 6 分钟没有下载进度；已中止。Rust 单测和严格 Clippy 的本机运行未完成，改由 GitHub CI 验证。
+- 安装后没有再通过桌面界面完成长时间运行和业务交互验收；随后一次界面操作收到用户按下 Escape 的系统提示，按提示停止了继续操作。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.38）、`pnpm typecheck`、定向快速新建用例（6 项）、`pnpm test`（51 个文件、380 项）、`pnpm build` 与 `pnpm lint` 均退出 0。Vite 保留已有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示。
-- `cargo fmt --check` 退出 0；Rust 单测未完成，严格 Clippy 未运行，等待远端 CI 验证。
-- `git diff --check` 通过；未构建或安装本地 Tauri 包。
+- `cargo fmt --check` 退出 0；Rust 单测未完成，严格 Clippy 未在本机运行。
+- GitHub PR #4 已合并，`v0.4.38` 发布工作流和主分支 CI 成功；[v0.4.38 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.38) 已发布。
+- 已从官方 Release 安装 0.4.38，确认安装目录的 EXE 版本为 0.4.38；SQLite `quick_check` 返回 `ok`，原数据库路径与文件大小保持不变。之后没有重启已停止的应用。
+- `git diff --check` 通过；没有本地构建 Tauri 安装包。
 
 ### 相关文档
 
 - [快速新建组件](../src/components/QuickAdd.tsx)、[快速新建行为用例](../src/components/QuickAdd.behavior.test.tsx)、[发布说明](../RELEASE_NOTES.md)。
+
+## 第 82 轮 · 2026-10-12 · 子任务排序与顺序完成模式
+
+### 做了
+
+- 子任务详情增加完成方式选项：“自由完成”保留任意顺序；“按顺序完成”只允许完成当前最前面的未完成步骤，并要求撤销时从最后一步向前。
+- 子任务增加上移/下移排序入口。重复任务先选择仅本次或整个系列；整系列排序和完成方式写入系列模板并应用到未完成发生，之后新生成的发生继承设置，已完成历史保持原样。
+- 在任务详情、卡片简览和悬浮窗显示顺序模式；拦截越序点击并给出提示。数据库新增正式迁移，旧任务默认自由完成。
+- 更正第 81 轮记录中关于 0.4.38 仍待 CI、发布和安装的错误状态。
+
+### 没做到
+
+- 本机 `cargo check --lib` 在 `ort-sys` 原生依赖步骤连续约 6 分钟没有输出，随后中止；Rust 编译、Rust 单测与严格 Clippy 尚未在本机完成，等待本轮 GitHub CI 验证。
+- 本轮功能尚未构建签名安装包或安装到用户程序；需要先由远端 CI 验证 Rust 代码和迁移。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.39）、`pnpm typecheck`、`pnpm test`（51 个文件、382 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`git diff --check` 均实际运行并通过。构建输出保留既有 dynamic-import 提示。
+- 定向子任务界面用例 13 项通过，覆盖排序调用、按顺序禁用后续步骤、重复任务模式变更先选作用范围。
+- 未声称 Rust 检查通过；远端 CI 结果待记录。
+
+### 相关文档
+
+- [0.4.39 发布说明](../RELEASE_NOTES.md)
+- [子任务完成模式数据库迁移](../src-tauri/migrations/0015_subtask_completion_mode.sql)
+- [子任务界面行为用例](../src/components/TaskDetails.test.tsx)

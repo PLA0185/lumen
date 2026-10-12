@@ -83,6 +83,7 @@ export interface SubtaskProgress {
   taskId: string
   total: number
   done: number
+  completionMode: SubtaskCompletionMode
   /** 无子任务时为 null —— 与"完成 0%"是不同含义 */
   percent: number | null
   /** 批量查询同时返回子任务，用于卡片和悬浮窗的简览。 */
@@ -143,6 +144,7 @@ export const ORG_CMD = {
   subtaskDelete: 'subtask_delete',
   subtaskProgress: 'subtask_progress',
   subtaskProgressBatch: 'subtask_progress_batch',
+  subtaskCompletionModeGet: 'subtask_completion_mode_get',
 
   dependencyAdd: 'dependency_add',
   dependencyList: 'dependency_list',
@@ -279,8 +281,20 @@ export const subtaskCreate = (taskId: string, title: string): Promise<Subtask> =
   call(ORG_CMD.subtaskCreate, { taskId, title })
 
 export type SubtaskScope = 'this_only' | 'whole_series'
+export type SubtaskCompletionMode = 'free' | 'sequential'
+export function subtaskSequenceBlocked(
+  items: Subtask[],
+  index: number,
+  mode: SubtaskCompletionMode,
+): boolean {
+  if (mode !== 'sequential') return false
+  if (items[index]?.isDone === 1) return items.slice(index + 1).some((item) => item.isDone === 1)
+  return items.slice(0, index).some((item) => item.isDone !== 1)
+}
 export type SubtaskAction = { kind: 'create'; title: string } | { kind: 'rename'; id: string; title: string }
   | { kind: 'delete'; id: string } | { kind: 'copy_previous' }
+  | { kind: 'reorder'; orderedIds: string[] }
+  | { kind: 'set_completion_mode'; mode: SubtaskCompletionMode }
 export const subtaskChange = (taskId: string, action: SubtaskAction, scope?: SubtaskScope): Promise<Subtask[]> =>
   call(ORG_CMD.subtaskChange, { input: { taskId, action, scope } })
 
@@ -301,6 +315,9 @@ export const subtaskProgress = (taskId: string): Promise<SubtaskProgress> =>
 /** 批量取进度，避免列表页 N+1 查询（§10 上千条任务仍要流畅） */
 export const subtaskProgressBatch = (taskIds: string[]): Promise<SubtaskProgress[]> =>
   call(ORG_CMD.subtaskProgressBatch, { taskIds })
+
+export const subtaskCompletionModeGet = (taskId: string): Promise<SubtaskCompletionMode> =>
+  call(ORG_CMD.subtaskCompletionModeGet, { taskId })
 
 // =============================================================================
 // 依赖
