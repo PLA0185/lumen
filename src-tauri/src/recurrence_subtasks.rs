@@ -339,13 +339,15 @@ pub async fn change_impl(db: &Db, input: SubtaskChange) -> AppResult<Vec<Subtask
         SubtaskAction::Reorder { ordered_ids } => {
             reorder_subtasks(
                 &mut tx,
-                &input.task_id,
-                series.as_deref(),
-                whole,
-                &targets,
-                &mut templates,
-                &ordered_ids,
-                &now,
+                ReorderSubtasksContext {
+                    task_id: &input.task_id,
+                    series_id: series.as_deref(),
+                    whole,
+                    targets: &targets,
+                    templates: &mut templates,
+                    ordered_ids: &ordered_ids,
+                    now: &now,
+                },
             )
             .await?;
         }
@@ -432,16 +434,29 @@ async fn validate_sequential_state(
     Ok(())
 }
 
+struct ReorderSubtasksContext<'a> {
+    task_id: &'a str,
+    series_id: Option<&'a str>,
+    whole: bool,
+    targets: &'a [String],
+    templates: &'a mut Vec<SubtaskTemplate>,
+    ordered_ids: &'a [String],
+    now: &'a str,
+}
+
 async fn reorder_subtasks(
     tx: &mut Transaction<'_, Sqlite>,
-    task_id: &str,
-    series_id: Option<&str>,
-    whole: bool,
-    targets: &[String],
-    templates: &mut Vec<SubtaskTemplate>,
-    ordered_ids: &[String],
-    now: &str,
+    context: ReorderSubtasksContext<'_>,
 ) -> AppResult<()> {
+    let ReorderSubtasksContext {
+        task_id,
+        series_id,
+        whole,
+        targets,
+        templates,
+        ordered_ids,
+        now,
+    } = context;
     let current: Vec<(String, String, f64, Option<String>)> = sqlx::query_as(
         "SELECT id,title,sort_order,series_template_id FROM subtasks WHERE task_id=?1 ORDER BY sort_order,id",
     )
