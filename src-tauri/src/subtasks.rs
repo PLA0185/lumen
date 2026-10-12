@@ -188,13 +188,12 @@ pub async fn update_subtask_impl(db: &Db, id: &str, patch: SubtaskPatch) -> AppR
 
     let now = to_db_time(utc_now());
     let mut tx = db.pool().begin().await?;
-    let completion_mode: String = sqlx::query_scalar(
-        "SELECT subtask_completion_mode FROM tasks WHERE id=?1 AND deleted_at IS NULL",
-    )
-    .bind(&existing.task_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::not_found("任务", &existing.task_id))?;
+    let completion_mode: String =
+        sqlx::query_scalar("SELECT subtask_completion_mode FROM tasks WHERE id=?1")
+            .bind(&existing.task_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::not_found("任务", &existing.task_id))?;
 
     if completion_mode == "sequential" {
         if patch.is_done == Some(true) && existing.is_done == 0 {

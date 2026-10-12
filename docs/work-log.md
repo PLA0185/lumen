@@ -3888,8 +3888,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.39）、`pnpm typecheck`、`pnpm test`（51 个文件、382 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`git diff --check` 均实际运行并通过。构建输出保留既有 dynamic-import 提示。
 - 定向子任务界面用例 13 项通过，覆盖排序调用、按顺序禁用后续步骤、重复任务模式变更先选作用范围。
-- 首次 PR CI 的前端检查通过，Rust 检查发现 SQLx 不能把 `Subtask` 作为元组字段解码；已修正为两次批量查询，避免逐任务查询。修复后的远端 CI 尚在等待。
-- 未声称 Rust 检查通过；本机 Rust 检查因 `ort-sys` 无进展中止，修复后的远端 CI 结果待记录。
+- 首次 PR CI 的前端检查通过，Rust 编译发现 SQLx 不能把 `Subtask` 作为元组字段解码；已修正为两次批量查询，避免逐任务查询。后续 Rust 编译通过，但生命周期集成用例发现软删除任务的子任务完成操作被错误拒绝；已改为读取仍保留的父任务完成模式，保持回收站中的子任务行为。
+- 本机 Rust 检查因 `ort-sys` 无进展中止；修复软删除行为后的远端 CI 尚待重跑，尚未声称 Rust 全量门禁通过。
 
 ### 相关文档
 
