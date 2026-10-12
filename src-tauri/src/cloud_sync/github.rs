@@ -1,4 +1,6 @@
-use super::{AppError, AppResult, Db, ErrorCode, SyncRemote, MAX_JSON, SYNC_BUDGET_EXCEEDED};
+use super::{
+    AppError, AppResult, Db, ErrorCode, SyncRemote, MAX_JSON, SYNC_GITHUB_BUDGET_EXCEEDED,
+};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -195,7 +197,7 @@ impl GitHub {
                 "UPDATE memo_sync_runtime SET retry_until=?,last_error=? WHERE singleton=1",
             )
             .bind(retry_until)
-            .bind(SYNC_BUDGET_EXCEEDED)
+            .bind(SYNC_GITHUB_BUDGET_EXCEEDED)
             .execute(db.pool())
             .await?;
             return Err(AppError::new(
