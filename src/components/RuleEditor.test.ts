@@ -24,4 +24,10 @@ describe('editing an existing recurrence rule', () => {
     expect(parsed.byMonth).toEqual([3])
     expect(buildRrule(parsed)).toBe('FREQ=YEARLY;BYMONTH=3;BYMONTHDAY=31;UNTIL=20301231')
   })
+
+  it('keeps the per-occurrence reminder time when editing a series', () => {
+    const text = 'FREQ=DAILY;X-LUMEN-REMINDER=08:45;COUNT=3'
+    expect(parseRrule(text).reminderTime).toBe('08:45')
+    expect(buildRrule(parseRrule(text))).toBe(text)
+  })
 })

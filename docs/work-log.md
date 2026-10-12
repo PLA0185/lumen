@@ -3954,3 +3954,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.41 发布说明](../RELEASE_NOTES.md)
 - [GitHub 云同步设置](../src/components/CloudSettings.tsx)、[同步入口](../src/components/CloudSyncButton.tsx)
 - [GitHub-only 后端限制与兼容逻辑](../src-tauri/src/cloud_sync.rs)、[定向用例](../src-tauri/src/cloud_sync/tests.rs)
+
+## 第 85 轮 · 2026-10-12 · 重复任务固定时刻提醒
+
+### 做了
+
+- 重复规则增加可选的“每次重复提醒”时刻；每日、每周及其它规则的创建、编辑和系列修改均可设置，后续生成实例会按当次有效时区创建系统提醒。
+- 自动生成的系列提醒和单次自定义提醒分开标记。用户对某一次提醒执行停用、删除或稍后提醒时，该发生会保留为例外，之后调整规则不会把单次修改覆盖掉。
+- 在任务详情提醒栏增加“设置每次重复提醒”入口；升级通过正式迁移为提醒表添加来源标记，沿用启动时的一致性快照流程。
+- 阅读用户引用的“查找最新 SOP”对话，确认材料涉及关键词、出运追踪、FBA 费用、发票等多个业务流程；用户明确 GPT 对 Lumen 的编辑必须先得到本人同意，并确认要同时支持 ChatGPT 桌面端和网页版。本轮只核实了 MCP 接入方式和确认边界，尚未实现 ChatGPT 插件。
+
+### 没做到
+
+- ChatGPT ↔ Lumen 的 MCP 插件与待确认编辑队列尚未实现。桌面端和网页版都需要通过可访问的 MCP 服务接入；本机服务可研究 Secure MCP Tunnel，实际连接和写入能力还受 ChatGPT 账号计划及工作区设置限制。本轮没有连接或配置用户的 ChatGPT 账号。
+- 本机 `cargo test --lib` 已输出 585 项通过、4 项忽略，但测试进程在最终汇总后仍未退出；没有取得命令的正常退出码。由 GitHub CI 进行最终 Rust 测试验收。
+- 未在真实设备上安装 0.4.42，也未实测系统通知是否在指定时刻弹出；本机验证到提醒记录已按时区正确创建。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.42）、`pnpm typecheck`、`pnpm test`（52 个文件、388 项）、`pnpm build`、`pnpm lint` 均实际运行并退出 0。构建仍显示既有动态导入提示。
+- `cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 和 `git diff --check` 均实际运行并退出 0。定向 Rust 测试 25 项（包含新建三次重复提醒的端到端用例）退出 0；完整 Rust 套件输出 585 项通过、4 项忽略，但进程未正常退出，故状态仍以 CI 为准。
+- OpenAI 官方文档核对了 ChatGPT 插件/MCP 的本地与远程连接方式、Secure MCP Tunnel，以及写操作的账号/工作区可用性；未连接或配置任何用户账号。
+
+### 相关文档
+
+- [0.4.42 发布说明](../RELEASE_NOTES.md)
+- [重复规则时间和提醒生成](../src-tauri/src/recurrence_service.rs)、[提醒单次例外处理](../src-tauri/src/reminders.rs)
+- [重复规则编辑器](../src/components/RuleEditor.tsx)、[提醒栏入口](../src/components/ReminderEditor.tsx)
+- [OpenAI ChatGPT MCP 连接说明](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)、[Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)

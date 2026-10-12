@@ -111,6 +111,9 @@ pub struct RecurrenceRule {
     pub include_makeup: bool,
     #[serde(default)]
     pub task_period: Option<String>,
+    /// 每次发生时的提醒墙上时刻（HH:MM）；None 表示不创建系列提醒。
+    #[serde(default)]
+    pub reminder_time: Option<String>,
     /// 结束条件
     pub end: EndCondition,
     /// 时区标识，如 `Asia/Shanghai`
@@ -212,6 +215,9 @@ impl RecurrenceRule {
         if self.include_makeup {
             parts.push("X-LUMEN-MAKEUP=TRUE".to_string());
         }
+        if let Some(time) = &self.reminder_time {
+            parts.push(format!("X-LUMEN-REMINDER={time}"));
+        }
         // 结束条件必须与 UNTIL / COUNT 互斥
         match &self.end {
             EndCondition::Never => {}
@@ -251,6 +257,7 @@ impl RecurrenceRule {
         let mut skip_holidays = false;
         let mut include_makeup = false;
         let mut task_period = None;
+        let mut reminder_time: Option<String> = None;
         let mut end = EndCondition::Never;
 
         for token in rrule.split(';').filter(|s| !s.trim().is_empty()) {
@@ -352,6 +359,11 @@ impl RecurrenceRule {
                     }
                     include_makeup = true;
                 }
+                "X-LUMEN-REMINDER" => {
+                    let parsed = chrono::NaiveTime::parse_from_str(value, "%H:%M")
+                        .map_err(|_| AppError::validation("重复提醒时间格式无效，应为 HH:MM"))?;
+                    reminder_time = Some(parsed.format("%H:%M").to_string());
+                }
                 "UNTIL" => {
                     // 接受 YYYYMMDD 与 YYYYMMDDTHHMMSSZ 两种形式
                     let digits: String = value.chars().take(8).collect();
@@ -435,6 +447,7 @@ impl RecurrenceRule {
             skip_holidays,
             include_makeup,
             task_period,
+            reminder_time,
             end,
             tzid: tzid.to_string(),
             dtstart_local: dtstart_local.to_string(),
@@ -963,6 +976,23 @@ mod tests {
             dates,
             ["2026-09-30", "2026-10-08", "2026-10-09", "2026-10-10"]
         );
+    }
+
+    #[test]
+    fn recurring_reminder_time_is_validated_and_round_trips() {
+        let text = "FREQ=DAILY;X-LUMEN-REMINDER=08:45;COUNT=3";
+        let parsed =
+            RecurrenceRule::from_rrule_string(text, "Asia/Shanghai", "2026-09-21T09:00:00", true)
+                .unwrap();
+        assert_eq!(parsed.reminder_time.as_deref(), Some("08:45"));
+        assert_eq!(parsed.to_rrule_string().unwrap(), text);
+        assert!(RecurrenceRule::from_rrule_string(
+            "FREQ=DAILY;X-LUMEN-REMINDER=25:99",
+            "Asia/Shanghai",
+            "2026-09-21T09:00:00",
+            true,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1728,6 +1758,7 @@ mod tests {
             skip_holidays: false,
             include_makeup: false,
             task_period: None,
+            reminder_time: None,
             end: EndCondition::Never,
             tzid: "UTC".into(),
             dtstart_local: "2026-02-01T00:00:00".into(),

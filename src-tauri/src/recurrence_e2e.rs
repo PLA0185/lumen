@@ -121,6 +121,59 @@ async fn holiday_series_persists_and_materializes_only_allowed_days() {
 }
 
 #[tokio::test]
+async fn recurring_rule_creates_a_local_time_reminder_for_each_occurrence() {
+    let (state, dir) = setup("recurring-clock-reminder").await;
+    let rule = "FREQ=DAILY;X-LUMEN-REMINDER=08:45;COUNT=3";
+    let created = create_recurring_impl(
+        &state,
+        CreateRecurringInput {
+            title: "每日提醒".into(),
+            description: None,
+            priority: None,
+            project_id: None,
+            category_id: None,
+            estimated_minutes: None,
+            tag_ids: vec![],
+            rrule: rule.into(),
+            tzid: Some("Asia/Shanghai".into()),
+            dtstart_local: "2026-09-21T09:00:00".into(),
+            has_start_time: Some(true),
+            due_local: None,
+            materialize_days: Some(5),
+        },
+    )
+    .await
+    .unwrap();
+
+    let reminders: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT r.remind_at, r.series_default
+         FROM reminders r JOIN tasks t ON t.id = r.task_id
+         WHERE t.series_id = ?1 ORDER BY t.occurrence_key",
+    )
+    .bind(&created.series_id)
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(reminders.len(), 3);
+    assert_eq!(
+        reminders
+            .iter()
+            .map(|row| row.0.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "2026-09-21T00:45:00.000Z",
+            "2026-09-22T00:45:00.000Z",
+            "2026-09-23T00:45:00.000Z",
+        ]
+    );
+    assert!(reminders.iter().all(|row| row.1 == 1));
+
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn old_series_uses_persistent_template_and_tags() {
     let (state, dir) = setup("rec-old-template").await;
     let now = crate::db::to_db_time(crate::db::utc_now());

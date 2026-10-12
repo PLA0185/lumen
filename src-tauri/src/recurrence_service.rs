@@ -300,6 +300,57 @@ struct SeriesTemplate {
     subtask_completion_mode: String,
 }
 
+struct OccurrenceCandidate {
+    key: String,
+    rule_version: i64,
+    occurrence: Occurrence,
+    overrides: FieldOverride,
+    period: String,
+    tzid: String,
+    reminder_time: Option<String>,
+}
+
+fn reminder_at_for_occurrence(
+    occurrence: &Occurrence,
+    reminder_time: &str,
+    tzid: &str,
+) -> AppResult<String> {
+    let time = chrono::NaiveTime::parse_from_str(reminder_time, "%H:%M")
+        .map_err(|_| AppError::validation("重复提醒时间格式无效，应为 HH:MM"))?;
+    let local = occurrence.local.date().and_time(time);
+    let converted = occurrences_to_utc(
+        &[Occurrence {
+            local,
+            index: occurrence.index,
+        }],
+        tzid,
+    );
+    Ok(to_db_time(converted[0].1))
+}
+
+async fn insert_series_default_reminder(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    task_id: &str,
+    occurrence: &Occurrence,
+    reminder_time: &str,
+    tzid: &str,
+    now: &str,
+) -> AppResult<()> {
+    let remind_at = reminder_at_for_occurrence(occurrence, reminder_time, tzid)?;
+    sqlx::query(
+        "INSERT INTO reminders
+         (id, task_id, kind, remind_at, is_enabled, series_default, created_at, updated_at)
+         VALUES (?1, ?2, 'custom', ?3, 1, 1, ?4, ?4)",
+    )
+    .bind(uuid::Uuid::now_v7().to_string())
+    .bind(task_id)
+    .bind(remind_at)
+    .bind(now)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// 物化：确保范围内所有应当发生的实例都已存在于 tasks 表。
 ///
 /// 语义保证：
@@ -381,7 +432,7 @@ async fn materialize_range(
 
     // Each segment owns [anchor, next anchor). Expand only near the requested
     // range, never only the first N occurrences from DTSTART.
-    let mut candidates: Vec<(String, i64, Occurrence, FieldOverride, String)> = Vec::new();
+    let mut candidates: Vec<OccurrenceCandidate> = Vec::new();
     for (i, (version, anchor, rule, ov)) in timeline.iter().enumerate() {
         let next_anchor = timeline.get(i + 1).and_then(|segment| segment.1.as_deref());
         let tz: chrono_tz::Tz = rule
@@ -416,19 +467,21 @@ async fn materialize_range(
             {
                 continue;
             }
-            candidates.push((
+            candidates.push(OccurrenceCandidate {
                 key,
-                *version,
-                o,
-                ov.clone(),
-                rule.task_period.clone().unwrap_or_else(|| "none".into()),
-            ));
+                rule_version: *version,
+                occurrence: o,
+                overrides: ov.clone(),
+                period: rule.task_period.clone().unwrap_or_else(|| "none".into()),
+                tzid: rule.tzid.clone(),
+                reminder_time: rule.reminder_time.clone(),
+            });
         }
     }
     // A boundary can coincide with both rules; the newer version wins.
-    candidates.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    candidates.sort_by(|a, b| a.key.cmp(&b.key).then(b.rule_version.cmp(&a.rule_version)));
     let mut seen: std::collections::HashSet<String> = Default::default();
-    candidates.retain(|(k, _, _, _, _)| seen.insert(k.clone()));
+    candidates.retain(|candidate| seen.insert(candidate.key.clone()));
 
     let template = sqlx::query_as::<_, SeriesTemplate>(
         "SELECT title, description, note_md, link_url, priority, project_id,
@@ -440,7 +493,16 @@ async fn materialize_range(
     .await?
     .ok_or_else(|| AppError::conflict("重复系列缺少持久化模板，无法安全物化"))?;
 
-    for (key, _ver, occ, ov, period) in candidates {
+    for candidate in candidates {
+        let OccurrenceCandidate {
+            key,
+            occurrence: occ,
+            overrides: ov,
+            period,
+            tzid,
+            reminder_time,
+            ..
+        } = candidate;
         if existing_keys.contains(&key) || skip_keys.contains(&key) {
             continue;
         }
@@ -504,6 +566,10 @@ async fn materialize_range(
         .await?;
         if inserted.rows_affected() == 0 {
             continue;
+        }
+
+        if let Some(reminder_time) = reminder_time.as_deref() {
+            insert_series_default_reminder(&mut tx, &id, &occ, reminder_time, &tzid, &now).await?;
         }
 
         let raw: String =
@@ -782,6 +848,11 @@ pub(crate) async fn create_recurring_seed_tx(
     .bind(rule.task_period.as_deref().unwrap_or("none"))
     .execute(&mut **tx)
     .await?;
+
+    if let Some(reminder_time) = rule.reminder_time.as_deref() {
+        insert_series_default_reminder(tx, &task_id, &first_occ, reminder_time, &tzid, &now)
+            .await?;
+    }
 
     // 标签
     for tid in input.tag_ids.iter().filter(|s| !s.is_empty()) {
@@ -1069,7 +1140,8 @@ async fn is_occurrence_rebuild_safe(
                     WHERE st.series_id=t.series_id AND json_extract(j.value,'$.id')=x.series_template_id
                     AND json_extract(j.value,'$.title')=x.title AND json_extract(j.value,'$.sortOrder')=x.sort_order)))
              AND NOT EXISTS (SELECT 1 FROM attachments x WHERE x.task_id = t.id)
-             AND NOT EXISTS (SELECT 1 FROM reminders x WHERE x.task_id = t.id)
+             AND NOT EXISTS (SELECT 1 FROM reminders x
+                             WHERE x.task_id = t.id AND x.series_default = 0)
              AND NOT EXISTS (SELECT 1 FROM focus_sessions x WHERE x.task_id = t.id)
              AND NOT EXISTS (SELECT 1 FROM task_dependencies x
                              WHERE x.task_id = t.id OR x.depends_on_id = t.id)
@@ -2424,6 +2496,18 @@ mod tests {
         assert_eq!(scope_label(EditScope::ThisOnly), "仅此次");
         assert_eq!(scope_label(EditScope::ThisAndFuture), "此次及以后");
         assert_eq!(scope_label(EditScope::WholeSeries), "整个系列");
+    }
+
+    #[test]
+    fn recurring_reminder_uses_occurrence_local_date_and_timezone() {
+        let occurrence = Occurrence {
+            local: parse_local_datetime("2026-09-21T09:00:00").unwrap(),
+            index: 1,
+        };
+        assert_eq!(
+            reminder_at_for_occurrence(&occurrence, "08:45", "Asia/Shanghai").unwrap(),
+            "2026-09-21T00:45:00.000Z"
+        );
     }
 
     /// 未知范围值必须报错，绝不能静默按"整个系列"处理——

@@ -56,6 +56,7 @@ export function parseRrule(rrule: string): {
   byMonth: number[]
   setPos: SetPos | null
   end: EndCondition
+  reminderTime: string
 } {
   const out = {
     freq: 'weekly' as Freq,
@@ -69,6 +70,7 @@ export function parseRrule(rrule: string): {
     byMonth: [] as number[],
     setPos: null as SetPos | null,
     end: { kind: 'never' } as EndCondition,
+    reminderTime: '',
   }
   const codes: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 }
 
@@ -108,6 +110,8 @@ export function parseRrule(rrule: string): {
       out.skipHolidays = v.toUpperCase() === 'CN'
     } else if (key === 'X-LUMEN-MAKEUP') {
       out.includeMakeup = v.toUpperCase() === 'TRUE'
+    } else if (key === 'X-LUMEN-REMINDER') {
+      if (/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v)) out.reminderTime = v
     } else if (key === 'UNTIL') {
       const m = v.match(/^(\d{4})(\d{2})(\d{2})$/)
       if (m) out.end = { kind: 'until', date: `${m[1]}-${m[2]}-${m[3]}` }
@@ -156,6 +160,7 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
   const [weekdaysOnly, setWeekdaysOnly] = useState(initial.weekdaysOnly)
   const [skipHolidays, setSkipHolidays] = useState(initial.skipHolidays)
   const [includeMakeup, setIncludeMakeup] = useState(initial.includeMakeup)
+  const [reminderTime, setReminderTime] = useState(initial.reminderTime)
   const [monthMode, setMonthMode] = useState<'day' | 'setpos'>(
     initial.setPos ? 'setpos' : 'day',
   )
@@ -197,13 +202,14 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
       weekdaysOnly,
       skipHolidays,
       includeMakeup,
+      reminderTime,
       periodType: periodType ?? initial.periodType,
       byMonthday: monthMode === 'day' ? byMonthday : undefined,
       setPos: monthMode === 'setpos' ? setPos : null,
       byMonth,
       end,
     })
-  }, [freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, periodType, initial.periodType, monthMode, byMonthday, setPos, byMonth, end])
+  }, [freq, interval, byWeekday, weekdaysOnly, skipHolidays, includeMakeup, reminderTime, periodType, initial.periodType, monthMode, byMonthday, setPos, byMonth, end])
 
   const dtstartLocal = timeStr ? `${dateStr}T${timeStr}:00` : `${dateStr}T00:00:00`
   const hasStartTime = Boolean(timeStr)
@@ -566,6 +572,21 @@ export function RuleEditor({ value, onChange, defaultDate, fixedStart = false, t
           {fixedStart
             ? '按所选范围的起点预览；已有任务的发生时间不会因此改写。'
             : '留空时刻表示全天任务，不会被视为当天零点到期。'}
+        </p>
+      </div>
+
+      <div className="formrow">
+        <label className="formlabel" htmlFor="recurring-reminder-time">每次重复提醒</label>
+        <input
+          id="recurring-reminder-time"
+          type="time"
+          className="input input--compact"
+          value={reminderTime}
+          aria-label="每次重复任务的提醒时间"
+          onChange={(e) => setReminderTime(e.target.value)}
+        />
+        <p className="setgroup__hint" style={{ marginTop: 4 }}>
+          设定后，每次重复发生都会在这个当地时间提醒；留空则不添加重复提醒。
         </p>
       </div>
 

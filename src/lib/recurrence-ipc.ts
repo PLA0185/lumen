@@ -295,6 +295,8 @@ export function buildRrule(opts: {
   weekdaysOnly?: boolean
   skipHolidays?: boolean
   includeMakeup?: boolean
+  /** 每次重复发生时创建到点提醒（本地墙上时间 HH:mm） */
+  reminderTime?: string
   periodType?: PeriodType
   /** 每月：指定日期（1–31） */
   byMonthday?: number[]
@@ -348,6 +350,7 @@ export function buildRrule(opts: {
   if (opts.skipHolidays) parts.push('X-LUMEN-HOLIDAYS=CN')
   if (opts.skipHolidays && opts.includeMakeup && opts.weekdaysOnly && opts.freq === 'daily')
     parts.push('X-LUMEN-MAKEUP=TRUE')
+  if (opts.reminderTime) parts.push(`X-LUMEN-REMINDER=${opts.reminderTime}`)
 
   switch (opts.end.kind) {
     case 'until':

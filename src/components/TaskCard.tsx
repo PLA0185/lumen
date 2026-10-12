@@ -26,6 +26,7 @@ import type { ScopeInfo } from '../lib/recurrence-ipc'
 import { Icon } from './Icons'
 import { CheckMark } from './CheckMark'
 import { onDataChanged } from '../lib/data-change'
+import { useApp } from '../lib/store'
 
 /**
  * 重复系列信息块（§5）。
@@ -34,8 +35,7 @@ import { onDataChanged } from '../lib/data-change'
  * 关于"跳过"与"删除"的区别，界面必须说清：
  * 跳过 = 这一次不发生但系列继续；删除整个系列才会终止后续。
  */
-function SeriesInfo({ taskId }: { taskId: string }) {
-  const [editingRule, setEditingRule] = useState(false)
+function SeriesInfo({ taskId, onEditRule }: { taskId: string; onEditRule: () => void }) {
   const [info, setInfo] = useState<ScopeInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,8 +120,7 @@ function SeriesInfo({ taskId }: { taskId: string }) {
           {busy ? '处理中…' : '跳过这一次'}
         </button>
       </div>
-      {info?.seriesId && info.occurrenceKey && <button type="button" className="btn btn--quiet btn--sm" onClick={() => setEditingRule(true)}>修改重复规则</button>}
-      {editingRule && info?.seriesId && info.occurrenceKey && <SeriesRuleDialog taskId={taskId} seriesId={info.seriesId} occurrenceKey={info.occurrenceKey} onClose={() => setEditingRule(false)} onSaved={setNotice} />}
+      {info?.seriesId && info.occurrenceKey && <button type="button" className="btn btn--quiet btn--sm" onClick={onEditRule}>修改重复规则</button>}
       {notice && (
         <div className="seriesinfo__segments" role="status">
           {notice}
@@ -198,6 +197,7 @@ export function TaskCard({
 
   const hasDetail = !inTrash
   const canDrag = sortable && !inTrash
+  const [editingRule, setEditingRule] = useState(false)
 
   return (
     <li
@@ -427,7 +427,7 @@ export function TaskCard({
 
       {expanded && hasDetail && (
         <div className="task__detail">
-          {isRecurring && <SeriesInfo taskId={task.id} />}
+          {isRecurring && <SeriesInfo taskId={task.id} onEditRule={() => setEditingRule(true)} />}
           <section className="task-description">
             <div className="subtasks__head">
               <span>任务描述</span>
@@ -453,9 +453,22 @@ export function TaskCard({
             hasPlanned={Boolean(task.plannedAt)}
             hasDue={Boolean(task.dueAt)}
             taskDone={done || task.status === 'archived'}
+            onEditRecurringRule={isRecurring ? () => setEditingRule(true) : undefined}
           />
           <DependencyEditor taskId={task.id} taskTitle={task.title} />
         </div>
+      )}
+      {editingRule && task.seriesId && task.occurrenceKey && (
+        <SeriesRuleDialog
+          taskId={task.id}
+          seriesId={task.seriesId}
+          occurrenceKey={task.occurrenceKey}
+          onClose={() => setEditingRule(false)}
+          onSaved={(message) => {
+            useApp.getState().pushToast('success', message)
+            setEditingRule(false)
+          }}
+        />
       )}
     </li>
   )
