@@ -3896,3 +3896,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.39 发布说明](../RELEASE_NOTES.md)
 - [子任务完成模式数据库迁移](../src-tauri/migrations/0015_subtask_completion_mode.sql)
 - [子任务界面行为用例](../src/components/TaskDetails.test.tsx)
+
+## 第 83 轮 · 2026-10-12 · 今天日期导航、顶栏整理与 GitHub 云同步
+
+### 做了
+
+- “今天”页增加按周日期选择，可进入前后周和历史日期，显示未完成数量；列表查询、新建任务默认日期与页面说明都会跟随所选日期，回到今天后恢复跟随系统日期。
+- Windows 主窗口顶栏改为固定网格：标题跨行，操作按钮和搜索/PDF 分别对齐，避免 1101–1280 像素窗口内搜索框随机落在角落。
+- 在坚果云 / WebDAV 以外增加 GitHub 私有仓库传输选项。沿用现有加密包、设备头和冲突历史；Token 使用本机凭据库；旧云同步配置仍默认识别为 WebDAV。GitHub 文件块按 SHA-256 命名并在下载时校验，单个逻辑文件上限 400 MiB。
+- 更新 0.4.40 源码版本、发布说明、README 和本轮记录；未增加数据库迁移。
+
+### 没做到
+
+- 没有 GitHub 私有仓库 Token，因此真实 GitHub 授权、文件上传/下载及家里到公司的双机同步尚未验证。
+- 本机此前的 Rust 检查停在 `ort-sys` 的 ONNX Runtime 原生下载步骤且无进展；本轮 Rust 单测和严格 Clippy 尚未完成，需以推送后 GitHub CI 为准。
+- 本轮尚未合并、发布或安装 0.4.40；等待 GitHub CI 完整验证。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.39 版本调整前及 0.4.40 最终版本）、`pnpm typecheck`、`pnpm test`（52 个文件、385 项）、`pnpm build`、`pnpm lint` 均实际运行并退出 0。生产构建保留既有的动态导入提示。
+- `cargo fmt --check --manifest-path src-tauri/Cargo.toml` 最终退出 0；`git diff --check` 退出 0。Rust 编译、单测与 Clippy 本机未完成，原因见上文。
+- GitHub 传输没有真实远程账号验收；Rust 类型检查/测试以远程 CI 为验收门槛。README 与发布说明已标明此限制。
+
+### 相关文档
+
+- [GitHub 私有仓库云同步实现说明](github-cloud-sync-implementation-2026-10-12.md)
+- [0.4.40 发布说明](../RELEASE_NOTES.md)
+- [按周切换今天视图日期组件](../src/components/TodayDateSelector.tsx)
+- [GitHub 云同步传输实现](../src-tauri/src/cloud_sync/github.rs)
