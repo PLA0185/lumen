@@ -354,23 +354,36 @@ pub async fn subtask_progress_batch_impl(
         return Err(AppError::validation("单次查询最多 2000 个任务"));
     }
 
-    let mut b = QueryBuilder::<Sqlite>::new(
-        "SELECT s.id,s.task_id,s.title,s.is_done,s.sort_order,s.completed_at,s.created_at,s.updated_at,
-                t.subtask_completion_mode
-         FROM subtasks s JOIN tasks t ON t.id=s.task_id WHERE s.task_id IN (",
-    );
-    let mut sep = b.separated(", ");
+    let mut modes_query =
+        QueryBuilder::<Sqlite>::new("SELECT id,subtask_completion_mode FROM tasks WHERE id IN (");
+    let mut modes_sep = modes_query.separated(", ");
     for id in task_ids {
-        sep.push_bind(id.clone());
+        modes_sep.push_bind(id.clone());
     }
-    sep.push_unseparated(") ORDER BY s.task_id, s.sort_order, s.id");
+    modes_sep.push_unseparated(")");
+    let completion_modes: std::collections::HashMap<String, String> = modes_query
+        .build_query_as::<(String, String)>()
+        .fetch_all(db.pool())
+        .await?
+        .into_iter()
+        .collect();
 
-    let rows = b
-        .build_query_as::<(Subtask, String)>()
+    let mut subtasks_query =
+        QueryBuilder::<Sqlite>::new("SELECT * FROM subtasks WHERE task_id IN (");
+    let mut subtasks_sep = subtasks_query.separated(", ");
+    for id in task_ids {
+        subtasks_sep.push_bind(id.clone());
+    }
+    subtasks_sep.push_unseparated(") ORDER BY task_id, sort_order, id");
+    let rows = subtasks_query
+        .build_query_as::<Subtask>()
         .fetch_all(db.pool())
         .await?;
     let mut grouped: std::collections::BTreeMap<String, SubtaskProgress> = Default::default();
-    for (item, completion_mode) in rows {
+    for item in rows {
+        let completion_mode = completion_modes
+            .get(&item.task_id)
+            .ok_or_else(|| AppError::internal("子任务对应的任务或完成模式缺失"))?;
         let summary = grouped
             .entry(item.task_id.clone())
             .or_insert_with(|| SubtaskProgress {
