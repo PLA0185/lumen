@@ -94,6 +94,18 @@ export function todayRange(now: Date = new Date()): { start: string; end: string
   return localDayRange(now)
 }
 
+/** `yyyy-MM-dd` 本地日期对应的 UTC 区间。 */
+export function dateRange(date: string): { start: string; end: string } {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!match) return todayRange()
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const local = new Date(year, month - 1, day)
+  if (local.getFullYear() !== year || local.getMonth() !== month - 1 || local.getDate() !== day) return todayRange()
+  return localDayRange(local)
+}
+
 /** 本地"明天"的起止 */
 export function tomorrowRange(now: Date = new Date()): { start: string; end: string } {
   return localDayRange(addDays(now, 1))

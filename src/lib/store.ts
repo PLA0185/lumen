@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand'
+import { format } from 'date-fns'
 import * as ipc from './ipc'
 import { IpcError } from './ipc'
 import type {
@@ -18,7 +19,7 @@ import type {
   TodayOverview,
   ViewId,
 } from './types'
-import { todayRange } from './datetime'
+import { dateRange, todayRange } from './datetime'
 import type { SubtaskProgress } from './organize-ipc'
 export type SubtaskSummary = Omit<SubtaskProgress, 'taskId'>
 
@@ -81,6 +82,9 @@ interface AppStore {
 
   // ---------------------------- 界面态 ------------------------------
   view: ViewId
+  /** 今天视图当前查看的日期（本地 YYYY-MM-DD）；默认跟随今天。 */
+  todayDate: string
+  todayDateFollowsSystem: boolean
   search: string
   /** 状态筛选；空数组表示"不限" */
   statusFilter: TaskStatus[]
@@ -102,6 +106,7 @@ interface AppStore {
   /** 别的窗口改了数据：作废在飞请求并从第一页重新加载 */
   handleExternalChange: () => Promise<void>
   setView: (v: ViewId) => void
+  setTodayDate: (date: string) => void
   setSearch: (s: string) => void
   setStatusFilter: (s: TaskStatus[]) => void
   setSort: (by: NonNullable<TaskQuery['sortBy']>, desc?: boolean) => void
@@ -149,6 +154,7 @@ interface AppStore {
 /** 依据当前视图与筛选条件构造查询（§4.1 组合筛选 + §4.2 明确规则） */
 export function buildQuery(s: {
   view: ViewId
+  todayDate?: string
   search: string
   statusFilter: TaskStatus[]
   sortBy: NonNullable<TaskQuery['sortBy']>
@@ -166,11 +172,13 @@ export function buildQuery(s: {
     // （整改前写死 500，导致第 501 条之后的任务界面永远看不到）。
   }
 
-  const today = todayRange()
   switch (s.view) {
     case 'today':
-      q.plannedFrom = today.start
-      q.plannedTo = today.end
+      {
+        const range = s.todayDate ? dateRange(s.todayDate) : todayRange()
+        q.plannedFrom = range.start
+        q.plannedTo = range.end
+      }
       break
     // ---------------- 周期任务视图 ----------------
     // 与上面的"今天/本周"是**不同维度**：这里按任务自身的周期跨度筛选，
@@ -293,6 +301,10 @@ export const useApp = create<AppStore>((set, get) => ({
   dataPaths: null,
 
   view: 'today',
+  todayDate: (() => {
+    return format(new Date(), 'yyyy-MM-dd')
+  })(),
+  todayDateFollowsSystem: true,
   search: '',
   statusFilter: [],
   sortBy: 'manual',
@@ -458,6 +470,20 @@ export const useApp = create<AppStore>((set, get) => ({
 
   setView: (v) => {
     set({ view: v, queryGeneration: get().queryGeneration + 1 })
+    void get().reload()
+  },
+
+  setTodayDate: (date) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+    if (!match) return
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const parsed = new Date(year, month - 1, day)
+    if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) return
+    const followsSystem = date === format(new Date(), 'yyyy-MM-dd')
+    if (get().todayDate === date && get().todayDateFollowsSystem === followsSystem) return
+    set({ todayDate: date, todayDateFollowsSystem: followsSystem, queryGeneration: get().queryGeneration + 1 })
     void get().reload()
   },
 
