@@ -394,9 +394,13 @@ async fn add_knowledge_source(db: &Db, title: &str, original: &[u8], extracted: 
 }
 fn cfg() -> Config {
     Config {
+        provider: Provider::WebDav,
         server: "https://example.test/dav/".into(),
         account: "test".into(),
         folder: "Lumen".into(),
+        owner: String::new(),
+        repository: String::new(),
+        branch: "main".into(),
         connection_id: uuid::Uuid::now_v7().to_string(),
         workspace_id: uuid::Uuid::now_v7().to_string(),
         enabled: true,
@@ -417,6 +421,25 @@ fn sync_selection_is_serializable_and_old_connection_fields_survive() {
         serde_json::to_value(configured).unwrap()["defaultSync"]["direction"],
         "download"
     );
+}
+#[test]
+fn legacy_cloud_config_defaults_to_webdav_and_github_requires_private_repo_token() {
+    let mut legacy = serde_json::to_value(cfg()).unwrap();
+    for field in ["provider", "owner", "repository", "branch"] {
+        legacy.as_object_mut().unwrap().remove(field);
+    }
+    let decoded: Config = serde_json::from_value(legacy).unwrap();
+    assert_eq!(decoded.provider, Provider::WebDav);
+    assert_eq!(
+        serde_json::to_string(&Provider::GitHub).unwrap(),
+        "\"github\""
+    );
+    assert_eq!(
+        serde_json::from_str::<Provider>("\"github\"").unwrap(),
+        Provider::GitHub
+    );
+    assert!(GitHub::new("owner", "repo", "main", "Lumen", "").is_err());
+    assert!(GitHub::new("owner", "repo", "main", "Lumen", "token").is_ok());
 }
 #[tokio::test]
 async fn waiting_rate_limit_does_not_extend_retry_or_hide_original_error() {

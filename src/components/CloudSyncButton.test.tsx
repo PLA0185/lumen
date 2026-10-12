@@ -9,7 +9,7 @@ import { CloudSettings } from './CloudSettings'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
 afterEach(() => { act(() => root?.unmount()); root = undefined; vi.restoreAllMocks(); document.body.innerHTML = '' })
-const connected = { config: { server: 'https://example.test', account: 'test', folder: 'Lumen', connectionId: 'test', workspaceId: 'space', enabled: false, inheritAll: true, defaultSync: { scope: 'memos' as const, direction: 'download' as const } }, pending: 2, conflicts: [], lastScan: null, lastUpload: null, lastError: null, retryUntil: 0 }
+const connected = { config: { provider: 'webDav' as const, server: 'https://example.test', account: 'test', folder: 'Lumen', owner: '', repository: '', branch: 'main', connectionId: 'test', workspaceId: 'space', enabled: false, inheritAll: true, defaultSync: { scope: 'memos' as const, direction: 'download' as const } }, pending: 2, conflicts: [], lastScan: null, lastUpload: null, lastError: null, retryUntil: 0 }
 async function click(label: string) {
   const button = [...document.querySelectorAll('button')].find(b => b.textContent === label)
   expect(button, label).toBeTruthy()
@@ -94,6 +94,23 @@ it('首次连接成功后立即显示可复制的 Lumen 同步密钥', async () 
   await click('验证并连接云空间')
   expect((document.querySelector('[aria-label="Lumen 同步密钥"]') as HTMLInputElement).value).toBe('LUMEN1-test-key')
   expect(document.body.textContent).toContain('复制 Lumen 同步密钥')
+})
+it('GitHub 私有仓库可独立配置，连接时提交仓库和分支信息', async () => {
+  let current: cloud.CloudStatus = { ...connected, config: null }
+  vi.spyOn(cloud, 'cloudStatus').mockImplementation(async () => current)
+  vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  const githubConfig = { ...connected.config!, provider: 'github' as const, owner: 'PLA0185', repository: 'lumen-sync', branch: 'main' }
+  const githubStatus = { ...connected, config: githubConfig }
+  const connect = vi.spyOn(cloud, 'cloudConnect').mockImplementation(async () => { current = githubStatus; return githubStatus })
+  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-github-key')
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<CloudSettings />))
+  await select('同步方式', 'github')
+  await fill('GitHub 用户名或组织', 'PLA0185')
+  await fill('私有仓库名', 'lumen-sync')
+  await fill('GitHub Fine-grained Token', 'github_pat_example')
+  await click('验证并连接云空间')
+  expect(connect).toHaveBeenCalledWith(expect.objectContaining({ provider: 'github', owner: 'PLA0185', repository: 'lumen-sync', branch: 'main', password: 'github_pat_example' }))
 })
 it('验证云空间期间显示进行中状态，完成后明确显示连接成功', async () => {
   let current: cloud.CloudStatus = { ...connected, config: null }

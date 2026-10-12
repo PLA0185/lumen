@@ -1,4 +1,4 @@
-//! Encrypted WebDAV memo history. Immutable revisions form a causal DAG;
+//! Encrypted memo history over selectable remote providers. Immutable revisions form a causal DAG;
 //! each device writes only its own discovery head. Clocks never choose a winner.
 use crate::{
     commands::AppState,
@@ -23,6 +23,8 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 mod business;
+mod github;
+use github::GitHub;
 
 // ponytail: one local application/account; serialize network and restore operations.
 pub static ENGINE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -36,6 +38,18 @@ const SYNC_PROVIDER_RATE_LIMITED: &str = "网盘要求稍后重试，本机修�
 const MAX_JSON: usize = 4 * 1024 * 1024;
 const MAX_HEADS: usize = 10_000;
 const MAX_DEVICES: usize = 32;
+fn default_provider() -> Provider {
+    Provider::WebDav
+}
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum Provider {
+    #[default]
+    WebDav,
+    #[serde(rename = "github")]
+    GitHub,
+}
 fn retry_wait_text(seconds: i64) -> String {
     let seconds = seconds.max(1);
     let minutes = seconds / 60;
@@ -51,11 +65,13 @@ fn retry_wait_text(seconds: i64) -> String {
 fn waiting_retry_message(cause: Option<&str>, seconds: i64) -> String {
     let wait = retry_wait_text(seconds);
     if cause == Some(SYNC_BUDGET_EXCEEDED) {
-        format!("Lumen 本机 WebDAV 请求额度已用完，约 {wait} 后自动续传；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+        format!("Lumen 本机云同步请求额度已用完，约 {wait} 后自动续传；当前请求尚未发出，本机未上传内容仍保留。")
     } else if cause == Some(SYNC_PROVIDER_RATE_LIMITED) {
         format!("坚果云暂时限制了 WebDAV 请求，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
     } else {
-        format!("云同步正在等待重试，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+        format!(
+            "云同步正在等待重试，约 {wait} 后自动重试；当前请求尚未发出，本机未上传内容仍保留。"
+        )
     }
 }
 pub const HISTORY_TABLES: [&str; 9] = [
@@ -371,9 +387,17 @@ async fn runtime(db: &Db) -> AppResult<String> {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
+    #[serde(default = "default_provider")]
+    pub provider: Provider,
     pub server: String,
     pub account: String,
     pub folder: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default)]
+    pub branch: String,
     pub connection_id: String,
     pub workspace_id: String,
     pub enabled: bool,
@@ -817,6 +841,20 @@ impl Dav {
             ))
         }
     }
+    async fn delete(&self, db: &Db, path: &str) -> AppResult<()> {
+        let response = self.request(db, "DELETE", path, None).await?;
+        if response.status().is_success() || response.status().as_u16() == 404 {
+            Ok(())
+        } else {
+            Err(AppError::new(
+                ErrorCode::Network,
+                format!(
+                    "WebDAV 删除连接验证文件失败（HTTP {}）",
+                    response.status().as_u16()
+                ),
+            ))
+        }
+    }
     async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16> {
         let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
         let temporary = format!("{}/.lumen-upload-{}.tmp", folder, uuid::Uuid::now_v7());
@@ -963,15 +1001,191 @@ fn asset_ids(doc: &MemoDocument) -> Vec<String> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectInput {
+    #[serde(default = "default_provider")]
+    pub provider: Provider,
     pub server: String,
     pub account: String,
     pub folder: String,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default = "default_branch")]
+    pub branch: String,
     pub password: String,
     pub recovery_code: String,
     pub inherit_all: bool,
 }
 
-async fn verify_space(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<()> {
+fn default_branch() -> String {
+    "main".into()
+}
+
+/// 云端传输适配层。同步协议只依赖加密后的文件读写语义，具体服务由后端实现。
+pub(crate) trait SyncRemote: Sync {
+    async fn verify_repository(&self, _db: &Db) -> AppResult<()> {
+        Ok(())
+    }
+    async fn read(&self, db: &Db, path: &str, max: usize) -> AppResult<Option<Vec<u8>>>;
+    async fn mkdir(&self, db: &Db, path: &str) -> AppResult<()>;
+    async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16>;
+    async fn devices(&self, db: &Db) -> AppResult<Vec<String>>;
+    async fn delete(&self, db: &Db, path: &str) -> AppResult<()>;
+
+    async fn workspace(&self, db: &Db) -> AppResult<Option<Vec<u8>>> {
+        self.mkdir(db, "").await?;
+        self.read(db, "workspace.json", MAX_JSON).await
+    }
+    async fn put(&self, db: &Db, path: &str, value: Vec<u8>) -> AppResult<()> {
+        let status = self.stage(db, path, value, true).await?;
+        if matches!(status, 200 | 201 | 204) {
+            Ok(())
+        } else {
+            Err(AppError::new(
+                ErrorCode::Network,
+                format!("上传未成功（HTTP {status}）"),
+            ))
+        }
+    }
+    async fn verify_publication(&self, db: &Db, key: &[u8; 32]) -> AppResult<()> {
+        let probe = format!("connection-check-{}.json", uuid::Uuid::now_v7());
+        let value = encrypt(key, "connection-check", &"check")?;
+        let result = async {
+            let first = self.stage(db, &probe, value.clone(), false).await?;
+            if !matches!(first, 200 | 201 | 204) {
+                return Err(AppError::new(
+                    ErrorCode::Network,
+                    "无法创建云同步连接验证文件",
+                ));
+            }
+            let second = self
+                .stage(
+                    db,
+                    &probe,
+                    encrypt(key, "connection-check", &"second")?,
+                    false,
+                )
+                .await?;
+            let preserved =
+                self.read(db, &probe, MAX_JSON).await?.as_deref() == Some(value.as_slice());
+            if !matches!(second, 409 | 412) || !preserved {
+                return Err(AppError::validation(
+                    "云同步服务没有正确阻止覆盖发布，不能安全启用同步",
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        let cleanup = self.delete(db, &probe).await;
+        cleanup?;
+        result
+    }
+}
+
+enum Remote {
+    WebDav(Dav),
+    GitHub(GitHub),
+}
+impl Remote {
+    fn from_input(input: &ConnectInput) -> AppResult<Self> {
+        match input.provider {
+            Provider::WebDav => Ok(Self::WebDav(Dav::new(
+                &input.server,
+                &input.folder,
+                &input.account,
+                &input.password,
+            )?)),
+            Provider::GitHub => Ok(Self::GitHub(GitHub::new(
+                &input.owner,
+                &input.repository,
+                &input.branch,
+                &input.folder,
+                &input.password,
+            )?)),
+        }
+    }
+    fn from_config(config: &Config, password: &str) -> AppResult<Self> {
+        match config.provider {
+            Provider::WebDav => Ok(Self::WebDav(Dav::new(
+                &config.server,
+                &config.folder,
+                &config.account,
+                password,
+            )?)),
+            Provider::GitHub => Ok(Self::GitHub(GitHub::new(
+                &config.owner,
+                &config.repository,
+                &config.branch,
+                &config.folder,
+                password,
+            )?)),
+        }
+    }
+}
+impl SyncRemote for Remote {
+    async fn verify_repository(&self, db: &Db) -> AppResult<()> {
+        match self {
+            Self::WebDav(_) => Ok(()),
+            Self::GitHub(remote) => remote.verify_repository(db).await,
+        }
+    }
+    async fn read(&self, db: &Db, path: &str, max: usize) -> AppResult<Option<Vec<u8>>> {
+        match self {
+            Self::WebDav(remote) => remote.read(db, path, max).await,
+            Self::GitHub(remote) => remote.read(db, path, max).await,
+        }
+    }
+    async fn mkdir(&self, db: &Db, path: &str) -> AppResult<()> {
+        match self {
+            Self::WebDav(remote) => remote.mkdir(db, path).await,
+            Self::GitHub(remote) => remote.mkdir(db, path).await,
+        }
+    }
+    async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16> {
+        match self {
+            Self::WebDav(remote) => remote.stage(db, path, value, overwrite).await,
+            Self::GitHub(remote) => remote.stage(db, path, value, overwrite).await,
+        }
+    }
+    async fn devices(&self, db: &Db) -> AppResult<Vec<String>> {
+        match self {
+            Self::WebDav(remote) => remote.devices(db).await,
+            Self::GitHub(remote) => remote.devices(db).await,
+        }
+    }
+    async fn delete(&self, db: &Db, path: &str) -> AppResult<()> {
+        match self {
+            Self::WebDav(remote) => remote.delete(db, path).await,
+            Self::GitHub(remote) => remote.delete(db, path).await,
+        }
+    }
+}
+
+impl SyncRemote for Dav {
+    async fn read(&self, db: &Db, path: &str, max: usize) -> AppResult<Option<Vec<u8>>> {
+        Dav::read(self, db, path, max).await
+    }
+    async fn mkdir(&self, db: &Db, path: &str) -> AppResult<()> {
+        Dav::mkdir(self, db, path).await
+    }
+    async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16> {
+        Dav::stage(self, db, path, value, overwrite).await
+    }
+    async fn devices(&self, db: &Db) -> AppResult<Vec<String>> {
+        Dav::devices(self, db).await
+    }
+    async fn delete(&self, db: &Db, path: &str) -> AppResult<()> {
+        Dav::delete(self, db, path).await
+    }
+    async fn workspace(&self, db: &Db) -> AppResult<Option<Vec<u8>>> {
+        Dav::workspace(self, db).await
+    }
+    async fn verify_publication(&self, db: &Db, key: &[u8; 32]) -> AppResult<()> {
+        Dav::verify_publication(self, db, key).await
+    }
+}
+
+async fn verify_space(db: &Db, dav: &impl SyncRemote, c: &Config, key: &[u8; 32]) -> AppResult<()> {
     let bytes = dav
         .read(db, "workspace.json", MAX_JSON)
         .await?
@@ -1000,12 +1214,8 @@ pub async fn cloud_sync_connect(
 ) -> AppResult<Status> {
     let _guard = ENGINE.lock().await;
     let db = &state.db;
-    let dav = Dav::new(
-        &input.server,
-        &input.folder,
-        &input.account,
-        &input.password,
-    )?;
+    let dav = Remote::from_input(&input)?;
+    dav.verify_repository(db).await?;
     runtime(db).await?;
     let existing = dav.workspace(db).await?;
     let create = existing.is_none();
@@ -1013,8 +1223,20 @@ pub async fn cloud_sync_connect(
     let mut key = [0; 32];
     if !input.recovery_code.trim().is_empty() {
         key = key_bytes(input.recovery_code.trim())?;
-    } else if let Some(previous) = previous.as_ref().filter(|p| {
-        p.server == input.server && p.folder == input.folder && p.account == input.account.trim()
+    } else if let Some(previous) = previous.as_ref().filter(|p| match input.provider {
+        Provider::WebDav => {
+            p.provider == input.provider
+                && p.server == input.server
+                && p.folder == input.folder
+                && p.account == input.account.trim()
+        }
+        Provider::GitHub => {
+            p.provider == input.provider
+                && p.owner == input.owner.trim()
+                && p.repository == input.repository.trim()
+                && p.branch == input.branch.trim()
+                && p.folder == input.folder
+        }
     }) {
         key = key_bytes(&credentials(&previous.connection_id, None)?.key)?;
     } else if !create {
@@ -1054,9 +1276,13 @@ pub async fn cloud_sync_connect(
         }
     };
     let mut c = Config {
+        provider: input.provider,
         server: input.server,
         account: input.account.trim().into(),
         folder: input.folder,
+        owner: input.owner.trim().into(),
+        repository: input.repository.trim().into(),
+        branch: input.branch.trim().into(),
         connection_id: uuid::Uuid::now_v7().to_string(),
         workspace_id: workspace.id.clone(),
         enabled: false,
@@ -1139,7 +1365,7 @@ pub async fn cloud_sync_set_enabled(
         .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接同步空间"))?;
     if enabled {
         let cred = credentials(&c.connection_id, None)?;
-        let dav = Dav::new(&c.server, &c.folder, &c.account, &cred.password)?;
+        let dav = Remote::from_config(&c, &cred.password)?;
         verify_space(&state.db, &dav, &c, &key_bytes(&cred.key)?).await?;
     }
     c.enabled = enabled;
@@ -1148,7 +1374,7 @@ pub async fn cloud_sync_set_enabled(
 }
 
 async fn upload_immutable<T: Serialize + serde::de::DeserializeOwned>(
-    dav: &Dav,
+    dav: &impl SyncRemote,
     db: &Db,
     c: &Config,
     key: &[u8; 32],
@@ -1187,7 +1413,13 @@ async fn upload_immutable<T: Serialize + serde::de::DeserializeOwned>(
         format!("云端资源上传失败（HTTP {status}）"),
     ))
 }
-async fn upload(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], device: &str) -> AppResult<()> {
+async fn upload(
+    db: &Db,
+    dav: &impl SyncRemote,
+    c: &Config,
+    key: &[u8; 32],
+    device: &str,
+) -> AppResult<()> {
     let mut tx = db.pool().begin().await?;
     seed(&mut tx).await?;
     tx.commit().await?;
@@ -1234,7 +1466,7 @@ async fn upload(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], device: &str) ->
 }
 async fn publish_head(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     device: &str,
@@ -1297,7 +1529,13 @@ async fn publish_head(
     Ok(())
 }
 
-async fn import_asset(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], id: &str) -> AppResult<()> {
+async fn import_asset(
+    db: &Db,
+    dav: &impl SyncRemote,
+    c: &Config,
+    key: &[u8; 32],
+    id: &str,
+) -> AppResult<()> {
     let existing: Option<String> = sqlx::query_scalar("SELECT id FROM content_assets WHERE id=?")
         .bind(id)
         .fetch_optional(db.pool())
@@ -1330,7 +1568,13 @@ async fn import_asset(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], id: &str) 
     }
     Ok(())
 }
-async fn fetch_branch(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32], root: &str) -> AppResult<()> {
+async fn fetch_branch(
+    db: &Db,
+    dav: &impl SyncRemote,
+    c: &Config,
+    key: &[u8; 32],
+    root: &str,
+) -> AppResult<()> {
     let mut stack = vec![(root.to_owned(), false)];
     let mut visiting = HashSet::new();
     let mut events = std::collections::HashMap::<String, Revision>::new();
@@ -1422,7 +1666,7 @@ async fn apply_heads(db: &Db) -> AppResult<bool> {
     tx.commit().await?;
     Ok(changed)
 }
-async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<bool> {
+async fn download(db: &Db, dav: &impl SyncRemote, c: &Config, key: &[u8; 32]) -> AppResult<bool> {
     // Legacy inheritance applied only to downloading; preserve it until defaults are saved.
     let scope = c.default_sync.map(|o| o.scope).unwrap_or(if c.inherit_all {
         SyncScope::All
@@ -1496,7 +1740,7 @@ async fn download(db: &Db, dav: &Dav, c: &Config, key: &[u8; 32]) -> AppResult<b
 async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
     let c = config(db)
         .await?
-        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接 WebDAV 同步空间"))?;
+        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接云同步空间"))?;
     sync_with_config(db, scan, &c).await
 }
 async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
@@ -1505,7 +1749,7 @@ async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
     }
     let cred = credentials(&c.connection_id, None)?;
     let key = key_bytes(&cred.key)?;
-    let dav = Dav::new(&c.server, &c.folder, &c.account, &cred.password)?;
+    let dav = Remote::from_config(c, &cred.password)?;
     if scan {
         verify_space(db, &dav, c, &key).await?;
     }
@@ -1514,7 +1758,7 @@ async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
 }
 async fn sync_exchange(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     device: &str,
@@ -1565,7 +1809,7 @@ async fn sync_exchange(
 }
 async fn publish_if_dirty(
     db: &Db,
-    dav: &Dav,
+    dav: &impl SyncRemote,
     c: &Config,
     key: &[u8; 32],
     device: &str,
@@ -1617,7 +1861,7 @@ pub async fn cloud_sync_now(
     let _guard = ENGINE.lock().await;
     let mut c = config(&state.db)
         .await?
-        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接 WebDAV 同步空间"))?;
+        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接云同步空间"))?;
     c.enabled = true; // Manual action works while automatic sync is paused; do not persist this.
     if let Some(options) = options {
         c.default_sync = Some(options);
