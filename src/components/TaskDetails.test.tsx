@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as ipc from '../lib/ipc'
 import * as rec from '../lib/recurrence-ipc'
 import * as org from '../lib/organize-ipc'
@@ -19,6 +19,9 @@ afterEach(() => {
   vi.restoreAllMocks()
   window.getSelection()?.removeAllRanges()
   document.body.innerHTML = ''
+})
+beforeEach(() => {
+  vi.spyOn(org, 'subtaskCompletionModeGet').mockResolvedValue('free')
 })
 async function mount(node: React.ReactNode) {
   const host = document.createElement('div')
@@ -102,6 +105,30 @@ it('复制上一次子任务也先选择范围；完成勾选只更新本次状�
   await act(async () => document.querySelector<HTMLButtonElement>('[role="checkbox"]')!.click())
   expect(update).toHaveBeenCalledExactlyOnceWith('child', { isDone: true })
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+it('子任务可调整次序，按顺序模式会禁用尚未轮到的步骤', async () => {
+  const second = { ...child, id: 'child-2', title: 'UK', sortOrder: 2 }
+  vi.spyOn(org, 'subtaskList').mockResolvedValue([child, second])
+  const change = vi.spyOn(org, 'subtaskChange').mockResolvedValue([second, child])
+  vi.spyOn(org, 'subtaskCompletionModeGet').mockResolvedValue('sequential')
+  await mount(<SubtaskList taskId="parent" />)
+
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="下移子任务「CA」"]')!.click())
+  expect(change).toHaveBeenCalledExactlyOnceWith('parent', { kind: 'reorder', orderedIds: ['child-2', 'child'] }, undefined)
+  expect(document.querySelector<HTMLButtonElement>('[aria-label="完成子任务「CA」"]')!.disabled).toBe(true)
+})
+it('重复任务切换按顺序完成前仍要求选择范围', async () => {
+  const change = vi.spyOn(org, 'subtaskChange').mockResolvedValue([child])
+  await recurringList([child])
+  const selector = document.querySelector<HTMLSelectElement>('[aria-label="子任务完成方式"]')!
+  await act(async () => {
+    selector.value = 'sequential'
+    selector.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(change).not.toHaveBeenCalled()
+  await act(async () => document.querySelector<HTMLInputElement>('input[value="whole_series"]')!.click())
+  await click('确认修改')
+  expect(change).toHaveBeenCalledExactlyOnceWith('parent', { kind: 'set_completion_mode', mode: 'sequential' }, 'whole_series')
 })
 it('完成简览显示实际完成时间到秒，缺失的历史时间明确显示未记录', async () => {
   const completedAt = '2026-09-29T06:23:45.000Z'

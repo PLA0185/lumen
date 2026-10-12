@@ -423,7 +423,7 @@ export function TaskCard({
       {!expanded &&
         !inTrash &&
         progress?.items &&
-        progress.items.length > 0 && <SubtaskPreview items={progress.items} />}
+        progress.items.length > 0 && <SubtaskPreview items={progress.items} completionMode={progress.completionMode} />}
 
       {expanded && hasDetail && (
         <div className="task__detail">

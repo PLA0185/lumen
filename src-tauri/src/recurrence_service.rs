@@ -297,6 +297,7 @@ struct SeriesTemplate {
     project_id: Option<String>,
     category_id: Option<String>,
     estimated_minutes: Option<i64>,
+    subtask_completion_mode: String,
 }
 
 /// 物化：确保范围内所有应当发生的实例都已存在于 tasks 表。
@@ -431,7 +432,7 @@ async fn materialize_range(
 
     let template = sqlx::query_as::<_, SeriesTemplate>(
         "SELECT title, description, note_md, link_url, priority, project_id,
-                category_id, estimated_minutes
+                category_id, estimated_minutes, subtask_completion_mode
          FROM task_series_template WHERE series_id = ?1",
     )
     .bind(series_id)
@@ -469,7 +470,8 @@ async fn materialize_range(
                 estimated_minutes, actual_minutes,
                 completed_at, created_at, updated_at,
                 sort_order, is_pinned, is_favorite,
-                series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception, period_type
+                series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception, period_type,
+                subtask_completion_mode
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 'todo', ?6, ?7, ?8,
@@ -477,7 +479,7 @@ async fn materialize_range(
                 ?11, 0,
                 NULL, ?12, ?12,
                 0, 0, 0,
-                ?13, ?14, ?15, 'generated', 0, ?16
+                ?13, ?14, ?15, 'generated', 0, ?16, ?17
              ) ON CONFLICT (series_id, occurrence_key)
                WHERE series_id IS NOT NULL AND occurrence_key IS NOT NULL DO NOTHING",
         )
@@ -497,6 +499,7 @@ async fn materialize_range(
         .bind(&key)
         .bind(occ.index)
         .bind(period)
+        .bind(&template.subtask_completion_mode)
         .execute(&mut *tx)
         .await?;
         if inserted.rows_affected() == 0 {

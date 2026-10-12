@@ -82,6 +82,7 @@ export const MUTATION_DOMAINS = {
   subtask_create: ['tasks', 'subtasks', 'stats'],
   subtask_change: ['tasks', 'subtasks', 'recurrence', 'stats'],
   subtask_update: ['tasks', 'subtasks', 'stats'],
+  subtask_completion_mode_set: ['tasks', 'subtasks', 'recurrence', 'stats'],
   subtask_delete: ['tasks', 'subtasks', 'stats'],
   dependency_add: ['dependencies', 'tasks'],
   dependency_remove: ['dependencies', 'tasks'],

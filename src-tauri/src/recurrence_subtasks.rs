@@ -50,6 +50,22 @@ pub enum SubtaskScope {
     WholeSeries,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubtaskCompletionMode {
+    Free,
+    Sequential,
+}
+
+impl SubtaskCompletionMode {
+    fn as_db(self) -> &'static str {
+        match self {
+            Self::Free => "free",
+            Self::Sequential => "sequential",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SubtaskAction {
@@ -57,6 +73,8 @@ pub enum SubtaskAction {
     Rename { id: String, title: String },
     Delete { id: String },
     CopyPrevious,
+    Reorder { ordered_ids: Vec<String> },
+    SetCompletionMode { mode: SubtaskCompletionMode },
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +123,25 @@ pub async fn subtask_change(
     input: SubtaskChange,
 ) -> AppResult<Vec<Subtask>> {
     change_impl(&state.db, input).await
+}
+
+#[tauri::command]
+pub async fn subtask_completion_mode_get(
+    state: State<'_, AppState>,
+    task_id: String,
+) -> AppResult<SubtaskCompletionMode> {
+    let mode: String = sqlx::query_scalar(
+        "SELECT subtask_completion_mode FROM tasks WHERE id=?1 AND deleted_at IS NULL",
+    )
+    .bind(&task_id)
+    .fetch_optional(state.db.pool())
+    .await?
+    .ok_or_else(|| AppError::not_found("任务", &task_id))?;
+    match mode.as_str() {
+        "free" => Ok(SubtaskCompletionMode::Free),
+        "sequential" => Ok(SubtaskCompletionMode::Sequential),
+        _ => Err(AppError::internal("子任务完成模式数据无效")),
+    }
 }
 
 pub async fn change_impl(db: &Db, input: SubtaskChange) -> AppResult<Vec<Subtask>> {
@@ -299,6 +336,53 @@ pub async fn change_impl(db: &Db, input: SubtaskChange) -> AppResult<Vec<Subtask
             }
             templates.extend(copied);
         }
+        SubtaskAction::Reorder { ordered_ids } => {
+            reorder_subtasks(
+                &mut tx,
+                ReorderSubtasksContext {
+                    task_id: &input.task_id,
+                    series_id: series.as_deref(),
+                    whole,
+                    targets: &targets,
+                    templates: &mut templates,
+                    ordered_ids: &ordered_ids,
+                    now: &now,
+                },
+            )
+            .await?;
+        }
+        SubtaskAction::SetCompletionMode { mode } => {
+            if mode == SubtaskCompletionMode::Sequential {
+                validate_sequential_state(&mut tx, &targets).await?;
+            }
+            if whole {
+                sqlx::query(
+                    "UPDATE task_series_template SET subtask_completion_mode=?1 WHERE series_id=?2",
+                )
+                .bind(mode.as_db())
+                .bind(&series)
+                .execute(&mut *tx)
+                .await?;
+                if !targets.is_empty() {
+                    let mut update = sqlx::QueryBuilder::<Sqlite>::new(
+                        "UPDATE tasks SET subtask_completion_mode = ",
+                    );
+                    update.push_bind(mode.as_db());
+                    update.push(", updated_at = ").push_bind(&now);
+                    update.push(" WHERE id IN (");
+                    let mut sep = update.separated(", ");
+                    for target in &targets {
+                        sep.push_bind(target);
+                    }
+                    sep.push_unseparated(")");
+                    update.build().execute(&mut *tx).await?;
+                }
+            } else {
+                sqlx::query("UPDATE tasks SET subtask_completion_mode=?1,updated_at=?2,
+                    is_user_modified=CASE WHEN series_id IS NULL THEN is_user_modified ELSE 1 END WHERE id=?3")
+                    .bind(mode.as_db()).bind(&now).bind(&input.task_id).execute(&mut *tx).await?;
+            }
+        }
     }
     if whole {
         let raw =
@@ -322,6 +406,185 @@ pub async fn change_impl(db: &Db, input: SubtaskChange) -> AppResult<Vec<Subtask
         .await?;
     tx.commit().await?;
     Ok(items)
+}
+
+async fn validate_sequential_state(
+    tx: &mut Transaction<'_, Sqlite>,
+    targets: &[String],
+) -> AppResult<()> {
+    for task_id in targets {
+        let has_out_of_order_completion: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                SELECT 1 FROM subtasks later
+                JOIN subtasks earlier ON earlier.task_id=later.task_id
+                  AND (earlier.sort_order < later.sort_order
+                    OR (earlier.sort_order=later.sort_order AND earlier.id < later.id))
+                WHERE later.task_id=?1 AND later.is_done=1 AND earlier.is_done=0
+            )",
+        )
+        .bind(task_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        if has_out_of_order_completion != 0 {
+            return Err(AppError::validation(
+                "当前完成状态不符合顺序；请先取消后面的已完成子任务，再启用按顺序完成",
+            ));
+        }
+    }
+    Ok(())
+}
+
+struct ReorderSubtasksContext<'a> {
+    task_id: &'a str,
+    series_id: Option<&'a str>,
+    whole: bool,
+    targets: &'a [String],
+    templates: &'a mut Vec<SubtaskTemplate>,
+    ordered_ids: &'a [String],
+    now: &'a str,
+}
+
+async fn reorder_subtasks(
+    tx: &mut Transaction<'_, Sqlite>,
+    context: ReorderSubtasksContext<'_>,
+) -> AppResult<()> {
+    let ReorderSubtasksContext {
+        task_id,
+        series_id,
+        whole,
+        targets,
+        templates,
+        ordered_ids,
+        now,
+    } = context;
+    let current: Vec<(String, String, f64, Option<String>)> = sqlx::query_as(
+        "SELECT id,title,sort_order,series_template_id FROM subtasks WHERE task_id=?1 ORDER BY sort_order,id",
+    )
+    .bind(task_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let current_ids: std::collections::HashSet<&str> =
+        current.iter().map(|row| row.0.as_str()).collect();
+    let requested_ids: std::collections::HashSet<&str> =
+        ordered_ids.iter().map(String::as_str).collect();
+    if ordered_ids.len() != current.len()
+        || requested_ids.len() != ordered_ids.len()
+        || requested_ids != current_ids
+    {
+        return Err(AppError::validation("子任务顺序已变化，请刷新后重试"));
+    }
+
+    let mode: String = if whole {
+        sqlx::query_scalar(
+            "SELECT subtask_completion_mode FROM task_series_template WHERE series_id=?1",
+        )
+        .bind(series_id)
+        .fetch_one(&mut **tx)
+        .await?
+    } else {
+        sqlx::query_scalar("SELECT subtask_completion_mode FROM tasks WHERE id=?1")
+            .bind(task_id)
+            .fetch_one(&mut **tx)
+            .await?
+    };
+    if mode == "sequential" {
+        for target in targets {
+            let completed: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM subtasks WHERE task_id=?1 AND is_done=1")
+                    .bind(target)
+                    .fetch_one(&mut **tx)
+                    .await?;
+            if completed > 0 {
+                return Err(AppError::validation(
+                    "按顺序完成的子任务已有完成记录，请先取消完成状态再调整顺序",
+                ));
+            }
+        }
+    }
+
+    if !whole {
+        for (index, id) in ordered_ids.iter().enumerate() {
+            sqlx::query(
+                "UPDATE subtasks SET sort_order=?1,updated_at=?2 WHERE id=?3 AND task_id=?4",
+            )
+            .bind(index as f64 + 1.0)
+            .bind(now)
+            .bind(id)
+            .bind(task_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+        return Ok(());
+    }
+
+    let mut reordered = Vec::with_capacity(templates.len().max(current.len()));
+    let mut source_rows: std::collections::HashMap<String, String> = Default::default();
+    let rows_by_id: std::collections::HashMap<&str, &(String, String, f64, Option<String>)> =
+        current.iter().map(|row| (row.0.as_str(), row)).collect();
+    for id in ordered_ids {
+        let row = rows_by_id[id.as_str()];
+        let template_id = if let Some(template_id) = &row.3 {
+            if !templates.iter().any(|item| &item.id == template_id) {
+                return Err(AppError::conflict(
+                    "该子任务已脱离重复模板，无法安全地调整整个系列；请选择仅这一次",
+                ));
+            }
+            template_id.clone()
+        } else {
+            uuid::Uuid::now_v7().to_string()
+        };
+        let item = if let Some(template) = templates.iter().find(|item| item.id == template_id) {
+            template.clone()
+        } else {
+            SubtaskTemplate {
+                id: template_id.clone(),
+                title: row.1.clone(),
+                sort_order: 0.0,
+            }
+        };
+        source_rows.insert(template_id, row.0.clone());
+        reordered.push(item);
+    }
+    for item in templates.iter() {
+        if !source_rows.contains_key(&item.id) {
+            reordered.push(item.clone());
+        }
+    }
+    for (index, item) in reordered.iter_mut().enumerate() {
+        item.sort_order = index as f64 + 1.0;
+    }
+
+    for target in targets {
+        for item in &reordered {
+            let existing: Option<String> = sqlx::query_scalar(
+                "SELECT id FROM subtasks WHERE task_id=?1 AND series_template_id=?2",
+            )
+            .bind(target)
+            .bind(&item.id)
+            .fetch_optional(&mut **tx)
+            .await?;
+            if let Some(id) = existing {
+                sqlx::query("UPDATE subtasks SET sort_order=?1,updated_at=?2 WHERE id=?3")
+                    .bind(item.sort_order)
+                    .bind(now)
+                    .bind(id)
+                    .execute(&mut **tx)
+                    .await?;
+            } else if target == task_id {
+                if let Some(source_id) = source_rows.get(&item.id) {
+                    sqlx::query("UPDATE subtasks SET series_template_id=?1,sort_order=?2,updated_at=?3 WHERE id=?4 AND task_id=?5")
+                        .bind(&item.id).bind(item.sort_order).bind(now).bind(source_id).bind(target)
+                        .execute(&mut **tx).await?;
+                } else {
+                    insert_templates(tx, target, std::slice::from_ref(item), now).await?;
+                }
+            } else {
+                insert_templates(tx, target, std::slice::from_ref(item), now).await?;
+            }
+        }
+    }
+    *templates = reordered;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -536,6 +799,119 @@ mod tests {
         .await
         .unwrap();
         assert!(reset.completed_at.is_none());
+        close(state, dir).await;
+    }
+
+    #[tokio::test]
+    async fn sequence_mode_and_whole_series_reordering_apply_to_open_occurrences() {
+        let (state, series, ids, dir) = fixture().await;
+        let first = change(
+            &state,
+            &ids[0],
+            SubtaskScope::WholeSeries,
+            SubtaskAction::Create {
+                title: "第一步".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let second = change(
+            &state,
+            &ids[0],
+            SubtaskScope::WholeSeries,
+            SubtaskAction::Create {
+                title: "第二步".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let reordered = change(
+            &state,
+            &ids[0],
+            SubtaskScope::WholeSeries,
+            SubtaskAction::Reorder {
+                ordered_ids: vec![second[1].id.clone(), first[0].id.clone()],
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            reordered
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["第二步", "第一步"]
+        );
+        assert_eq!(
+            items(&state, &ids[1])
+                .await
+                .iter()
+                .map(|item| item.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["第二步", "第一步"]
+        );
+
+        change(
+            &state,
+            &ids[0],
+            SubtaskScope::WholeSeries,
+            SubtaskAction::SetCompletionMode {
+                mode: SubtaskCompletionMode::Sequential,
+            },
+        )
+        .await
+        .unwrap();
+        let modes: Vec<String> = sqlx::query_scalar(
+            "SELECT subtask_completion_mode FROM tasks WHERE series_id=?1 ORDER BY occurrence_key",
+        )
+        .bind(&series)
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap();
+        assert!(modes.iter().all(|mode| mode == "sequential"));
+
+        let current = items(&state, &ids[0]).await;
+        assert!(update_subtask_impl(
+            &state.db,
+            &current[1].id,
+            SubtaskPatch {
+                is_done: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .is_err());
+        update_subtask_impl(
+            &state.db,
+            &current[0].id,
+            SubtaskPatch {
+                is_done: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        update_subtask_impl(
+            &state.db,
+            &current[1].id,
+            SubtaskPatch {
+                is_done: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert!(update_subtask_impl(
+            &state.db,
+            &current[0].id,
+            SubtaskPatch {
+                is_done: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .is_err());
         close(state, dir).await;
     }
 

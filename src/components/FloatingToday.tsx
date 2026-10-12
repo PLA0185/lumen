@@ -75,6 +75,7 @@ export function FloatingToday() {
   const gate = useMemo(createRequestGate, [])
   const [tasks, setTasks] = useState<Task[]>([])
   const [subtasks, setSubtasks] = useState<Record<string, Subtask[]>>({})
+  const [subtaskModes, setSubtaskModes] = useState<Record<string, 'free' | 'sequential'>>({})
   const [total, setTotal] = useState(0)
   const [doneTotal, setDoneTotal] = useState(0)
   const [state, setState] = useState<FloatingState | null>(null)
@@ -135,6 +136,7 @@ export function FloatingToday() {
           setSubtasks(
             Object.fromEntries(summaries.map((p) => [p.taskId, p.items ?? []])),
           )
+          setSubtaskModes(Object.fromEntries(summaries.map((p) => [p.taskId, p.completionMode])))
           setTotal(allCount.total)
           setDoneTotal(doneCount.total)
           setState(st)
@@ -724,6 +726,7 @@ export function FloatingToday() {
                       <SubtaskPreview
                         items={subtasks[t.id] ?? []}
                         disabled={clickThrough}
+                        completionMode={subtaskModes[t.id] ?? 'free'}
                       />
                     )}
                   </li>
