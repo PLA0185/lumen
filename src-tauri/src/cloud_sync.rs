@@ -831,17 +831,6 @@ impl Dav {
             ))
         }
     }
-    async fn put(&self, db: &Db, path: &str, value: Vec<u8>) -> AppResult<()> {
-        let status = self.stage(db, path, value, true).await?;
-        if matches!(status, 201 | 204) {
-            Ok(())
-        } else {
-            Err(AppError::new(
-                ErrorCode::Network,
-                format!("上传未成功（HTTP {status}）"),
-            ))
-        }
-    }
     async fn delete(&self, db: &Db, path: &str) -> AppResult<()> {
         let response = self.request(db, "DELETE", path, None).await?;
         if response.status().is_success() || response.status().as_u16() == 404 {

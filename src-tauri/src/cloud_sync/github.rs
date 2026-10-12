@@ -580,8 +580,8 @@ impl SyncRemote for GitHub {
     }
 
     async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16> {
-        if !overwrite {
-            if self
+        if !overwrite
+            && (self
                 .metadata_sha(db, &self.physical_path(path)?)
                 .await?
                 .is_some()
@@ -591,10 +591,9 @@ impl SyncRemote for GitHub {
                         &self.physical_path(&format!("{path}.lumen-chunks.json"))?,
                     )
                     .await?
-                    .is_some()
-            {
-                return Ok(409);
-            }
+                    .is_some())
+        {
+            return Ok(409);
         }
         if value.len() <= CHUNK_BYTES {
             let status = self.write_small(db, path, &value, overwrite).await?;

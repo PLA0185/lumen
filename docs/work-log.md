@@ -3910,14 +3910,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 没有 GitHub 私有仓库 Token，因此真实 GitHub 授权、文件上传/下载及家里到公司的双机同步尚未验证。
 - 本机此前的 Rust 检查停在 `ort-sys` 的 ONNX Runtime 原生下载步骤且无进展；本轮 Rust 单测和严格 Clippy 尚未完成，需以推送后 GitHub CI 为准。
-- 本轮尚未合并、发布或安装 0.4.40；GitHub CI 首轮发现旧 WebDAV 请求额度提示被通用文案替换，已恢复并按服务区分，修复后的 CI 正在重跑。
+- 本轮尚未合并、发布或安装 0.4.40；GitHub CI 首轮发现旧 WebDAV 请求额度提示被通用文案替换，第二轮发现云端适配后一个旧方法成为未使用代码及一个 Clippy 条件嵌套问题，均已修复，最终 CI 正在重跑。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.39 版本调整前及 0.4.40 最终版本）、`pnpm typecheck`、`pnpm test`（52 个文件、385 项）、`pnpm build`、`pnpm lint` 均实际运行并退出 0。生产构建保留既有的动态导入提示。
 - `cargo fmt --check --manifest-path src-tauri/Cargo.toml` 最终退出 0；`git diff --check` 退出 0。Rust 编译、单测与 Clippy 本机未完成，原因见上文。
-- 首轮 GitHub CI 的前端工作流、Rust 格式及 Rust 编译检查通过；Rust 单测 580 项通过、1 项因请求额度提示文字变化失败、4 项忽略。已恢复 WebDAV 提示并为 GitHub 单独记录限流原因，等待修复后的 CI 复验。
-- GitHub 传输没有真实远程账号验收；Rust 测试及严格 Clippy以修复后的远程 CI 为验收门槛。README 与发布说明已标明此限制。
+- 首轮 GitHub CI 的前端工作流、Rust 格式及 Rust 编译检查通过；Rust 单测 580 项通过、1 项因请求额度提示文字变化失败、4 项忽略。第二轮前端、Rust 格式、编译与单测全部通过，严格 Clippy 报旧 WebDAV 写入方法未使用和 GitHub 条件可折叠；两项已修复，等待最后一轮 CI。
+- GitHub 传输没有真实远程账号验收；Rust 严格 Clippy以最终远程 CI 为验收门槛。README 与发布说明已标明此限制。
 
 ### 相关文档
 
