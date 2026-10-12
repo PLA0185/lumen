@@ -42,6 +42,22 @@ const MAX_DEVICES: usize = 32;
 fn default_provider() -> Provider {
     Provider::WebDav
 }
+fn default_connect_provider() -> Provider {
+    Provider::GitHub
+}
+const LEGACY_PROVIDER_DISABLED: &str =
+    "旧版 WebDAV 云同步已停用，请先配置 GitHub 私有仓库；本机数据仍保留。";
+
+fn require_github(provider: Provider) -> AppResult<()> {
+    if provider == Provider::GitHub {
+        Ok(())
+    } else {
+        Err(AppError::new(
+            ErrorCode::NotConfigured,
+            LEGACY_PROVIDER_DISABLED,
+        ))
+    }
+}
 
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -991,7 +1007,7 @@ fn asset_ids(doc: &MemoDocument) -> Vec<String> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ConnectInput {
-    #[serde(default = "default_provider")]
+    #[serde(default = "default_connect_provider")]
     pub provider: Provider,
     pub server: String,
     pub account: String,
@@ -1203,6 +1219,7 @@ pub async fn cloud_sync_connect(
     input: ConnectInput,
 ) -> AppResult<Status> {
     let _guard = ENGINE.lock().await;
+    require_github(input.provider)?;
     let db = &state.db;
     let dav = Remote::from_input(&input)?;
     dav.verify_repository(db).await?;
@@ -1354,6 +1371,7 @@ pub async fn cloud_sync_set_enabled(
         .await?
         .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接同步空间"))?;
     if enabled {
+        require_github(c.provider)?;
         let cred = credentials(&c.connection_id, None)?;
         let dav = Remote::from_config(&c, &cred.password)?;
         verify_space(&state.db, &dav, &c, &key_bytes(&cred.key)?).await?;
@@ -1734,6 +1752,7 @@ async fn sync(db: &Db, scan: bool) -> AppResult<bool> {
     sync_with_config(db, scan, &c).await
 }
 async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
+    require_github(c.provider)?;
     if !c.enabled {
         return Ok(false);
     }
@@ -1873,11 +1892,25 @@ pub async fn cloud_sync_now(
 pub fn spawn(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last_scan = std::time::Instant::now() - Duration::from_secs(3600);
+        let db = &app.state::<AppState>().db;
+        {
+            let _guard = ENGINE.lock().await;
+            if let Err(error) = pause_legacy_sync(db).await {
+                log::error!("停用旧版云同步配置失败，后台仍会阻止旧传输：{error}");
+            }
+        }
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let _guard = ENGINE.lock().await;
             let db = &app.state::<AppState>().db;
-            if !matches!(config(db).await, Ok(Some(Config { enabled: true, .. }))) {
+            if !matches!(
+                config(db).await,
+                Ok(Some(Config {
+                    provider: Provider::GitHub,
+                    enabled: true,
+                    ..
+                }))
+            ) {
                 continue;
             }
             let retry_until: i64 =
@@ -1914,6 +1947,17 @@ pub fn spawn(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+async fn pause_legacy_sync(db: &Db) -> AppResult<()> {
+    let Some(mut config) = config(db).await? else {
+        return Ok(());
+    };
+    if config.provider != Provider::GitHub && config.enabled {
+        config.enabled = false;
+        store_config(db, &config).await?;
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]

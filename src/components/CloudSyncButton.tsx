@@ -47,8 +47,9 @@ export function CloudSyncButton() {
       <h2>同步</h2>
       <p className="setgroup__hint">本次选择不会修改默认设置。默认内容与方向可在「设置 → 云同步」保存。</p>
       {loading && <p role="status">正在读取同步配置…</p>}
-      {!loading && status && !status.config && <p className="alert alert--warn">请先在「设置 → 云同步」连接云空间。</p>}
-      {status?.config && <>
+      {!loading && status && !status.config && <p className="alert alert--warn">请先在「设置 → 云同步」连接 GitHub 私有仓库。</p>}
+      {!loading && status?.config?.provider === 'webDav' && <p className="alert alert--warn">旧版云同步已暂停。请在「设置 → 云同步」配置 GitHub 私有仓库；旧云端内容不会自动迁移，本机数据仍保留。</p>}
+      {status?.config?.provider === 'github' && <>
         <fieldset disabled={busy}><SyncOptionsFields value={options} onChange={setOptions} prefix="本次" /></fieldset>
         {!status.config.enabled && <p className="setgroup__hint">自动同步已暂停；本次手动同步仍可执行，不会恢复自动同步。</p>}
         <p className="setgroup__hint">知识库原件和解析正文只在选择“全部业务数据”时加密同步；其他范围不会上传或下载知识库资料。流程仍按“备忘与流程”范围同步。</p>
@@ -56,7 +57,7 @@ export function CloudSyncButton() {
       </>}
       {error && <p className="alert alert--error" role="alert">{error}</p>}
       {notice && <p className="alert alert--ok" role="status">{notice}</p>}
-      <div className="sync-dialog__actions"><button className="btn btn--primary" disabled={busy || loading || !status?.config} onClick={() => void sync()}>{busy ? '同步中…' : '开始同步'}</button><button className="btn" disabled={busy} onClick={close}>关闭</button></div>
+      <div className="sync-dialog__actions"><button className="btn btn--primary" disabled={busy || loading || status?.config?.provider !== 'github'} onClick={() => void sync()}>{busy ? '同步中…' : '开始同步'}</button><button className="btn" disabled={busy} onClick={close}>关闭</button></div>
     </dialog>, document.body)}
   </>
 }
