@@ -4209,3 +4209,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - PR [#16](https://github.com/PLA0185/lumen/pull/16) 的 GitHub Actions CI run [38362647899](https://github.com/PLA0185/lumen/actions/runs/38362647899) 前端与 Rust 两个 job 均成功；5 个独立提交已合并到 main，合并提交为 `36ec8a72a7d388b439e153e3a7fa6c6ccbe0b01d`。
 - 没有创建 `v0.4.50` tag 或发布 APK：尚未验证 Android Actions Secrets 配置，也未核实它们是否使用了已有 0.4.34 APK 的同一签名证书；签名不一致会阻止覆盖升级。
+
+## 第 94 轮 · 2026-10-13 · 修复 Android keystore 复制脚本的 Windows PowerShell 编码兼容
+
+### 做了
+
+- 将 `tools/copy-android-keystore-base64.ps1` 的错误与成功提示改成 ASCII，避免 Windows PowerShell 5.1 将无 BOM 的 UTF-8 中文按系统代码页解析时破坏脚本语法。脚本仍只把 Base64 复制到剪贴板，不打印密钥内容。
+
+### 没做到
+
+- 未在 Windows PowerShell 5.1 中实际执行该脚本：本轮执行环境拒绝启动独立的 Windows PowerShell 5.1 进程；仅在 PowerShell 7 中完成语法解析。用户需要重新运行脚本确认本机剪贴板操作。
+- 未确认本机 `.android\debug.keystore` 与已有 APK 使用同一签名证书；Android 发布 Secrets 尚未配置，也未发布 APK。
+
+### 怎么验证的
+
+- PowerShell 7 的 PowerShell Parser 对修订脚本解析成功。
+- 修订脚本在 PowerShell 7 中使用默认 `%USERPROFILE%\.android\debug.keystore` 执行成功，Base64 已复制到剪贴板；终端未打印密钥内容。
+- Windows PowerShell 5.1 的实际执行未验证：启动该子进程被执行环境拒绝。修复后用户在本机 PowerShell 5.1 重新运行确认。
+- `git diff --check` 通过。
+
+### 相关文档
+
+- [Android keystore Base64 复制脚本](../tools/copy-android-keystore-base64.ps1)
+- [Android APK 签名和发布说明](android-release-signing.md)
