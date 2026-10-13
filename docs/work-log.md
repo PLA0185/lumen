@@ -4071,4 +4071,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [0.4.45 发布说明](../RELEASE_NOTES.md)
 - [更新面板](../src/components/UpdatePanel.tsx)、[应用级更新状态](../src/lib/update-manager.ts)、[切页回归测试](../src/components/UpdatePanel.test.tsx)
+
+## 第 89 轮 · 2026-10-13 · 通用新建子任务与可编辑的具体提醒时刻
+
+### 做了
+
+- 快速新建任务（包括周任务与其他周期任务）新增按行填写子任务的入口，保存顺序就是填写顺序；可选自由完成或按顺序完成。重复系列把这些步骤保存为模板，每次发生创建独立的未完成子任务。
+- 单次任务与重复系列的父任务、子任务及完成方式在同一个数据库事务中保存，子任务插入失败时整笔创建回滚。
+- 提醒新建默认显示具体日期和时刻；已有提醒可直接修改时刻。修改会清除过期、已触发和稍后提醒状态，按单次例外保存系列实例。
+- 更新 package、Tauri 与 Cargo 版本到 0.4.46，并更新发布说明和 README。
+
+### 没做到
+
+- 没有在用户当前运行的 Lumen 窗口中点击验收，也没有安装或重启应用，避免中断现有操作；需要安装 0.4.46 后确认实际窗口呈现。
+- Windows 本地 Rust 全套测试输出 590 项通过、4 项忽略、0 失败，但进程在汇总结果后没有退出，本地中断命令的退出码为 1，因此本地全套测试不能记为通过；等待 PR CI 作为完整验收。
+- 本轮未验证 Windows 系统通知实际弹出，只验证了提醒时刻写入数据库并重新进入可触发状态。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.46）、`pnpm typecheck`、前端全套测试（54 个文件、400 项）、`pnpm build`、`pnpm lint` 均实际运行并通过。生产构建仅显示已有的动态导入提示。
+- 三项新增 Rust 场景分别验证了：初始子任务顺序和顺序模式、重复实例独立生成子任务、将过期的午夜提醒改成 `02:30` 后转为自定义时刻并重新等待；三项均通过。
+- `cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 实际通过；`git diff --check` 无空白错误。
+- 本地 Rust 全套测试的汇总结果与未正常退出情况见“没做到”；PR CI 尚待远端完成。
+
+### 相关文档
+
+- [0.4.46 发布说明](../RELEASE_NOTES.md)
+- [通用新建任务与子任务入口](../src/components/QuickAdd.tsx)、[提醒新建与时刻编辑](../src/components/ReminderEditor.tsx)
+- [任务与重复模板的原子写入](../src-tauri/src/commands.rs)、[提醒时刻更新](../src-tauri/src/reminders.rs)
 - [README 版本摘要](../README.md#文档索引)
