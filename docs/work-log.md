@@ -4121,7 +4121,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 新增复现先在修复前重现了截图中的精确错误；修复后，云端已有副本可下载、校验并恢复，任务同步通过。
 - `cargo test --lib cloud_sync::tests::missing_ -- --nocapture` 的 3 项定向测试通过，覆盖云端有副本时恢复、云端无副本时仍报原文件错误，以及知识库缺失原件的既有保护。
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.47）、`pnpm typecheck`、前端测试（54 个文件、400 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、严格 Clippy 和 `git diff --check` 均实际通过。构建仍显示既有动态导入提示。
-- GitHub PR / 发布 CI 尚未运行；待远端结果确认后补记。没有声称本机完整 Rust 测试通过。
+- GitHub PR #13 的 CI run 38348272554 前端与 Rust jobs 全部通过；v0.4.47 标签发布流水线尚未运行，需合并后核验安装包和更新清单。没有声称本机完整 Rust 测试通过。
 
 ### 相关文档
 
