@@ -1096,6 +1096,9 @@ pub(crate) trait SyncRemote: Sync {
     async fn stage(&self, db: &Db, path: &str, value: Vec<u8>, overwrite: bool) -> AppResult<u16>;
     async fn devices(&self, db: &Db) -> AppResult<Vec<String>>;
     async fn delete(&self, db: &Db, path: &str) -> AppResult<()>;
+    async fn clear_workspace_folder(&self, _db: &Db) -> AppResult<()> {
+        Err(AppError::validation("当前同步服务不支持安全重建旧同步空间"))
+    }
 
     async fn workspace(&self, db: &Db) -> AppResult<Option<Vec<u8>>> {
         self.mkdir(db, "").await?;
@@ -1222,6 +1225,12 @@ impl SyncRemote for Remote {
         match self {
             Self::WebDav(remote) => remote.delete(db, path).await,
             Self::GitHub(remote) => remote.delete(db, path).await,
+        }
+    }
+    async fn clear_workspace_folder(&self, db: &Db) -> AppResult<()> {
+        match self {
+            Self::WebDav(_) => Err(AppError::validation("当前同步服务不支持安全重建旧同步空间")),
+            Self::GitHub(remote) => remote.clear_workspace_folder(db).await,
         }
     }
 }
@@ -1388,7 +1397,7 @@ pub async fn cloud_sync_connect(
                 )?,
                 (None, None) => {
                     return Err(AppError::validation(
-                        "这是旧版同步空间。请在之前连接过的电脑升级后运行一次同步，之后其他电脑只需使用同一个 GitHub Token。",
+                        "本机无法解密 GitHub 仓库中的旧同步空间。可确认删除旧云端目录的当前文件，并从本机数据重建同步空间。",
                     ));
                 }
             };
@@ -1518,6 +1527,29 @@ pub async fn cloud_sync_connect(
         .await?;
     tx.commit().await?;
     status(db).await
+}
+
+#[tauri::command]
+pub async fn cloud_sync_clear_legacy_workspace(
+    state: State<'_, AppState>,
+    input: ConnectInput,
+) -> AppResult<()> {
+    let _guard = ENGINE.lock().await;
+    require_github(input.provider)?;
+    let remote = Remote::from_input(&input)?;
+    remote.verify_repository(&state.db).await?;
+    let bytes = remote
+        .workspace(&state.db)
+        .await?
+        .ok_or_else(|| AppError::validation("GitHub 中没有可重建的旧同步空间"))?;
+    let workspace: Workspace = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::validation("云端同步空间配置损坏；为保护数据，未删除云端内容"))?;
+    if workspace.version != 1 || workspace.key_envelope.is_some() {
+        return Err(AppError::validation(
+            "该空间不是缺少密钥包的旧空间；为保护数据，未删除云端内容",
+        ));
+    }
+    remote.clear_workspace_folder(&state.db).await
 }
 
 #[tauri::command]

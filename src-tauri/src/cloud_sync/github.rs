@@ -37,6 +37,37 @@ struct DirectoryEntry {
     kind: String,
 }
 
+#[derive(Deserialize)]
+struct GitRef {
+    object: Metadata,
+}
+
+#[derive(Deserialize)]
+struct GitCommit {
+    tree: Metadata,
+}
+
+#[derive(Deserialize)]
+struct GitTree {
+    truncated: bool,
+    tree: Vec<GitTreeEntry>,
+}
+
+#[derive(Deserialize)]
+struct GitTreeEntry {
+    path: String,
+    mode: String,
+    #[serde(rename = "type")]
+    kind: String,
+}
+
+fn is_workspace_blob(entry: &GitTreeEntry, folder: &str) -> bool {
+    entry.kind == "blob"
+        && entry
+            .path
+            .starts_with(&format!("{}/", folder.trim_matches('/')))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ChunkManifest {
@@ -160,6 +191,196 @@ impl GitHub {
             .push(&self.repository);
         drop(segments);
         Ok(url)
+    }
+
+    fn git_url(&self, path: &[&str], branch_ref: bool) -> AppResult<reqwest::Url> {
+        let mut url =
+            reqwest::Url::parse(API).map_err(|_| AppError::internal("GitHub API 地址无效"))?;
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| AppError::internal("GitHub API 路径无效"))?;
+        segments
+            .clear()
+            .push("repos")
+            .push(&self.owner)
+            .push(&self.repository)
+            .push("git");
+        for component in path {
+            segments.push(component);
+        }
+        if branch_ref {
+            for component in self.branch.split('/') {
+                segments.push(component);
+            }
+        }
+        drop(segments);
+        Ok(url)
+    }
+
+    pub(super) async fn clear_workspace_folder(&self, db: &Db) -> AppResult<()> {
+        if self.folder.is_empty() {
+            return Err(AppError::validation(
+                "为避免清空整个仓库，旧同步空间重建需要设置专用仓库目录",
+            ));
+        }
+
+        let reference = self
+            .send(
+                db,
+                reqwest::Method::GET,
+                self.git_url(&["ref", "heads"], true)?,
+                None,
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !reference.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                format!(
+                    "GitHub 分支读取失败（HTTP {}）",
+                    reference.status().as_u16()
+                ),
+            ));
+        }
+        let reference: GitRef = reference
+            .json()
+            .await
+            .map_err(|_| AppError::validation("GitHub 分支信息格式无效"))?;
+
+        let commit = self
+            .send(
+                db,
+                reqwest::Method::GET,
+                self.git_url(&["commits", &reference.object.sha], false)?,
+                None,
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !commit.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                format!("GitHub 提交读取失败（HTTP {}）", commit.status().as_u16()),
+            ));
+        }
+        let commit: GitCommit = commit
+            .json()
+            .await
+            .map_err(|_| AppError::validation("GitHub 提交信息格式无效"))?;
+
+        let mut tree_url = self.git_url(&["trees", &commit.tree.sha], false)?;
+        tree_url.query_pairs_mut().append_pair("recursive", "1");
+        let tree = self
+            .send(
+                db,
+                reqwest::Method::GET,
+                tree_url,
+                None,
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !tree.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                format!("GitHub 文件树读取失败（HTTP {}）", tree.status().as_u16()),
+            ));
+        }
+        let tree: GitTree = tree
+            .json()
+            .await
+            .map_err(|_| AppError::validation("GitHub 文件树格式无效"))?;
+        if tree.truncated {
+            return Err(AppError::validation(
+                "GitHub 仓库文件过多，无法安全确认旧同步目录的完整范围；云端未删除",
+            ));
+        }
+        let removals: Vec<_> = tree
+            .tree
+            .into_iter()
+            .filter(|entry| is_workspace_blob(entry, &self.folder))
+            .map(|entry| {
+                serde_json::json!({
+                    "path": entry.path,
+                    "mode": entry.mode,
+                    "type": "blob",
+                    "sha": null
+                })
+            })
+            .collect();
+        if removals.is_empty() {
+            return Err(AppError::validation(
+                "旧同步目录没有可清理的云端文件；云端未删除",
+            ));
+        }
+
+        let new_tree = self
+            .send(
+                db,
+                reqwest::Method::POST,
+                self.git_url(&["trees"], false)?,
+                Some(serde_json::json!({ "base_tree": commit.tree.sha, "tree": removals })),
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !new_tree.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                format!(
+                    "GitHub 旧同步目录清理准备失败（HTTP {}）",
+                    new_tree.status().as_u16()
+                ),
+            ));
+        }
+        let new_tree: Metadata = new_tree
+            .json()
+            .await
+            .map_err(|_| AppError::validation("GitHub 清理结果格式无效"))?;
+
+        let new_commit = self
+            .send(
+                db,
+                reqwest::Method::POST,
+                self.git_url(&["commits"], false)?,
+                Some(serde_json::json!({
+                    "message": "Lumen reset legacy encrypted sync workspace",
+                    "tree": new_tree.sha,
+                    "parents": [reference.object.sha]
+                })),
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !new_commit.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                format!(
+                    "GitHub 清理提交创建失败（HTTP {}）",
+                    new_commit.status().as_u16()
+                ),
+            ));
+        }
+        let new_commit: Metadata = new_commit
+            .json()
+            .await
+            .map_err(|_| AppError::validation("GitHub 清理提交格式无效"))?;
+
+        let updated_ref = self
+            .send(
+                db,
+                reqwest::Method::PATCH,
+                self.git_url(&["refs", "heads"], true)?,
+                Some(serde_json::json!({ "sha": new_commit.sha, "force": false })),
+                "application/vnd.github+json",
+            )
+            .await?;
+        if !updated_ref.status().is_success() {
+            return Err(AppError::new(
+                ErrorCode::Conflict,
+                format!(
+                    "GitHub 分支已变化，旧同步目录未清理（HTTP {}）；请重试",
+                    updated_ref.status().as_u16()
+                ),
+            ));
+        }
+        Ok(())
     }
 
     async fn send(
@@ -654,5 +875,32 @@ impl SyncRemote for GitHub {
         )
         .await?;
         self.delete_physical(db, &self.physical_path(path)?).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_reset_only_selects_files_inside_the_configured_folder() {
+        let inside = GitTreeEntry {
+            path: "Lumen/events/a.json".into(),
+            mode: "100644".into(),
+            kind: "blob".into(),
+        };
+        let sibling = GitTreeEntry {
+            path: "Lumen-old/workspace.json".into(),
+            mode: "100644".into(),
+            kind: "blob".into(),
+        };
+        let directory = GitTreeEntry {
+            path: "Lumen/events".into(),
+            mode: "040000".into(),
+            kind: "tree".into(),
+        };
+        assert!(is_workspace_blob(&inside, "Lumen"));
+        assert!(!is_workspace_blob(&sibling, "Lumen"));
+        assert!(!is_workspace_blob(&directory, "Lumen"));
     }
 }

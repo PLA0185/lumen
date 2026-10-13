@@ -41,7 +41,7 @@ export function ChatGPTContentImportDialog({
     let active = true
     void memo.memoList('', false).then(result => {
       if (!active) return
-      setRows(result.filter(row => !row.deletedAt && (kindFilter === 'all' || row.kind === kindFilter)))
+      setRows(result.filter(row => !row.deletedAt))
       if (initialDocumentId && !result.some(row => row.id === initialDocumentId && !row.deletedAt)) setTarget(kindFilter === 'flow' ? 'new:flow' : 'new:memo')
     }).catch(e => { if (active) setError(`读取备忘与流程列表失败：${String(e)}`) })
     return () => { active = false }
@@ -89,6 +89,9 @@ export function ChatGPTContentImportDialog({
   const selectedLabel = target.startsWith('existing:')
     ? rows.find(row => row.id === target.slice('existing:'.length))?.title ?? '现有记录'
     : target === 'new:flow' ? '新建流程' : '新建备忘'
+  const selectedDocument = target.startsWith('existing:') ? rows.find(row => row.id === target.slice('existing:'.length)) : undefined
+  const isExistingTarget = target.startsWith('existing:')
+  const selectedKind = target === 'new:flow' || selectedDocument?.kind === 'flow' ? 'flow' : 'memo'
   const flowImageSource = proposal?.kind === 'flow' ? [proposal.bodyMd, ...proposal.steps.map(step => step.detail)].join('\n') : ''
   const flowImages = contentImages(flowImageSource)
   const assignedImageIds = new Set(proposal?.kind === 'flow' ? proposal.steps.flatMap(step => contentImages(step.detail).map(image => image.id)) : [])
@@ -121,26 +124,51 @@ export function ChatGPTContentImportDialog({
         <button className="btn btn--ghost btn--sm" disabled={busy} aria-label="关闭导入" onClick={close}>关闭</button>
       </header>
 
-      <div className="alert alert--info">
-        <strong>当前使用复制粘贴导入。</strong> OpenAI 目前将完整 MCP 写入开放给 Business、Enterprise 和 Edu 计划；Plus 不能直接写入 Lumen。直连还需要 Platform 隧道 ID 和运行时 API Key。<a href="https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt" target="_blank" rel="noreferrer">查看官方说明</a>。此入口不需要 API Key，也不会把文本发送给 AI 服务。
+      <div className="alert alert--info chatgpt-import-dialog__access-note">
+        <p><strong>当前通过复制粘贴导入。</strong> ChatGPT 的回答会先进入预览，只有你确认后才保存。此入口不需要 API Key，也不会把文本发送给 AI 服务。</p>
+        <p>ChatGPT 直连写入还需要账号计划支持以及 Platform 隧道配置。<a className="chatgpt-import-dialog__official-link" href="https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt" target="_blank" rel="noreferrer">查看 ChatGPT 官方说明</a></p>
       </div>
-      <label className="chatgpt-import-dialog__target">
-        保存到
-        <select className="input" aria-label="ChatGPT 导入目标" value={target} disabled={busy || !!proposal} onChange={event => { setTarget(event.target.value as Target); setProposal(null); setOriginal(null) }}>
-          {kindFilter !== 'flow' && <option value="new:memo">新建备忘</option>}
-          {kindFilter !== 'memo' && <option value="new:flow">新建流程</option>}
-          {rows.map(row => <option key={row.id} value={`existing:${row.id}`}>{row.kind === 'flow' ? '流程' : '备忘'} · {row.title}</option>)}
-        </select>
-      </label>
+      <fieldset className="chatgpt-import-dialog__target" disabled={busy || !!proposal}>
+        <legend>导入目标</legend>
+        <div className="chatgpt-import-dialog__target-modes" role="group" aria-label="导入目标类型">
+          <button type="button" className={`btn ${!isExistingTarget && selectedKind === 'memo' ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget && selectedKind === 'memo'} onClick={() => setTarget('new:memo')}>新建备忘</button>
+          <button type="button" className={`btn ${!isExistingTarget && selectedKind === 'flow' ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget && selectedKind === 'flow'} onClick={() => setTarget('new:flow')}>新建流程</button>
+          <button type="button" className={`btn ${isExistingTarget ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={isExistingTarget} disabled={!rows.length} onClick={() => {
+            const current = selectedDocument
+            const next = current ?? rows[0]
+            if (next) setTarget(`existing:${next.id}`)
+          }}>更新已有记录</button>
+        </div>
+        {isExistingTarget && <label className="chatgpt-import-dialog__target-select">
+          选择备忘或流程
+          <select className="input" aria-label="选择要更新的备忘或流程" value={target} onChange={event => setTarget(event.target.value as Target)}>
+            {rows.map(row => <option key={row.id} value={`existing:${row.id}`}>{row.kind === 'flow' ? '流程' : '备忘'} · {row.title}</option>)}
+          </select>
+        </label>}
+        <p className="chatgpt-import-dialog__target-hint">新建备忘用于记录说明和资料；新建流程用于按步骤整理操作。更新已有记录会先显示修改预览。</p>
+      </fieldset>
 
       {!proposal ? <>
+        <section className="chatgpt-import-dialog__format" aria-label="ChatGPT 返回格式说明">
+          <div className="chatgpt-import-dialog__format-heading">
+            <strong>{selectedKind === 'flow' ? '流程返回格式' : '备忘返回格式'}</strong>
+            <span>先复制下方指令给 GPT，再把材料一起发给它</span>
+          </div>
+          {selectedKind === 'flow' ? <>
+            <p>流程推荐返回 JSON：每个步骤的标题、负责人和说明分别填写；也可以直接粘贴带 <code>#</code> 标题和 <code>##</code> 步骤标题的 Markdown。</p>
+            <pre><code>{'{\n  "kind": "flow",\n  "title": "出货流程",\n  "category": "物流",\n  "bodyMd": "适用范围或背景",\n  "steps": [\n    { "title": "核对订单", "owner": "运营", "detail": "核对型号和数量。" }\n  ]\n}'}</code></pre>
+          </> : <>
+            <p>备忘推荐返回 JSON，Lumen 会自动识别标题、分类和正文；也可直接返回以 <code># 标题</code> 开头的 Markdown。</p>
+            <pre><code>{'{\n  "kind": "memo",\n  "title": "备忘标题",\n  "category": "分类",\n  "bodyMd": "整理后的正文（支持 Markdown）"\n}'}</code></pre>
+          </>}
+        </section>
         <label className="chatgpt-import-dialog__content">
           粘贴 ChatGPT 的回答
-          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={'支持 Markdown、纯文本，或 JSON。\n已有记录会以这段正文替换原正文；JSON 可同时修改标题、分类和流程步骤。'} onChange={event => { setContent(event.target.value); setError('') }} />
+          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={selectedKind === 'flow' ? '粘贴 GPT 按上方 JSON 格式整理的流程；也可粘贴 Markdown。' : '粘贴 GPT 返回的 JSON，或 Markdown / 纯文本。JSON 可填写标题、分类和正文。'} onChange={event => { setContent(event.target.value); setError('') }} />
         </label>
         <div className="chatgpt-import-dialog__actions">
-          <button className="btn btn--ghost" disabled={busy} onClick={() => { void writeText(prompt).then(() => setNotice('导入格式提示词已复制，可粘贴到 ChatGPT 网页版或桌面版。')).catch(e => setError(`复制失败：${String(e)}`)) }}>复制 ChatGPT 提示词</button>
-          <span className="setgroup__hint">可粘贴图片或拖入文件。整理流程时，请把图片放在对应步骤标题下；也可在预览里把图片分配到步骤。</span>
+          <button className="btn btn--ghost" disabled={busy} onClick={() => { void writeText(prompt).then(() => setNotice(`${selectedKind === 'flow' ? '流程' : '备忘'}提示词已复制；把指令和你的材料一起发给 ChatGPT。`)).catch(e => setError(`复制失败：${String(e)}`)) }}>复制{selectedKind === 'flow' ? '流程' : '备忘'}提示词</button>
+          <span className="setgroup__hint">可粘贴图片或拖入文件。流程图片会保留，可在预览中分配到对应步骤。</span>
           <button className="btn btn--primary" disabled={busy || !content.trim()} onClick={() => void makePreview()}>{busy ? '正在生成预览…' : '生成修改预览'}</button>
         </div>
       </> : <>

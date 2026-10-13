@@ -13,7 +13,7 @@ vi.mock('../lib/nutrition-ipc', () => ({
   nutritionRecipeAddIngredient: vi.fn(), nutritionRecipeRemoveIngredient: vi.fn(), nutritionRecipePlan: vi.fn(),
   nutritionShoppingCreate: vi.fn(), nutritionShoppingUpdate: vi.fn(), nutritionShoppingSetCompleted: vi.fn(),
   nutritionShoppingDelete: vi.fn(), nutritionShoppingImportCommit: vi.fn(), nutritionShoppingAddRecipe: vi.fn(),
-  nutritionSearchKeyStatus: vi.fn(), nutritionSetSearchKey: vi.fn(), nutritionShoppingImportPreview: vi.fn(),
+  nutritionSearchStatus: vi.fn(), nutritionSetSearchKey: vi.fn(), nutritionShoppingImportPreview: vi.fn(),
 }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -30,7 +30,7 @@ let host: HTMLDivElement | undefined
 async function mount(initial = emptyDashboard) {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   vi.mocked(api.nutritionDashboard).mockResolvedValue(initial)
-  vi.mocked(api.nutritionSearchKeyStatus).mockResolvedValue(false)
+  vi.mocked(api.nutritionSearchStatus).mockResolvedValue({ provider: 'tavily', configured: false })
   await act(async () => root!.render(<NutritionView />))
 }
 

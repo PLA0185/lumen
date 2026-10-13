@@ -8,7 +8,7 @@ import { CloudSyncButton } from './CloudSyncButton'
 import { CloudSettings } from './CloudSettings'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
-afterEach(() => { act(() => root?.unmount()); root = undefined; vi.restoreAllMocks(); document.body.innerHTML = '' })
+afterEach(() => { act(() => root?.unmount()); root = undefined; vi.restoreAllMocks(); Reflect.deleteProperty(window, 'confirm'); document.body.innerHTML = '' })
 const connected = { config: { provider: 'github' as const, server: '', account: '', folder: 'Lumen', owner: 'PLA0185', repository: 'lumen-sync', branch: 'main', connectionId: 'test', workspaceId: 'space', enabled: false, inheritAll: true, defaultSync: { scope: 'memos' as const, direction: 'download' as const } }, pending: 2, conflicts: [], lastScan: null, lastUpload: null, lastError: null, retryUntil: 0 }
 async function click(label: string) {
   const button = [...document.querySelectorAll('button')].find(b => b.textContent === label)
@@ -198,6 +198,28 @@ it('GitHub 连接失败时在按钮旁明确显示失败原因', async () => {
   const feedback = document.querySelector('.cloud-settings__connect-feedback')
   expect(feedback?.textContent).toContain('GitHub 连接失败：GitHub Token 无权限')
   expect(feedback?.getAttribute('role')).toBe('alert')
+})
+it('旧云端空间无法解密时一次确认即可清理并从本机重建连接', async () => {
+  vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: null })
+  vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
+  const connect = vi.spyOn(cloud, 'cloudConnect')
+    .mockRejectedValueOnce(new IpcError('validation', '本机无法解密 GitHub 仓库中的旧同步空间。', null, null))
+    .mockResolvedValue(connected)
+  const clear = vi.spyOn(cloud, 'cloudClearLegacyWorkspace').mockResolvedValue()
+  window.confirm = vi.fn(() => true)
+  const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<CloudSettings />))
+  await fill('GitHub 用户名或组织', 'PLA0185')
+  await fill('私有仓库名', 'lumen-sync')
+  await fill('GitHub Fine-grained Token', 'github_pat_example')
+  await click('验证并连接 GitHub')
+  expect(document.body.textContent).toContain('不需要找旧电脑')
+  expect(document.body.textContent).not.toContain('仍持有原密钥的电脑')
+  await click('删除旧云端文件并重建')
+  expect(clear).toHaveBeenCalledWith(expect.objectContaining({ owner: 'PLA0185', repository: 'lumen-sync', password: 'github_pat_example' }))
+  expect(connect).toHaveBeenCalledTimes(2)
+  expect(connect).toHaveBeenLastCalledWith(expect.objectContaining({ owner: 'PLA0185', repository: 'lumen-sync', password: 'github_pat_example' }))
+  expect(document.body.textContent).toContain('已从这台电脑的数据重建同步空间')
 })
 it('本机请求额度冷却时说明尚未发送验证请求，不误报连接失败', async () => {
   vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: null })

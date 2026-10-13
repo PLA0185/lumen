@@ -518,6 +518,24 @@ describe('独立备忘与业务流程', () => {
     expect(document.querySelector('[aria-label="从 ChatGPT 导入内容"]')).toBeNull()
   })
 
+  it('ChatGPT 导入清楚区分备忘与流程，流程栏目也能新建备忘', async () => {
+    const rows: memo.MemoSummary[] = [
+      { id: 'memo-import', title: '仓库资料', category: '业务', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null },
+      { id: 'flow-import', title: '出货流程', category: '物流', kind: 'flow', revision: 1, createdAt: '', updatedAt: '', deletedAt: null },
+    ]
+    await mount('', rows, 'flow')
+    await click('ChatGPT 导入')
+    expect(document.querySelector('[aria-label="导入目标类型"]')?.textContent).toContain('新建备忘')
+    expect(document.querySelector('[aria-label="导入目标类型"]')?.textContent).toContain('新建流程')
+    expect(document.body.textContent).toContain('"kind": "flow"')
+    await click('新建备忘')
+    expect(document.body.textContent).toContain('"kind": "memo"')
+    expect(document.querySelector('.chatgpt-import-dialog__official-link')?.textContent).toBe('查看 ChatGPT 官方说明')
+    await click('更新已有记录')
+    const options = [...document.querySelectorAll('[aria-label="选择要更新的备忘或流程"] option')].map(option => option.textContent)
+    expect(options).toEqual(['备忘 · 仓库资料', '流程 · 出货流程'])
+  })
+
   it('Markdown 预览不执行 HTML 或危险链接', async () => {
     vi.spyOn(memo, 'memoSave').mockImplementation(async (input) => ({
       ...input,

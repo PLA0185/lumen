@@ -4151,3 +4151,56 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [附件缺失时的单次跳过操作](../src/components/MissingAttachmentSyncFallback.tsx)、[设置页同步入口](../src/components/CloudSettings.tsx)、[顶部同步对话框](../src/components/CloudSyncButton.tsx)
 - [回归测试](../src/components/CloudSyncButton.test.tsx)、[0.4.48 发布说明](../RELEASE_NOTES.md)
+
+## 第 92 轮 · 2026-10-13 · 收紧日期选择条并放大选中节点附近刻度
+
+### 做了
+
+- 将“今天”页日期选择条改为桌面端单行布局，日期与未完成数并排显示，缩小按钮内边距、外边距与容器高度；窄屏仍会把摘要放到下一行。
+- 流程节点导航根据选中节点计算距离：相邻两格逐级加高加宽，选中刻度最突出；鼠标悬停和键盘聚焦时继续使用原有临时强调。
+- 版本升至 0.4.49，更新 README、发布说明和本工作记录。
+
+### 没做到
+
+- 未在用户当前运行的 Lumen 窗口中目测验收；安装 0.4.49 后仍需确认日期条实际高度和章节/阶段混排下的刻度视觉层级。
+
+### 怎么验证的
+
+- `pnpm exec vitest run src/components/FlowCanvas.test.tsx` 通过（27 项），新增断言覆盖选中节点变化后周围刻度距离值更新。
+- `pnpm typecheck` 与 `pnpm check:version`（0.4.49）通过。完整前端套件、生产构建、lint 和 GitHub CI 尚待本轮提交后核验。
+
+### 相关文档
+
+- [日期选择条](../src/components/TodayDateSelector.tsx)与[日期条样式](../src/styles.css)
+- [流程刻度导航](../src/components/FlowCanvas.tsx)、[流程导航样式](../src/styles.css)与[焦点距离回归测试](../src/components/FlowCanvas.test.tsx)
+- [0.4.49 发布说明](../RELEASE_NOTES.md)
+
+## 第 93 轮 · 2026-10-13 · 清理旧 GitHub 同步空间并收尾跨平台功能
+
+### 做了
+
+- 旧 GitHub 同步空间无法由当前电脑解密时，不再提示用户找之前连接过的电脑。用户确认后，Lumen 只删除所选仓库目录当前的同步文件，并在同一次操作里从本机数据库重建空间与连接；本机和其他电脑的数据库不删除，GitHub 提交历史仍保存加密旧版本。
+- ChatGPT 导入清楚分开新建备忘、新建流程与更新现有记录；提供各自 JSON 格式和提示词，预览确认后保存，流程图片仍可保留与分配。
+- DeepSeek 饮食核对直接复用已保存的 DeepSeek API Key 调用原生联网搜索；其他 AI 服务仍可使用 Tavily。
+- Release workflow 加入 Android ARM64 APK 构建及固定签名配置，计划与 Windows 安装包一同放进每次版本 Release；源码版本升到 0.4.50，更新发布说明、README 与 Android 签名说明。
+
+### 没做到
+
+- 没有用用户 GitHub 凭据对真实仓库执行旧目录清理，也没有实际双设备同步；当前确认只清理指定目录的 Git 当前版本，提交历史里的旧加密对象仍保留。
+- 没有真实调用 DeepSeek 联网搜索；本机没有配置可供本轮测试的 API Key。
+- 没有生成或发布 APK：开发主机没有 Java、Android SDK/NDK 与 Android 项目生成目录；当前也未配置可读取的 GitHub Actions 签名 Secrets。要让 APK 覆盖此前 Debug 安装，需要先确认并继续使用生成 0.4.34 APK 的同一签名密钥；本轮没有比对证书指纹。
+- `cargo test --lib` 输出 594 项通过、4 项忽略、0 项失败，但 Windows 测试进程在汇总后持续不退出；为继续执行 Clippy 手动中断，命令退出码为 1，因此全套 Rust 测试不能记为完整通过。Android 实机安装、升级和双端同步也未验证。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.50）、`pnpm typecheck`、前端全套测试（54 个文件、404 项）、`pnpm build`、`pnpm lint` 均通过；构建保留仓库已有的动态导入提示。
+- `cargo fmt --check` 与修正测试模块位置后的 `cargo clippy --all-targets --all-features -- -D warnings` 通过。云端目录范围测试 1 项通过，DeepSeek 专项测试 9 项通过；Rust 全套测试因前述进程不退出不记为通过。
+- Android 签名准备脚本用临时合成 keystore 与 Gradle 样板验证成功，没有使用或输出真实密钥。
+- 新的云端清理逻辑仅按选定目录内的 blob 生成删除项，并拒绝仓库根目录、截断树与非旧空间；通过专项测试验证不会匹配邻近目录或树节点。
+
+### 相关文档
+
+- [0.4.50 发布说明](../RELEASE_NOTES.md)、[README](../README.md#文档索引)
+- [GitHub 云同步设置与旧空间重建](../src/components/CloudSettings.tsx)、[同步命令](../src-tauri/src/cloud_sync.rs)、[GitHub 目录清理](../src-tauri/src/cloud_sync/github.rs)、[界面回归测试](../src/components/CloudSyncButton.test.tsx)
+- [ChatGPT 备忘与流程导入](../src/components/ChatGPTContentImportDialog.tsx)、[格式提示](../src/lib/chatgpt-content-import.ts)、[导入说明](chatgpt-content-import-2026-10-12.md)
+- [DeepSeek 原生联网核对](../src-tauri/src/nutrition.rs)、[Android APK 签名和发布](android-release-signing.md)

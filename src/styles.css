@@ -653,32 +653,36 @@ select {
 
 .today-date-strip {
   max-width: 1120px;
-  margin: 0 auto 12px;
-  padding: 8px 10px 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto 8px;
+  padding: 4px 8px;
   border: 1px solid var(--c-border);
   border-radius: var(--radius-sm);
   background: var(--c-surface);
 }
 .today-date-strip__week {
   display: grid;
+  flex: 1 1 auto;
   grid-template-columns: 28px repeat(7, minmax(0, 1fr)) 28px;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .today-date-strip__week > button {
   position: relative;
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 1px;
   justify-items: center;
-  padding: 7px 3px;
+  padding: 3px;
   color: var(--c-text-2);
   border-radius: var(--radius-sm);
   background: transparent;
 }
 .today-date-strip__week > button:first-child,
 .today-date-strip__week > button:last-child {
-  font-size: 1.3rem;
+  font-size: 1.1rem;
 }
 .today-date-strip__week > button > span { font-size: var(--font-xs); }
 .today-date-strip__week > button > strong { font-size: var(--font-sm); font-variant-numeric: tabular-nums; }
@@ -694,19 +698,21 @@ select {
 }
 .today-date-strip__summary {
   display: flex;
-  min-height: 28px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  padding: 3px 8px 0;
+  gap: 8px;
+  padding: 0 4px;
   color: var(--c-text-3);
   font-size: var(--font-xs);
 }
 .today-date-strip__summary button { padding: 2px 6px; color: var(--c-accent); background: transparent; }
 
 @media (max-width: 620px) {
-  .today-date-strip { padding-inline: 4px; }
+  .today-date-strip { display: block; padding-inline: 4px; }
   .today-date-strip__week { grid-template-columns: 24px repeat(7, minmax(0, 1fr)) 24px; gap: 1px; }
   .today-date-strip__week > button { padding-inline: 0; }
+  .today-date-strip__summary { min-height: 22px; padding-top: 2px; }
 }
 
 .task {
@@ -4745,6 +4751,22 @@ body {
 .chatgpt-import-dialog__header h2 { margin: 0 0 5px; font-size: var(--font-lg); }
 .chatgpt-import-dialog__header p { margin: 0; color: var(--c-text-2); line-height: 1.6; }
 .chatgpt-import-dialog__target, .chatgpt-import-dialog__content { display: grid; gap: 7px; color: var(--c-text-2); font-size: var(--font-sm); }
+.chatgpt-import-dialog__target { min-width: 0; border: 0; padding: 0; margin: 0; }
+.chatgpt-import-dialog__target legend { margin-bottom: 7px; color: var(--c-text-2); }
+.chatgpt-import-dialog__target-modes { display: flex; flex-wrap: wrap; gap: 8px; }
+.chatgpt-import-dialog__target-modes .btn[aria-pressed="true"] { box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 32%, transparent); }
+.chatgpt-import-dialog__target-select { display: grid; gap: 7px; margin-top: 4px; }
+.chatgpt-import-dialog__target-hint { margin: 2px 0 0; color: var(--c-text-3); line-height: 1.55; }
+.chatgpt-import-dialog .chatgpt-import-dialog__access-note { display: grid; gap: 4px; margin: 0; color: var(--c-text-2); background: var(--c-surface-2); border-left-color: var(--c-info); }
+.chatgpt-import-dialog__access-note p { margin: 0; }
+.chatgpt-import-dialog__official-link { display: inline-block; margin-left: 4px; color: var(--c-info); font-weight: 650; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; white-space: nowrap; }
+.chatgpt-import-dialog__official-link:hover { color: var(--c-text); }
+.chatgpt-import-dialog__format { display: grid; gap: 8px; min-width: 0; padding: 12px 14px; background: var(--c-surface-2); border: 1px solid var(--c-border); border-radius: var(--radius); color: var(--c-text-2); }
+.chatgpt-import-dialog__format-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; color: var(--c-text); }
+.chatgpt-import-dialog__format-heading span { color: var(--c-text-3); font-size: var(--font-xs); }
+.chatgpt-import-dialog__format p { margin: 0; line-height: 1.55; }
+.chatgpt-import-dialog__format pre { max-height: 190px; overflow: auto; margin: 0; padding: 10px 12px; color: var(--c-text); background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chatgpt-import-dialog__format code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .chatgpt-import-dialog__content .content-editor textarea { min-height: 220px; resize: vertical; line-height: 1.65; }
 .chatgpt-import-dialog__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
 .chatgpt-import-dialog__actions .setgroup__hint { flex: 1 1 280px; white-space: normal; }
@@ -4810,6 +4832,8 @@ body {
 .flow-canvas__nav-step:has(+ .flow-canvas__nav-step:hover) .flow-canvas__nav-mark, .flow-canvas__nav-step:hover + .flow-canvas__nav-step .flow-canvas__nav-mark { height: max(13px, var(--flow-nav-height, 7px)); opacity: .8; }
 .flow-canvas__nav:has(.flow-canvas__nav-step[aria-current="step"]):not(:has(.flow-canvas__nav-step:is(:hover, :focus-visible))) .flow-canvas__nav-step:not([aria-current="step"]) .flow-canvas__nav-mark,
 .flow-canvas__nav:has(.flow-canvas__nav-step:is(:hover, :focus-visible)) .flow-canvas__nav-step:not(:is(:hover, :focus-visible)) .flow-canvas__nav-mark { opacity: .42; filter: saturate(.75); }
+.flow-canvas__nav:has(.flow-canvas__nav-step[aria-current="step"]):not(:has(.flow-canvas__nav-step:is(:hover, :focus-visible))) .flow-canvas__nav-step[data-focus-distance="1"] .flow-canvas__nav-mark { width: 3px; height: max(17px, var(--flow-nav-height, 7px)); opacity: .82; filter: none; }
+.flow-canvas__nav:has(.flow-canvas__nav-step[aria-current="step"]):not(:has(.flow-canvas__nav-step:is(:hover, :focus-visible))) .flow-canvas__nav-step[data-focus-distance="2"] .flow-canvas__nav-mark { width: 2.5px; height: max(12px, var(--flow-nav-height, 7px)); opacity: .62; filter: none; }
 .flow-canvas__nav-step:is(:hover, :focus-visible) .flow-canvas__nav-mark,
 .flow-canvas__nav-step[aria-current="step"] .flow-canvas__nav-mark { filter: drop-shadow(0 0 4px currentColor); }
 .flow-canvas__nav-label { visibility: hidden; opacity: 0; transform: translateY(-4px); transition: opacity .16s ease, transform .16s ease, visibility .16s; position: absolute; z-index: 6; top: calc(100% + 20px); width: max-content; max-width: 300px; padding: 8px 10px; border: 1px solid var(--c-border); border-radius: 7px; background: var(--c-surface); color: var(--c-text); font-size: var(--font-sm); line-height: 1.5; text-wrap: balance; box-shadow: 0 5px 20px #0005; pointer-events: none; }

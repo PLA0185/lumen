@@ -21,6 +21,10 @@ export interface CloudStatus {
   lastScan: string | null; lastUpload: string | null; lastError: string | null
   retryUntil: number
 }
+export interface CloudConnectInput {
+  provider: 'github'; server: string; account: string; folder: string
+  owner: string; repository: string; branch: string; password: string; inheritAll: boolean
+}
 export interface MemoRevision { version: number; id: string; parents: string[]; document: MemoDocument }
 export interface CloudHistory { heads: string[]; versions: MemoRevision[] }
 export interface BusinessRevision {
@@ -29,8 +33,10 @@ export interface BusinessRevision {
 }
 export interface BusinessConflict { id: string; table: string; heads: string[]; versions: BusinessRevision[] }
 export const cloudStatus = () => call<CloudStatus>('cloud_sync_status')
-export const cloudConnect = (input: { provider: 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; inheritAll: boolean }) =>
+export const cloudConnect = (input: CloudConnectInput) =>
   call<CloudStatus>('cloud_sync_connect', { input })
+export const cloudClearLegacyWorkspace = (input: CloudConnectInput) =>
+  call<void>('cloud_sync_clear_legacy_workspace', { input })
 export const cloudEnable = (enabled: boolean) => call<CloudStatus>('cloud_sync_set_enabled', { enabled })
 export const cloudInheritance = (inheritAll: boolean) => call<CloudStatus>('cloud_sync_set_inheritance', { inheritAll })
 export const cloudNow = (options?: SyncOptions) => call<CloudStatus>('cloud_sync_now', { options: options ?? null })

@@ -1,3 +1,17 @@
+# Lumen 0.4.50
+
+- 旧 GitHub 同步空间无法解密时，点击一次确认即可删除该同步目录的当前云端文件，并立即从本机数据重建连接；不再要求去另一台电脑升级或先单独清理、再重新连接。GitHub 提交历史仍保留旧加密版本，本机及其他设备数据库不会删除。
+- 本版本同时包含 0.4.49 的紧凑日期选择条、流程节点邻近刻度放大、ChatGPT 备忘/流程格式提示和 DeepSeek 原生联网核对。
+- Release workflow 支持和 Windows 安装包一起构建、发布 Android ARM64 APK；首次运行前需配置稳定的 Android 签名 Secrets，见 `docs/android-release-signing.md`。
+
+# Lumen 0.4.49
+
+- 今天日期选择条改为紧凑单行布局，减少顶部占用；流程节点导航会按所选节点的距离放大两侧刻度，当前选中节点仍最突出。
+- ChatGPT 导入可明确选择新建备忘、新建流程或更新已有记录；界面显示对应 JSON 格式和可复制提示词。流程原图继续保留并可分配到对应步骤，只有确认预览后才保存。
+- 设置 AI 使用 DeepSeek 时，食物热量查询可复用已保存的 DeepSeek API Key 调用原生联网搜索；其他模型仍可单独配置 Tavily。搜索来源先核对后才形成候选。
+- GitHub 旧同步空间缺少密钥包时，可选择清空所选仓库目录的当前 Lumen 文件并重新连接；该操作需用户确认，只清理指定目录，本机数据库不变。旧 GitHub 提交历史仍保留。
+- Windows 与 Android 共用 GitHub 加密同步协议；Release workflow 增加 ARM64 APK 构建，并使用固定 Android 签名密钥。首次发布前需在 GitHub Actions 配置签名 Secrets，说明见 `docs/android-release-signing.md`。
+
 # Lumen 0.4.48
 
 - 云同步遇到任务附件原文件丢失时，可选择本次跳过全部任务及附件，只同步备忘与流程。该选择不会删除本机任务或文件，也不改变默认同步范围；恢复附件后可再次完整同步。

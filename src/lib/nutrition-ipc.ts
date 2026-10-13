@@ -35,6 +35,7 @@ export interface ShoppingImportPreview { fileName: string; drafts: ShoppingDraft
 export interface NutritionImportProgress {
   requestId: string; fileName: string; phase: string; message: string; current: number | null; total: number | null
 }
+export interface NutritionSearchStatus { provider: 'deepseek' | 'tavily'; configured: boolean }
 
 export const nutritionDashboard = (date: string) => invokeData<NutritionDashboard>('nutrition_dashboard', { date })
 export const nutritionSetDailyTarget = (targetKcal: number | null) =>
@@ -71,7 +72,7 @@ export const nutritionShoppingImportCommit = (drafts: ShoppingDraft[]) =>
   invokeData<ShoppingItem[]>('nutrition_shopping_import_commit', { drafts })
 export const nutritionShoppingAddRecipe = (recipeId: string) =>
   invokeData<ShoppingItem[]>('nutrition_shopping_add_recipe', { recipeId })
-export const nutritionSearchKeyStatus = () => invokeData<boolean>('nutrition_search_key_status')
+export const nutritionSearchStatus = () => invokeData<NutritionSearchStatus>('nutrition_search_status')
 export const nutritionSetSearchKey = (key: string) => invokeData<boolean>('nutrition_set_search_key', { key })
 
 export async function nutritionShoppingImportPreview(
