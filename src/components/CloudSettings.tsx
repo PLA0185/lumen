@@ -55,6 +55,18 @@ export function CloudSettings() {
   }
   const updateForm = (patch: Partial<typeof form>) => { setForm(current => ({ ...current, ...patch })); setConnectionFeedback(null) }
   const displayedError = error || status?.lastError || ''
+  const legacySpaceNeedsReset = connectionFeedback?.type === 'error' && connectionFeedback.message.includes('无法解密 GitHub 仓库中的旧同步空间')
+  const clearLegacyWorkspace = () => {
+    const target = `${form.owner}/${form.repository}@${form.branch}/${form.folder || '(仓库根目录)'}`
+    const accepted = window.confirm(`将删除 ${target} 下 Lumen 同步目录的当前云端文件，然后立即从这台电脑的数据重建同步空间。\n\n本机数据库不会删除，其他电脑的本地数据库也不会删除。GitHub 提交历史仍保留旧的加密提交。确认继续？`)
+    if (!accepted) return
+    void run(async () => {
+      await cloud.cloudClearLegacyWorkspace(form)
+      await cloud.cloudConnect(form)
+      setForm(current => ({ ...current, password: '' }))
+      setNotice('旧云端文件已清理，并已从这台电脑的数据重建同步空间。其他电脑使用相同仓库与 GitHub Token 连接即可。')
+    }, { pending: '正在清理旧云端文件并重建同步空间…', success: '旧空间已清理，GitHub 同步已从本机数据重建。', failure: '旧空间已清理，但新同步空间连接失败' })
+  }
   const defaultOptions = status?.config ? cloud.defaultSync(status.config) : defaults
   return <section className="setgroup">
     <h2>云同步 · GitHub 私有仓库</h2>
@@ -73,11 +85,11 @@ export function CloudSettings() {
       </div>
       <label>GitHub Fine-grained Token<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} placeholder="仅授予这个私有仓库 Contents 读写权限" /></label>
       <p className="setgroup__hint">请先在 GitHub 建立并初始化私有仓库（例如添加 README，确保所选分支存在），再创建只授权该仓库、Contents 读写权限的 Fine-grained Token。Token 加密保存在本机凭据库，不会同步；请在每台电脑使用同一个 Token。GitHub 提交历史可作为额外回溯记录；Lumen 的冲突版本仍会分别保留。</p>
-      <p className="setgroup__hint">旧版同步空间会在这台已连接过的电脑下次同步时自动升级保护信息，不需要再找或复制 Lumen 密钥。</p>
+      <p className="setgroup__hint">首次连接会以这台电脑的数据创建云空间；如果仓库里有这台电脑无法解密的旧空间，可以清理旧云端文件并从本机重建。</p>
       <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => updateForm({ inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
       <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.password || !form.owner.trim() || !form.repository.trim() || !form.branch.trim()} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); setForm(f => ({ ...f, password: '' })) }, { pending: '正在验证 GitHub 仓库权限并连接…', success: 'GitHub 私有仓库连接成功；其他电脑使用同一个 GitHub Token 即可加入。', failure: 'GitHub 连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接 GitHub'}</button>
     </fieldset>
-    {connectionFeedback && <div className={`cloud-settings__connect-feedback ${connectionFeedback.type === 'success' ? 'alert alert--ok' : connectionFeedback.type === 'error' ? 'alert alert--error' : connectionFeedback.type === 'waiting' ? 'alert alert--warn' : 'setgroup__hint'}`} role={connectionFeedback.type === 'error' ? 'alert' : 'status'} aria-live={connectionFeedback.type === 'error' ? 'assertive' : 'polite'}>{connectionFeedback.message}</div>}
+    {connectionFeedback && <div className={`cloud-settings__connect-feedback ${connectionFeedback.type === 'success' ? 'alert alert--ok' : connectionFeedback.type === 'error' ? 'alert alert--error' : connectionFeedback.type === 'waiting' ? 'alert alert--warn' : 'setgroup__hint'}`} role={connectionFeedback.type === 'error' ? 'alert' : 'status'} aria-live={connectionFeedback.type === 'error' ? 'assertive' : 'polite'}><p>{connectionFeedback.message}</p>{legacySpaceNeedsReset && <><p>本机无法解密仓库中的旧同步空间。确认后会删除该目录当前云端文件，并立即用这台电脑的本地数据重建；不需要找旧电脑。</p><button type="button" className="btn btn--danger btn--sm" disabled={busy || !form.password || !form.owner.trim() || !form.repository.trim() || !form.branch.trim() || !form.folder.trim()} onClick={clearLegacyWorkspace}>删除旧云端文件并重建</button></>}</div>}
     {status?.config?.provider === 'github' && <>
       <h3>默认同步类型</h3>
       <fieldset disabled={busy} className="cloud-settings__fields">
