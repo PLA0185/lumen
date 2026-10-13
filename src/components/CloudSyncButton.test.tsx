@@ -80,46 +80,40 @@ it('云同步设置保存默认内容和方向，不重连也不需要重新填�
 it('云同步设置把自动同步开关和上传队列状态分开说明', async () => {
   vi.spyOn(cloud, 'cloudStatus').mockResolvedValue({ ...connected, config: { ...connected.config, enabled: true } })
   vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
-  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-saved-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
   expect(document.body.textContent).toContain('自动同步开关：已开启')
   expect(document.body.textContent).toContain('待上传云端：2 项变更（尚未上传）')
   expect(document.body.textContent).toContain('“全部业务数据”还会加密同步知识库原件与解析正文')
-  const key = document.querySelector('[aria-label="Lumen 同步密钥"]') as HTMLInputElement
-  expect(key.value).toBe('LUMEN1-saved-key')
-  expect(key.type).toBe('password')
-  await click('显示密钥')
-  expect(key.type).toBe('text')
+  expect(document.body.textContent).toContain('不需要单独复制或填写 Lumen 密钥')
+  expect(document.querySelector('[aria-label="Lumen 同步密钥"]')).toBeNull()
 })
-it('检测到旧版配置时说明其已暂停并保留旧同步密钥', async () => {
+it('检测到旧版配置时说明其已暂停且旧云端不会迁移', async () => {
   const legacy = { ...connected, config: { ...connected.config!, provider: 'webDav' as const, enabled: true } }
   vi.spyOn(cloud, 'cloudStatus').mockResolvedValue(legacy)
   vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
-  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-legacy-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
   expect(document.body.textContent).toContain('此版本已停止该连接')
   expect(document.body.textContent).toContain('旧云端内容不会自动搬到 GitHub')
-  expect(document.body.textContent).toContain('当前设备原有的同步密钥')
+  expect(document.body.textContent).not.toContain('Lumen 同步密钥')
   expect(document.body.textContent).not.toContain('自动同步开关：已开启')
   expect(document.body.textContent).not.toContain('立即同步')
 })
-it('首次连接成功后立即显示可复制的 Lumen 同步密钥', async () => {
+it('首次连接不要求 Lumen 密钥，其他设备使用相同 GitHub Token', async () => {
   let current: cloud.CloudStatus = { ...connected, config: null }
   vi.spyOn(cloud, 'cloudStatus').mockImplementation(async () => current)
   vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
   vi.spyOn(cloud, 'cloudConnect').mockImplementation(async () => { current = connected; return connected })
-  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-test-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
-  expect(document.body.textContent).toContain('尚未连接，首次连接成功后会生成同步密钥')
+  expect(document.body.textContent).toContain('请在每台电脑使用同一个 Token')
   await fill('GitHub 用户名或组织', 'PLA0185')
   await fill('私有仓库名', 'lumen-sync')
   await fill('GitHub Fine-grained Token', 'github_pat_example')
   await click('验证并连接 GitHub')
-  expect((document.querySelector('[aria-label="Lumen 同步密钥"]') as HTMLInputElement).value).toBe('LUMEN1-test-key')
-  expect(document.body.textContent).toContain('复制 Lumen 同步密钥')
+  expect(document.body.textContent).toContain('其他电脑使用同一个 GitHub Token 即可加入')
+  expect(document.querySelector('[aria-label="Lumen 同步密钥"]')).toBeNull()
 })
 it('设置页只提供 GitHub，同步连接提交仓库和分支信息', async () => {
   let current: cloud.CloudStatus = { ...connected, config: null }
@@ -128,7 +122,6 @@ it('设置页只提供 GitHub，同步连接提交仓库和分支信息', async 
   const githubConfig = { ...connected.config!, provider: 'github' as const, owner: 'PLA0185', repository: 'lumen-sync', branch: 'main' }
   const githubStatus = { ...connected, config: githubConfig }
   const connect = vi.spyOn(cloud, 'cloudConnect').mockImplementation(async () => { current = githubStatus; return githubStatus })
-  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-github-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
   await fill('GitHub 用户名或组织', 'PLA0185')
@@ -144,7 +137,6 @@ it('验证云空间期间显示进行中状态，完成后明确显示连接成�
   vi.spyOn(cloud, 'cloudBusinessConflicts').mockResolvedValue([])
   let finishConnect!: (status: cloud.CloudStatus) => void
   const connect = vi.spyOn(cloud, 'cloudConnect').mockImplementation(() => new Promise(resolve => { finishConnect = resolve }))
-  vi.spyOn(cloud, 'cloudRecoveryCode').mockResolvedValue('LUMEN1-test-key')
   const host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   await act(async () => root!.render(<CloudSettings />))
   await fill('GitHub 用户名或组织', 'PLA0185')

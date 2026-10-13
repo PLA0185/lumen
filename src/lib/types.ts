@@ -288,7 +288,11 @@ export interface BackendError {
 
 /** 侧边栏导航项标识（§3：主界面至少包含这些入口） */
 export type ViewId =
-  | 'weekly-recurring'
+  | 'recurring-daily'
+  | 'recurring-weekly'
+  | 'recurring-monthly'
+  | 'recurring-quarterly'
+  | 'recurring-yearly'
   | 'memos'
   | 'flows'
   | 'knowledge'

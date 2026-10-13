@@ -11,7 +11,7 @@ import { ContentMarkdown } from './ContentMarkdown'
  *
  * - **计划时间**：决定任务出现在「今天」和日历的哪一天
  * - **截止时间**：只用于逾期判断，可以为空
- * - **提醒**：在任务卡片展开区单独设置（不混进这个表单）
+ * - **提醒**：与计划、截止时间分开设置；可在此处或任务卡片详情中管理
  *
  * 每个时间都可独立选择「仅日期」或「精确到时刻」——用时间输入框是否填值
  * 来表达，而不是让用户在两个模式间切换（§4.3 禁止把全天任务当作凌晨到期）。
@@ -35,6 +35,7 @@ import type { Category, ProjectWithCount, Tag, TagWithCount } from '../lib/organ
 import { Icon } from './Icons'
 import { ScopeDialog } from './ScopeDialog'
 import { SeriesRuleDialog } from './SeriesRuleDialog'
+import { ReminderEditor } from './ReminderEditor'
 import { onDataChanged } from '../lib/data-change'
 import { loadTaskEditorOptions, saveTaskWithOptionalTags } from '../lib/task-editor-options'
 
@@ -370,6 +371,12 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
   const availableTags = tags.filter((tag) => !tagIds.includes(tag.id) &&
     tag.name.toLocaleLowerCase().includes(tagSearch.trim().toLocaleLowerCase()))
   const hasAuxError = Object.values(auxErrors).some(Boolean)
+  const storedPlanned = fromUtcIso(task.plannedAt)
+  const storedDue = fromUtcIso(task.dueAt)
+  const scheduleDirty = plannedDate !== toDateInput(storedPlanned) ||
+    plannedTime !== (task.hasPlannedTime === 1 ? toTimeInput(storedPlanned) : '') ||
+    dueDate !== toDateInput(storedDue) ||
+    dueTime !== (task.hasDueTime === 1 ? toTimeInput(storedDue) : '')
 
   return (
     <>
@@ -534,7 +541,7 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
         <fieldset className="formfieldset">
           <legend>时间</legend>
           <p className="setgroup__hint" style={{ marginTop: 0 }}>
-            计划时间决定任务出现在哪一天；截止时间用于判断逾期。提醒在任务卡片中设置。
+            计划时间决定任务出现在哪一天；截止时间用于判断逾期；提醒时刻单独设置。
             只填日期表示全天。
           </p>
 
@@ -608,6 +615,16 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
             </div>
           </div>
         </fieldset>
+
+        <p className="setgroup__hint">提醒可设为计划 / 截止时刻、提前一段时间或自定义时刻。更改计划或截止时间后，请先保存，再添加依赖它的提醒。</p>
+        <ReminderEditor
+          taskId={task.id}
+          hasPlanned={Boolean(task.plannedAt)}
+          hasDue={Boolean(task.dueAt)}
+          taskDone={status === 'done'}
+          creationDisabledReason={scheduleDirty ? '当前计划或截止时间尚未保存。先保存任务，再添加依赖它的提醒；自定义时刻仍可直接添加。' : undefined}
+          onEditRecurringRule={task.seriesId && task.occurrenceKey ? () => setShowRuleEditor(true) : undefined}
+        />
 
         <details className="editor-advanced editor-advanced--compact" open={timeTagsOpen}
           onToggle={(e) => setTimeTagsOpen(e.currentTarget.open)}>

@@ -446,7 +446,6 @@ pub fn run() {
             cloud_sync::cloud_sync_status,
             cloud_sync::cloud_sync_connect,
             cloud_sync::cloud_sync_set_enabled,
-            cloud_sync::cloud_sync_recovery_code,
             cloud_sync::cloud_sync_now,
             cloud_sync::cloud_sync_set_defaults,
             cloud_sync::cloud_sync_history,
@@ -472,6 +471,7 @@ pub fn run() {
             attachments::attachment_cleanup_orphans,
             // ---- 重复系列（§5）----
             weekly_recurring::recurring_weekly_list,
+            weekly_recurring::recurring_list,
             recurrence_service::recurring_create,
             recurrence_service::recurring_preview,
             recurrence_service::recurring_materialize,

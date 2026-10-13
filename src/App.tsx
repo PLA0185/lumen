@@ -44,7 +44,11 @@ import { Icon } from './components/Icons'
 
 /** 具备真实实现的视图（其余显示"尚未实现"，杜绝假界面） */
 const IMPLEMENTED_VIEWS = new Set<ViewId>([
-  'weekly-recurring',
+  'recurring-daily',
+  'recurring-weekly',
+  'recurring-monthly',
+  'recurring-quarterly',
+  'recurring-yearly',
   'memos',
   'flows',
   'knowledge',
@@ -662,7 +666,11 @@ export default function App() {
               <QuickAdd
                 defaultPlannedDate={defaults.plannedDate}
                 defaultPeriodType={defaults.periodType}
-                defaultRepeat={view === 'weekly-recurring' ? 'weekly' : 'none'}
+                defaultRepeat={view === 'recurring-daily' ? 'daily'
+                  : view === 'recurring-weekly' ? 'weekly'
+                    : view === 'recurring-monthly' ? 'monthly'
+                      : view === 'recurring-quarterly' ? 'quarterly'
+                        : view === 'recurring-yearly' ? 'yearly' : 'none'}
                 context={creationContext}
                 onCreated={onCreated}
                 onRecurringCreated={async (warning) => {
@@ -960,7 +968,10 @@ function TaskArea({
   if (view === 'settings') {
     return <SettingsView isAndroid={isAndroid} />
   }
-  if (view === 'weekly-recurring') return <WeeklyRecurringView query={search} />
+  const recurringFrequency = view.startsWith('recurring-') ? view.slice('recurring-'.length) : null
+  if (recurringFrequency === 'daily' || recurringFrequency === 'weekly' || recurringFrequency === 'monthly'
+    || recurringFrequency === 'quarterly' || recurringFrequency === 'yearly')
+    return <WeeklyRecurringView query={search} frequency={recurringFrequency} />
   if (view === 'assistant') return <AiAssistant />
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）

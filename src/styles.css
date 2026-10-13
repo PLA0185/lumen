@@ -4702,6 +4702,24 @@ body {
 .memos__list, .memos__document { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 10px; padding: 16px; min-width: 0; }
 .memos__list { max-height: calc(100vh - 230px); overflow-y: auto; }
 .memos__count { color: var(--c-text-3); font-size: var(--font-xs); margin-bottom: 12px; }
+.chatgpt-import-dialog { width: min(880px, calc(100vw - 24px)); max-width: none; max-height: calc(100vh - 32px); padding: 0; overflow: auto; color: var(--c-text); background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.chatgpt-import-dialog::backdrop { background: rgb(0 0 0 / 58%); backdrop-filter: blur(2px); }
+.chatgpt-import-dialog__inner { display: grid; gap: 14px; padding: 20px; }
+.chatgpt-import-dialog__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.chatgpt-import-dialog__header h2 { margin: 0 0 5px; font-size: var(--font-lg); }
+.chatgpt-import-dialog__header p { margin: 0; color: var(--c-text-2); line-height: 1.6; }
+.chatgpt-import-dialog__target, .chatgpt-import-dialog__content { display: grid; gap: 7px; color: var(--c-text-2); font-size: var(--font-sm); }
+.chatgpt-import-dialog__content .content-editor textarea { min-height: 220px; resize: vertical; line-height: 1.65; }
+.chatgpt-import-dialog__actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
+.chatgpt-import-dialog__actions .setgroup__hint { flex: 1 1 280px; white-space: normal; }
+.chatgpt-import-dialog__preview { display: grid; gap: 12px; max-height: min(58vh, 620px); overflow: auto; padding: 16px; background: var(--c-bg); border: 1px solid var(--c-border); border-radius: var(--radius); }
+.chatgpt-import-dialog__change { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.chatgpt-import-dialog__preview h3 { margin: 0; }
+.chatgpt-import-dialog__preview h4 { margin: 0 0 7px; }
+.chatgpt-import-dialog__markdown { max-height: 34vh; overflow: auto; padding: 12px; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: var(--radius-sm); }
+.chatgpt-import-dialog__preview ol { padding-left: 24px; }
+.chatgpt-import-dialog__preview li { margin: 10px 0; }
+.chatgpt-import-dialog__preview .mdpreview { overflow-wrap: anywhere; }
 .memos__item { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 12px; width: 100%; color: var(--c-text); cursor: pointer; overflow-wrap: anywhere; }
 .memos__item:hover, .memos__item--active { background: var(--c-surface-2); border-color: var(--c-accent); }
 .memos__item span { color: var(--c-text-3); font-size: var(--font-xs); }
@@ -4893,11 +4911,6 @@ body {
 .cloud-settings__fields label { display: grid; gap: 6px; }
 .cloud-settings__fields-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 @media (max-width: 620px) { .cloud-settings__fields-row { grid-template-columns: 1fr; } }
-.cloud-sync-key { max-width: 700px; margin: 16px 0; padding: 14px; border: 1px solid var(--c-border); border-radius: 10px; background: var(--c-surface); }
-.cloud-sync-key h3 { margin: 0 0 6px; }
-.cloud-sync-key__row { display: flex; align-items: center; gap: 8px; }
-.cloud-sync-key__row .input { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; }
-@media (max-width: 700px) { .cloud-sync-key__row { flex-wrap: wrap; } .cloud-sync-key__row .input { flex-basis: 100%; } }
 .cloud-settings__version { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow: auto; }
 .cloud-history { position: fixed; inset: 0; background: #0009; display: grid; place-items: center; z-index: 1000; padding: 20px; }
 .cloud-history__panel { background: var(--bg-panel, #171a21); border: 1px solid var(--border, #343b49); border-radius: 12px; padding: 20px; width: min(800px, 95vw); max-height: 90vh; overflow: auto; }

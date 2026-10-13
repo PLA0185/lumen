@@ -443,7 +443,6 @@ fn legacy_cloud_config_defaults_to_webdav_and_github_requires_private_repo_token
         "account": "",
         "folder": "Lumen",
         "password": "token",
-        "recoveryCode": "",
         "inheritAll": true
     }))
     .unwrap();
@@ -1798,4 +1797,61 @@ async fn alias_audit_rebuilt_occurrence_accepts_peer_edit_without_duplicate() {
     );
     close(a).await;
     close(b).await;
+}
+
+#[test]
+fn github_token_opens_wrapped_sync_key_without_a_separate_lumen_key() {
+    let input = ConnectInput {
+        provider: Provider::GitHub,
+        server: String::new(),
+        account: String::new(),
+        folder: "Lumen".into(),
+        owner: "PLA0185".into(),
+        repository: "lumen-sync".into(),
+        branch: "main".into(),
+        password: "github_pat_test_value".into(),
+        inherit_all: true,
+    };
+    let data_key = [71; 32];
+    let envelope = wrap_workspace_key(
+        &data_key,
+        &input.owner,
+        &input.repository,
+        &input.branch,
+        &input.folder,
+        &input.password,
+        "workspace-test",
+    )
+    .unwrap();
+    assert_eq!(
+        unwrap_workspace_key(
+            &envelope,
+            &input.owner,
+            &input.repository,
+            &input.branch,
+            &input.folder,
+            &input.password,
+            "workspace-test",
+        )
+        .unwrap(),
+        data_key
+    );
+    assert!(!envelope.contains(&URL_SAFE_NO_PAD.encode(data_key)));
+    assert!(unwrap_workspace_key(
+        &envelope,
+        &input.owner,
+        &input.repository,
+        &input.branch,
+        &input.folder,
+        "a-different-token",
+        "workspace-test",
+    )
+    .is_err());
+}
+
+#[test]
+fn old_github_workspace_without_key_envelope_remains_readable_for_upgrade() {
+    let workspace: Workspace =
+        serde_json::from_str(r#"{"version":1,"id":"workspace-test","check":{}}"#).unwrap();
+    assert!(workspace.key_envelope.is_none());
 }

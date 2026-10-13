@@ -38,12 +38,19 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    // 周期任务与上面的「今天/本周安排」是**不同维度**：
-    // 上面按计划时间筛选（任务有具体日期），这里按任务自身的周期跨度筛选
-    // （任务没有具体日期，只声明"这周/这个月做完就行"）。命名必须区分开。
+    label: '重复',
+    items: [
+      { id: 'recurring-daily', icon: 'repeat', label: '每日重复' },
+      { id: 'recurring-weekly', icon: 'repeat', label: '每周重复' },
+      { id: 'recurring-monthly', icon: 'repeat', label: '每月重复' },
+      { id: 'recurring-quarterly', icon: 'repeat', label: '每季度重复' },
+      { id: 'recurring-yearly', icon: 'repeat', label: '每年重复' },
+    ],
+  },
+  {
+    // 周期任务与「重复」视图不同：它按任务自身的完成窗口筛选，不是循环系列。
     label: '周期任务',
     items: [
-      { id: 'weekly-recurring', icon: 'repeat', label: '每周重复' },
       { id: 'period-week', icon: 'period-week', label: '周任务' },
       { id: 'period-month', icon: 'period-month', label: '月任务' },
       { id: 'period-quarter', icon: 'period-quarter', label: '季度任务' },
@@ -75,7 +82,11 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** 视图标题与说明。说明文字用于向用户解释该视图的口径（§4.2 要求规则明确）。 */
 export const VIEW_META: Record<ViewId, { title: string; subtitle: string }> = {
-  'weekly-recurring': { title: '每周重复', subtitle: '查看每周特定一天或几天执行的重复任务，编辑星期和节假日规则' },
+  'recurring-daily': { title: '每日重复', subtitle: '每个重复系列只显示一次，不展开每天的任务实例' },
+  'recurring-weekly': { title: '每周重复', subtitle: '查看每周特定一天或几天执行的系列，编辑星期和节假日规则' },
+  'recurring-monthly': { title: '每月重复', subtitle: '查看按月执行的重复系列；每个系列只显示一次' },
+  'recurring-quarterly': { title: '每季度重复', subtitle: '查看每三个月执行一次的重复系列；每个系列只显示一次' },
+  'recurring-yearly': { title: '每年重复', subtitle: '查看按年执行的重复系列；每个系列只显示一次' },
   memos: { title: '备忘', subtitle: '记录业务要点、术语和常用资料，随时查阅完整内容' },
   flows: { title: '业务流程', subtitle: '按步骤整理操作路线，查看负责人、材料和注意事项' },
   knowledge: { title: '知识库问答', subtitle: '检索导入资料与已保存流程，答案附带可核实的来源' },

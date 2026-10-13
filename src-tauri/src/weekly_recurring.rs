@@ -22,6 +22,10 @@ pub struct WeeklyArrangement {
     pub open_count: i64,
     #[sqlx(default)]
     pub description: String,
+    #[sqlx(default)]
+    pub frequency: String,
+    #[sqlx(default)]
+    pub interval: i64,
 }
 
 pub async fn list_impl(db: &Db, now: &str) -> AppResult<Vec<WeeklyArrangement>> {
@@ -55,10 +59,15 @@ pub async fn list_impl(db: &Db, now: &str) -> AppResult<Vec<WeeklyArrangement>> 
             &row.dtstart_local,
             row.has_start_time != 0,
         )?;
-        if rule.freq != Freq::Weekly {
-            continue;
-        }
         row.description = rule.describe();
+        row.frequency = match rule.freq {
+            Freq::Daily => "daily",
+            Freq::Weekly => "weekly",
+            Freq::Monthly => "monthly",
+            Freq::Yearly => "yearly",
+        }
+        .to_string();
+        row.interval = rule.interval;
         result.push(row);
     }
     Ok(result)
@@ -68,6 +77,19 @@ pub async fn list_impl(db: &Db, now: &str) -> AppResult<Vec<WeeklyArrangement>> 
 pub async fn recurring_weekly_list(
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WeeklyArrangement>> {
+    weekly_list_impl(&state.db, &now_stamp()).await
+}
+
+async fn weekly_list_impl(db: &Db, now: &str) -> AppResult<Vec<WeeklyArrangement>> {
+    Ok(list_impl(db, now)
+        .await?
+        .into_iter()
+        .filter(|row| row.frequency == "weekly")
+        .collect())
+}
+
+#[tauri::command]
+pub async fn recurring_list(state: State<'_, AppState>) -> AppResult<Vec<WeeklyArrangement>> {
     list_impl(&state.db, &now_stamp()).await
 }
 
@@ -92,6 +114,8 @@ mod tests {
         }
         let items = list_impl(&db, "2026-09-30T00:00:00.000Z").await.unwrap();
         assert_eq!(items.len(), 1);
+        assert_eq!(items[0].frequency, "weekly");
+        assert_eq!(items[0].interval, 1);
         assert_eq!(items[0].open_count, 2);
         assert_eq!(items[0].task_id.as_deref(), Some("b"));
         assert!(
@@ -100,7 +124,10 @@ mod tests {
                 && items[0].description.contains("法定节假日")
         );
         sqlx::query("INSERT INTO task_series_segments(id,series_id,rule_version,effective_from_occurrence,new_rrule,created_at) VALUES ('segment','s',2,'2026-09-30T01:00:00.000Z','FREQ=DAILY','2026-09-20')").execute(db.pool()).await.unwrap();
-        assert!(list_impl(&db, "2026-09-30T00:00:00.000Z")
+        let items = list_impl(&db, "2026-09-30T00:00:00.000Z").await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].frequency, "daily");
+        assert!(weekly_list_impl(&db, "2026-09-30T00:00:00.000Z")
             .await
             .unwrap()
             .is_empty());

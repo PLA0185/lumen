@@ -3982,3 +3982,64 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [重复规则时间和提醒生成](../src-tauri/src/recurrence_service.rs)、[提醒单次例外处理](../src-tauri/src/reminders.rs)
 - [重复规则编辑器](../src/components/RuleEditor.tsx)、[提醒栏入口](../src/components/ReminderEditor.tsx)
 - [OpenAI ChatGPT MCP 连接说明](https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt)、[Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+
+## 第 86 轮 · 2026-10-12 · ChatGPT 内容导入与确认
+
+### 做了
+
+- 第 85 轮重复提醒 PR #8 的 GitHub CI run 122 全部通过，PR 已合并至 `main`（merge commit `9b84277`）。
+- 在“备忘与流程”增加“ChatGPT 导入”，网页版和桌面版均可复制内容后粘贴；支持 Markdown、纯文本及结构化 JSON，可新建或选择现有记录。
+- 导入先生成本机预览，只有点击“确认并保存”才调用写入接口。修改旧记录使用原 revision，检测到并发修改时保留预览并显示错误。
+- 流程 Markdown 的步骤标题和内容被解析为各个流程步骤。更新既有流程时，标题完全匹配的步骤保留原图；未能对应到新步骤的旧图片移入待分配内容，预览可重新分配，未分配图片或空步骤标题时不能确认保存。
+- 侧栏“重复”大类拆出每日、每周、每月、每季度、每年入口。每页由后端按当前有效规则列出每个系列一次；每三个月一次的月频率系列归入季度页。新建入口会预选相应重复规则。
+- 任务编辑窗口直接显示提醒类型和具体时刻选项。计划或截止时间尚未保存时禁用依赖型提醒创建，自定义时刻仍可使用；系列任务可从同一区域进入每次重复提醒设置。
+- 更新到 0.4.43，补充用户说明、ChatGPT MCP 权限限制和 OpenAI 官方连接要求文档；没有添加数据库迁移或外部服务。
+
+### 没做到
+
+- ChatGPT 原生 MCP 直连写入尚未实现。OpenAI 当前将完整 MCP 写入列为 Business、Enterprise 和 Edu 计划能力；用户当前为 Plus，且没有 Platform 隧道账号/凭据，无法在当前账号启用原生写入。当前交付的是无需 API Key 的复制粘贴入口。
+- 没有在真实 ChatGPT 网页版或桌面版、也没有在另一台电脑上完成手工复制粘贴实机验收；当前验证覆盖本机界面和导入解析。
+- 图片或文件在预览前会先导入本机资源库；取消时不会关联到备忘或流程，但资源库不会立即删除未使用的资源。
+- 本轮没有生成、签名或安装 0.4.43 正式安装包；PR CI 结果仍待远程验证。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.43）、`pnpm typecheck`、定向导入测试（32 项）、完整前端测试（53 个文件、393 项）、`pnpm build`、`pnpm lint`、`git diff --check` 均实际运行并通过。构建保留已有的动态导入提示。
+- `cargo fmt --check` 与严格 `cargo clippy --all-targets --all-features -- -D warnings` 实际运行并通过。
+- `cargo test --lib` 汇报 585 项通过、4 项忽略，但 Windows 测试进程在结果汇总后仍不退出；为避免遗留进程，汇总后中断命令，故其退出码为 1，不能记作完整命令通过。本轮 PR 的 GitHub CI 将作为最终 Rust 验收。
+- OpenAI 官方 ChatGPT MCP 说明确认完整写入计划和本地 MCP 连接方式；Secure MCP Tunnel 指南确认直连需要 Platform `tunnel_id`、运行时 API Key、可访问的 MCP 服务和工作区权限。
+
+### 相关文档
+
+- [ChatGPT 内容导入实现与边界](chatgpt-content-import-2026-10-12.md)
+- [ChatGPT 导入窗口](../src/components/ChatGPTContentImportDialog.tsx)、[Markdown / JSON 解析与流程图片保留](../src/lib/chatgpt-content-import.ts)
+- [0.4.43 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)
+- [OpenAI ChatGPT MCP 说明](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)、[Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+
+## 第 87 轮 · 2026-10-13 · 取消单独的 Lumen 云同步密钥
+
+### 做了
+
+- 移除云同步设置中的 Lumen 密钥显示、复制和填写框，同时移除相关前端 IPC 与 Tauri 命令；加入另一台电脑只使用同一个 GitHub Fine-grained Token。
+- 保留业务数据 AES-256-GCM 加密。GitHub Token 通过带仓库和空间上下文的派生密钥保护内部数据密钥包；Token 不离开本机凭据库。Token 不一致时拒绝覆盖，Token 轮换须在已有设备主动重新连接，避免旧设备把保护信息回写成旧 Token。
+- 已连接旧版 GitHub 空间会在旧设备首次扫描同步时补写加密密钥包；WebDAV 仍停用，不触碰旧云端内容。
+- 更新云同步文档与 0.4.44 版本记录；没有改数据库或新增迁移。
+- PR #9 已创建；原始代码提交 `dffde3c` 的 GitHub CI run 124 前端与 Rust 全部通过，合并等待最终记录提交 CI。
+
+### 没做到
+
+- 没有可用的用户 GitHub 仓库凭据，本机未进行真实 GitHub 授权，也未在第二台电脑验证 Token 加入和双向同步。0.4.44 尚未构建、签名、安装或发布。
+- GitHub PAT 必须在每台设备相同；轮换 Token 需要一台已有连接设备先重新验证。旧 GitHub 空间需要一台保留原本机密钥的电脑升级后完成一次同步，之后新电脑才能加入。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.44）、`pnpm typecheck`、云同步界面定向测试（11 项）、`pnpm test`（53 个文件、399 项）、`pnpm build`、`pnpm lint` 均实际运行并通过；构建保留已有动态导入提示。
+- `cargo fmt --check`、Token 自动解开密钥包定向测试（1 项）、严格 `cargo clippy --all-targets --all-features -- -D warnings` 和 `git diff --check` 实际运行并通过。
+- 完整 `cargo test --lib` 汇报 587 项通过、4 项忽略，但 Windows 测试进程在结果汇总后仍未退出；汇总后中断命令，退出码为 1，不能记作完整命令通过。PR #9 的 GitHub CI run 124 正常完成了 Rust 格式、编译、测试及严格 Clippy，并且前端类型检查、399 项测试、构建与 lint 全部通过。
+- 前端测试首次因文案断言与新 UI 文案不一致而失败，更新断言后 11 项定向测试及 399 项完整前端套件均通过。
+
+### 相关文档
+
+- [GitHub 私有仓库云同步实现说明](github-cloud-sync-implementation-2026-10-12.md)
+- [0.4.44 发布说明](../RELEASE_NOTES.md)
+- [GitHub 云同步设置与实现](../src/components/CloudSettings.tsx)、[密钥包及迁移实现](../src-tauri/src/cloud_sync.rs)
