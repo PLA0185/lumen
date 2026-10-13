@@ -1748,6 +1748,7 @@ input[type='color'] {
 
 .remrow {
   display: flex;
+  flex-wrap: wrap;
   gap: 9px;
   align-items: center;
   padding: 4px 8px;
@@ -1774,11 +1775,40 @@ input[type='color'] {
   gap: 2px;
 }
 
+.remrow__edit {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 6px;
+  padding: 5px 0 2px;
+}
+
+.remrow__edit label,
+.remnew__time-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--c-text-2);
+  font-size: 0.82em;
+}
+
+.remnew__time-field .input {
+  min-width: 210px;
+}
+
 .remnew {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.quickadd__subtasks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
 }
 
 .remnew__hint {

@@ -58,12 +58,64 @@ pub enum SubtaskCompletionMode {
 }
 
 impl SubtaskCompletionMode {
-    fn as_db(self) -> &'static str {
+    pub fn as_db(self) -> &'static str {
         match self {
             Self::Free => "free",
             Self::Sequential => "sequential",
         }
     }
+}
+
+pub fn parse_completion_mode(raw: Option<&str>) -> AppResult<SubtaskCompletionMode> {
+    match raw.unwrap_or("free") {
+        "free" => Ok(SubtaskCompletionMode::Free),
+        "sequential" => Ok(SubtaskCompletionMode::Sequential),
+        other => Err(AppError::validation(format!("子任务完成方式非法：{other}"))),
+    }
+}
+
+pub fn templates_from_titles(titles: &[String]) -> AppResult<Vec<SubtaskTemplate>> {
+    let titles: Vec<&str> = titles
+        .iter()
+        .map(|title| title.trim())
+        .filter(|title| !title.is_empty())
+        .collect();
+    if titles.len() > 1000 {
+        return Err(AppError::validation("一个任务最多 1000 个子任务"));
+    }
+    let mut templates = Vec::with_capacity(titles.len());
+    for (index, title) in titles.into_iter().enumerate() {
+        validate_title(title)?;
+        templates.push(SubtaskTemplate {
+            id: uuid::Uuid::now_v7().to_string(),
+            title: title.to_string(),
+            sort_order: index as f64 + 1.0,
+        });
+    }
+    Ok(templates)
+}
+
+pub async fn insert_plain_subtasks(
+    tx: &mut Transaction<'_, Sqlite>,
+    task_id: &str,
+    templates: &[SubtaskTemplate],
+    now: &str,
+) -> AppResult<()> {
+    for item in templates {
+        sqlx::query(
+            "INSERT INTO subtasks
+            (id,task_id,title,sort_order,is_done,completed_at,created_at,updated_at)
+            VALUES (?1,?2,?3,?4,0,NULL,?5,?5)",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(task_id)
+        .bind(&item.title)
+        .bind(item.sort_order)
+        .bind(now)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -591,7 +643,8 @@ async fn reorder_subtasks(
 mod tests {
     use super::*;
     use crate::recurrence_service::{
-        create_recurring_impl, list_instances, recurring_materialize_inner, CreateRecurringInput,
+        create_recurring_impl, create_recurring_with_subtasks_impl, list_instances,
+        recurring_materialize_inner, CreateRecurringInput,
     };
     use crate::subtasks::{create_subtask_impl, update_subtask_impl, SubtaskPatch};
 
@@ -799,6 +852,57 @@ mod tests {
         .await
         .unwrap();
         assert!(reset.completed_at.is_none());
+        close(state, dir).await;
+    }
+
+    #[tokio::test]
+    async fn recurring_creation_applies_ordered_subtask_templates_to_each_occurrence() {
+        let dir = std::env::temp_dir().join(format!(
+            "lumen-recurring-create-subtasks-{}",
+            uuid::Uuid::now_v7()
+        ));
+        let state = AppState::new(Db::init(&dir).await.unwrap());
+        let result = create_recurring_with_subtasks_impl(
+            &state,
+            CreateRecurringInput {
+                title: "每周工作".into(),
+                description: None,
+                priority: None,
+                project_id: None,
+                category_id: None,
+                estimated_minutes: None,
+                tag_ids: vec![],
+                rrule: "FREQ=WEEKLY;COUNT=3".into(),
+                tzid: Some("UTC".into()),
+                dtstart_local: "2026-09-28T09:00:00".into(),
+                has_start_time: Some(true),
+                due_local: None,
+                materialize_days: Some(20),
+            },
+            &["第一步".into(), "第二步".into()],
+            Some("sequential"),
+        )
+        .await
+        .unwrap();
+        let instances = list_instances(&state, &result.series_id).await.unwrap();
+        assert_eq!(instances.len(), 3);
+        for instance in &instances {
+            let children = items(&state, &instance.id).await;
+            assert_eq!(
+                children
+                    .iter()
+                    .map(|item| item.title.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["第一步", "第二步"]
+            );
+            let mode: String =
+                sqlx::query_scalar("SELECT subtask_completion_mode FROM tasks WHERE id=?1")
+                    .bind(&instance.id)
+                    .fetch_one(state.db.pool())
+                    .await
+                    .unwrap();
+            assert_eq!(mode, "sequential");
+        }
         close(state, dir).await;
     }
 

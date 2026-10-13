@@ -1622,9 +1622,13 @@ pub(crate) async fn ai_apply_impl(
                     let input: crate::recurrence_service::CreateRecurringInput =
                         serde_json::from_value(it.payload.clone())
                             .map_err(|e| AppError::validation(format!("重复任务参数无效：{e}")))?;
-                    let (series, first, _) =
-                        crate::recurrence_service::create_recurring_seed_tx(&mut tx, &input)
-                            .await?;
+                    let (series, first, _) = crate::recurrence_service::create_recurring_seed_tx(
+                        &mut tx,
+                        &input,
+                        &[],
+                        crate::recurrence_subtasks::SubtaskCompletionMode::Free,
+                    )
+                    .await?;
                     recurring.push((series, first));
                     created += 1;
                     continue;

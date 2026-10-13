@@ -74,6 +74,8 @@ export function QuickAdd({
     hasStartTime: false,
   })
   const [description, setDescription] = useState('')
+  const [subtasksText, setSubtasksText] = useState('')
+  const [subtaskCompletionMode, setSubtaskCompletionMode] = useState<'free' | 'sequential'>('free')
   const [materializeDays, setMaterializeDays] = useState(90)
   const savingRef = useRef(false)
   /** 周期跨度：这周/这个月做完就行，不必定到某天 */
@@ -85,6 +87,7 @@ export function QuickAdd({
   const [dateTouched, setDateTouched] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const draftSnapshot = JSON.stringify({ text, dateStr, timeStr, priority, repeat, rule, description,
+    subtasksText, subtaskCompletionMode,
     materializeDays, periodType, periodTouched, dateTouched, configureReminder })
   const latestDraft = useRef(draftSnapshot)
   latestDraft.current = draftSnapshot
@@ -126,6 +129,8 @@ export function QuickAdd({
     setDateTouched(false)
     setRepeat(defaultRepeat)
     setDescription('')
+    setSubtasksText('')
+    setSubtaskCompletionMode('free')
     setMaterializeDays(90)
     setConfigureReminder(false)
     setRule({ rrule: repeatRrule(defaultRepeat), dtstartLocal: '', hasStartTime: false })
@@ -151,6 +156,7 @@ export function QuickAdd({
         )
         .filter((x): x is string => Boolean(x))
       const tagIds = [...new Set([...(context?.tagIds ?? []), ...parsedTagIds])]
+      const subtasks = subtasksText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
 
       if (repeat !== 'none') {
         if (!rule.dtstartLocal) throw new Error('请选择首次发生的日期')
@@ -166,7 +172,7 @@ export function QuickAdd({
           hasStartTime: rule.hasStartTime,
           materializeDays,
           tzid: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-        })
+        }, { subtasks, subtaskCompletionMode })
         await onRecurringCreated?.(result.warning)
         if (result.warning && !onRecurringCreated) setError(result.warning)
       } else {
@@ -180,7 +186,7 @@ export function QuickAdd({
           plannedAt: dt?.utc ?? null,
           hasPlannedTime: dt?.hasTime ?? false,
           tagIds,
-        })
+        }, { subtasks, subtaskCompletionMode })
         onCreated(task)
         if (configureReminder) onConfigureReminder?.(task)
       }
@@ -209,6 +215,8 @@ export function QuickAdd({
     repeat,
     rule,
     description,
+    subtasksText,
+    subtaskCompletionMode,
     materializeDays,
     context,
     configureReminder,
@@ -461,6 +469,32 @@ export function QuickAdd({
             placeholder="要完成什么、交付要求、注意事项…可分行填写"
           />
         </label>
+      )}
+      {optionsOpen && (
+        <div className="quickadd__subtasks">
+          <label className="formrow">
+            <span className="formlabel">子任务（按行填写，顺序从上到下）</span>
+            <textarea
+              className="input input--area selectable"
+              rows={3}
+              value={subtasksText}
+              onChange={(e) => setSubtasksText(e.target.value)}
+              aria-label="子任务列表，每行一项"
+              placeholder={'例如：\n准备资料\n完成核对\n提交结果'}
+            />
+          </label>
+          <label className="field">
+            子任务完成方式
+            <select
+              value={subtaskCompletionMode}
+              aria-label="子任务完成方式"
+              onChange={(e) => setSubtaskCompletionMode(e.target.value as 'free' | 'sequential')}
+            >
+              <option value="free">自由完成</option>
+              <option value="sequential">按顺序完成</option>
+            </select>
+          </label>
+        </div>
       )}
       {repeat !== 'none' && (
         <fieldset className="formfieldset quickadd__repeat">
