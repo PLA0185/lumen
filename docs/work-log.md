@@ -4065,7 +4065,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.45）、`pnpm typecheck`、完整前端测试（54 个文件、400 项）、`pnpm build`、`pnpm lint`、`git diff --check` 实际运行并通过。构建保留已有动态导入提示。
 - `cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 实际运行并通过；`cargo check --manifest-path src-tauri/Cargo.toml` 更新并核对了锁文件版本。
 - GitHub PR #10 CI run 38336040108、合并后 main CI run 38336532503 和 Release run 38336612322 的完整门禁均成功；Release 已发布，公开 `latest.json` 核对为 0.4.45 且指向对应 Windows 安装包。
-- 设置导航仅以样式和滚动容器代码检查，未做真实窗口验收；Rust 单测和远端 PR CI 的限制见“没做到”。
+- 设置导航仅以样式和滚动容器代码检查，未做真实窗口验收；本机 Rust 单测未正常退出的情况见“没做到”，远端 CI 已完成。
 
 ### 相关文档
 
