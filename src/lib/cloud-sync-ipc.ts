@@ -29,13 +29,12 @@ export interface BusinessRevision {
 }
 export interface BusinessConflict { id: string; table: string; heads: string[]; versions: BusinessRevision[] }
 export const cloudStatus = () => call<CloudStatus>('cloud_sync_status')
-export const cloudConnect = (input: { provider: 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; recoveryCode: string; inheritAll: boolean }) =>
+export const cloudConnect = (input: { provider: 'github'; server: string; account: string; folder: string; owner: string; repository: string; branch: string; password: string; inheritAll: boolean }) =>
   call<CloudStatus>('cloud_sync_connect', { input })
 export const cloudEnable = (enabled: boolean) => call<CloudStatus>('cloud_sync_set_enabled', { enabled })
 export const cloudInheritance = (inheritAll: boolean) => call<CloudStatus>('cloud_sync_set_inheritance', { inheritAll })
 export const cloudNow = (options?: SyncOptions) => call<CloudStatus>('cloud_sync_now', { options: options ?? null })
 export const cloudSetDefaults = (options: SyncOptions) => call<CloudStatus>('cloud_sync_set_defaults', { options })
-export const cloudRecoveryCode = () => call<string>('cloud_sync_recovery_code')
 export const cloudHistory = (id: string) => call<CloudHistory>('cloud_sync_history', { id })
 export const cloudRestore = (id: string, eventId: string, expectedHeads: string[], keepBoth: boolean) =>
   call<MemoDocument>('cloud_sync_restore', { id, eventId, expectedHeads, keepBoth })

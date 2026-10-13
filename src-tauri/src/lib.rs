@@ -446,7 +446,6 @@ pub fn run() {
             cloud_sync::cloud_sync_status,
             cloud_sync::cloud_sync_connect,
             cloud_sync::cloud_sync_set_enabled,
-            cloud_sync::cloud_sync_recovery_code,
             cloud_sync::cloud_sync_now,
             cloud_sync::cloud_sync_set_defaults,
             cloud_sync::cloud_sync_history,

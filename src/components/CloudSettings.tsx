@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import * as cloud from '../lib/cloud-sync-ipc'
 import { IpcError } from '../lib/ipc'
 import { CloudHistory } from './CloudHistory'
@@ -15,25 +14,21 @@ function versionText(row: Record<string, unknown> | null): string {
 }
 export function CloudSettings() {
   const [status, setStatus] = useState<cloud.CloudStatus | null>(null)
-  const [form, setForm] = useState({ provider: 'github' as const, server: '', account: '', folder: 'Lumen', owner: '', repository: '', branch: 'main', password: '', recoveryCode: '', inheritAll: true })
+  const [form, setForm] = useState({ provider: 'github' as const, server: '', account: '', folder: 'Lumen', owner: '', repository: '', branch: 'main', password: '', inheritAll: true })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [connectionFeedback, setConnectionFeedback] = useState<ConnectionFeedback | null>(null)
-  const [syncKey, setSyncKey] = useState('')
-  const [showSyncKey, setShowSyncKey] = useState(false)
   const [historyId, setHistoryId] = useState('')
   const [conflicts, setConflicts] = useState<cloud.BusinessConflict[]>([])
   const [defaults, setDefaults] = useState<cloud.SyncOptions>({ scope: 'all', direction: 'both' })
   useEffect(() => {
     let active = true
     const refresh = () => { void Promise.all([cloud.cloudStatus(), cloud.cloudBusinessConflicts()]).then(([s, c]) => { if (active) { setStatus(s); setConflicts(c) } }).catch(e => { if (active) setError(message(e)) }) }
-    void cloud.cloudStatus().then(async s => {
-      const key = s.config ? await cloud.cloudRecoveryCode() : ''
+    void cloud.cloudStatus().then(s => {
       if (active) {
         setDefaults(cloud.defaultSync(s.config))
         if (s.config) setForm(f => ({ ...f, provider: 'github', folder: s.config!.folder || 'Lumen', owner: s.config!.provider === 'github' ? s.config!.owner : '', repository: s.config!.provider === 'github' ? s.config!.repository : '', branch: s.config!.provider === 'github' ? s.config!.branch : 'main', inheritAll: s.config!.inheritAll }))
-        setSyncKey(key)
       }
     }).catch(e => { if (active) setError(message(e)) })
     refresh(); const timer = setInterval(refresh, 3000)
@@ -60,19 +55,10 @@ export function CloudSettings() {
   const updateForm = (patch: Partial<typeof form>) => { setForm(current => ({ ...current, ...patch })); setConnectionFeedback(null) }
   return <section className="setgroup">
     <h2>云同步 · GitHub 私有仓库</h2>
-    <p className="setgroup__hint">使用 GitHub 私有仓库在多台电脑之间同步。修改先保存在本机，再按默认内容和方向同步；上传前由 Lumen 加密，仓库只保存加密内容。</p>
-    {status?.config?.provider === 'webDav' && <p className="alert alert--warn" role="status">检测到旧版云同步配置，此版本已停止该连接。请在下方配置 GitHub 私有仓库；本机数据和旧同步密钥仍保留，但旧云端内容不会自动搬到 GitHub。</p>}
+    <p className="setgroup__hint">使用 GitHub 私有仓库在多台电脑之间同步。所有电脑升级到此版本后，用同一个 GitHub Token 即可；内容仍会加密，不需要单独复制或填写 Lumen 密钥。</p>
+    {status?.config?.provider === 'webDav' && <p className="alert alert--warn" role="status">检测到旧版云同步配置，此版本已停止该连接。请在下方配置 GitHub 私有仓库；本机数据仍保留，但旧云端内容不会自动搬到 GitHub。</p>}
     {((error || status?.lastError) && !connectionFeedback) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
     {notice && <p role="status">{notice}</p>}
-    {status?.config ? <div className="cloud-sync-key">
-      <h3>{status.config.provider === 'github' ? '连接其他电脑' : '当前设备原有的同步密钥'}</h3>
-      <p className="setgroup__hint">{status.config.provider === 'github' ? '把这把 Lumen 同步密钥复制到另一台电脑的 GitHub 同步设置中。GitHub 只保存 Lumen 加密后的内容，不保存这把密钥。' : '旧连接已暂停，密钥仍保存在本机。切换电脑到同一个 GitHub 私有仓库时，可在连接前复制保存；旧云端内容不会自动搬迁。'}</p>
-      <div className="cloud-sync-key__row">
-        <input className="input" aria-label="Lumen 同步密钥" type={showSyncKey ? 'text' : 'password'} readOnly value={syncKey} placeholder="正在读取本机密钥…" />
-        <button className="btn" disabled={!syncKey} onClick={() => setShowSyncKey(value => !value)}>{showSyncKey ? '隐藏密钥' : '显示密钥'}</button>
-        <button className="btn" disabled={busy || !syncKey} onClick={() => void run(async () => { await writeText(syncKey); setNotice('Lumen 同步密钥已复制。请安全保存；在另一台电脑加入此空间时粘贴。云服务无法替你找回或重置这个密钥。') })}>复制 Lumen 同步密钥</button>
-      </div>
-    </div> : <p className="setgroup__hint">尚未连接，首次连接成功后会生成同步密钥；连接成功后可在这里查看或复制。</p>}
     <fieldset disabled={busy} className="cloud-settings__fields">
       <div className="cloud-settings__fields-row">
         <label>GitHub 用户名或组织<input className="input" autoComplete="off" value={form.owner} onChange={e => updateForm({ owner: e.target.value })} placeholder="例如 PLA0185" /></label>
@@ -83,11 +69,10 @@ export function CloudSettings() {
         <label>仓库内同步目录<input className="input" value={form.folder} onChange={e => updateForm({ folder: e.target.value })} placeholder="Lumen" /></label>
       </div>
       <label>GitHub Fine-grained Token<input className="input" type="password" autoComplete="new-password" value={form.password} onChange={e => updateForm({ password: e.target.value })} placeholder="仅授予这个私有仓库 Contents 读写权限" /></label>
-      <p className="setgroup__hint">请先在 GitHub 建立并初始化私有仓库（例如添加 README，确保所选分支存在），再创建只授权该仓库、Contents 读写权限的 Fine-grained Token。Token 加密保存在本机凭据库，不会同步。GitHub 提交历史可作为额外回溯记录；Lumen 的冲突版本仍会分别保留。</p>
-      <label>已有 Lumen 云空间的同步密钥<input className="input" type="password" autoComplete="off" placeholder="首次创建空间留空；另一台电脑加入时粘贴" value={form.recoveryCode} onChange={e => updateForm({ recoveryCode: e.target.value })} /></label>
-      <p className="setgroup__hint">这是 Lumen 为云端数据加密生成的密钥，不是网盘密码或 GitHub Token。首次创建空间时留空；连接已有空间时，从已连接的电脑复制并粘贴。云服务无法重置此密钥。</p>
+      <p className="setgroup__hint">请先在 GitHub 建立并初始化私有仓库（例如添加 README，确保所选分支存在），再创建只授权该仓库、Contents 读写权限的 Fine-grained Token。Token 加密保存在本机凭据库，不会同步；请在每台电脑使用同一个 Token。GitHub 提交历史可作为额外回溯记录；Lumen 的冲突版本仍会分别保留。</p>
+      <p className="setgroup__hint">旧版同步空间会在这台已连接过的电脑下次同步时自动升级保护信息，不需要再找或复制 Lumen 密钥。</p>
       <label>这台电脑继承的内容<select className="input" value={String(form.inheritAll)} onChange={e => updateForm({ inheritAll: e.target.value === 'true' })}><option value="true">全部业务数据</option><option value="false">只继承备忘录和流程（含图片及文件）</option></select></label>
-      <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.password || !form.owner.trim() || !form.repository.trim() || !form.branch.trim()} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); const key = await cloud.cloudRecoveryCode(); setSyncKey(key); setShowSyncKey(true); setForm(f => ({ ...f, password: '', recoveryCode: '' })) }, { pending: '正在验证 GitHub 仓库权限并连接…', success: 'GitHub 私有仓库连接成功。同步密钥已显示，自动同步会按默认类型开始运行。', failure: 'GitHub 连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接 GitHub'}</button>
+      <button className="btn btn--primary" aria-busy={connectionFeedback?.type === 'pending'} disabled={!form.password || !form.owner.trim() || !form.repository.trim() || !form.branch.trim()} onClick={() => void run(async () => { setStatus(await cloud.cloudConnect(form)); setForm(f => ({ ...f, password: '' })) }, { pending: '正在验证 GitHub 仓库权限并连接…', success: 'GitHub 私有仓库连接成功；其他电脑使用同一个 GitHub Token 即可加入。', failure: 'GitHub 连接失败' })}>{connectionFeedback?.type === 'pending' ? '正在验证并连接…' : '验证并连接 GitHub'}</button>
     </fieldset>
     {connectionFeedback && <div className={`cloud-settings__connect-feedback ${connectionFeedback.type === 'success' ? 'alert alert--ok' : connectionFeedback.type === 'error' ? 'alert alert--error' : connectionFeedback.type === 'waiting' ? 'alert alert--warn' : 'setgroup__hint'}`} role={connectionFeedback.type === 'error' ? 'alert' : 'status'} aria-live={connectionFeedback.type === 'error' ? 'assertive' : 'polite'}>{connectionFeedback.message}</div>}
     {status?.config?.provider === 'github' && <>

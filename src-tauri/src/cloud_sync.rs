@@ -16,6 +16,7 @@ use base64::{
     Engine,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::{
     collections::{BTreeSet, HashSet},
@@ -473,7 +474,7 @@ fn credentials(id: &str, value: Option<&Credentials>) -> AppResult<Credentials> 
     let value = entry.get_password().map_err(|_| {
         AppError::new(
             ErrorCode::NotConfigured,
-            "本机缺少同步应用密码或 Lumen 同步密钥，请重新配置连接",
+            "本机缺少 GitHub Token 或云同步保护信息，请重新连接 GitHub 私有仓库",
         )
     })?;
     decoded(&value)
@@ -513,7 +514,7 @@ fn key_bytes(value: &str) -> AppResult<[u8; 32]> {
         .ok()
         .and_then(|v| v.try_into().ok())
         .ok_or_else(|| {
-            AppError::validation("Lumen 同步密钥格式无效，请完整复制另一台电脑显示的 LUMEN1- 密钥")
+            AppError::validation("本机云同步保护信息格式无效，请重新连接 GitHub 私有仓库")
         })
 }
 fn encrypt<T: Serialize>(key: &[u8; 32], aad: &str, data: &T) -> AppResult<Vec<u8>> {
@@ -565,10 +566,67 @@ fn decrypt<T: serde::de::DeserializeOwned>(key: &[u8; 32], aad: &str, data: &[u8
         .map_err(|_| {
             AppError::new(
                 ErrorCode::Unauthorized,
-                "Lumen 同步密钥不匹配，或云端文件已损坏；没有覆盖本机内容",
+                "GitHub Token 与云端保护信息不匹配，或云端文件已损坏；没有覆盖本机内容",
             )
         })?;
     serde_json::from_slice(&value).map_err(|_| AppError::validation("云端内容格式不兼容"))
+}
+
+fn github_key_envelope_key(
+    owner: &str,
+    repository: &str,
+    branch: &str,
+    folder: &str,
+    token: &str,
+    workspace_id: &str,
+) -> [u8; 32] {
+    let context = format!(
+        "lumen/github-key-envelope/v1\0{}\0{}\0{}\0{}\0{}\0{}",
+        workspace_id,
+        owner.trim().to_ascii_lowercase(),
+        repository.trim().to_ascii_lowercase(),
+        branch.trim(),
+        folder.trim_matches('/'),
+        token.trim(),
+    );
+    Sha256::digest(context.as_bytes()).into()
+}
+
+fn wrap_workspace_key(
+    key: &[u8; 32],
+    owner: &str,
+    repository: &str,
+    branch: &str,
+    folder: &str,
+    token: &str,
+    workspace_id: &str,
+) -> AppResult<String> {
+    let wrapping_key =
+        github_key_envelope_key(owner, repository, branch, folder, token, workspace_id);
+    let aad = format!("{workspace_id}:github-key-envelope:v1");
+    let encrypted = encrypt(&wrapping_key, &aad, &URL_SAFE_NO_PAD.encode(key))?;
+    String::from_utf8(encrypted).map_err(|_| AppError::internal("GitHub 同步保护信息编码失败"))
+}
+
+fn unwrap_workspace_key(
+    envelope: &str,
+    owner: &str,
+    repository: &str,
+    branch: &str,
+    folder: &str,
+    token: &str,
+    workspace_id: &str,
+) -> AppResult<[u8; 32]> {
+    let wrapping_key =
+        github_key_envelope_key(owner, repository, branch, folder, token, workspace_id);
+    let aad = format!("{workspace_id}:github-key-envelope:v1");
+    let wrapped: String = decrypt(&wrapping_key, &aad, envelope.as_bytes()).map_err(|_| {
+        AppError::new(
+            ErrorCode::Unauthorized,
+            "当前 GitHub Token 与该同步空间不一致。请在所有电脑使用同一个 Token；轮换 Token 时先在已有设备重新连接。",
+        )
+    })?;
+    key_bytes(&wrapped)
 }
 
 struct Dav {
@@ -965,6 +1023,8 @@ struct Workspace {
     version: u32,
     id: String,
     check: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_envelope: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1019,7 +1079,6 @@ pub struct ConnectInput {
     #[serde(default = "default_branch")]
     pub branch: String,
     pub password: String,
-    pub recovery_code: String,
     pub inherit_all: bool,
 }
 
@@ -1191,6 +1250,82 @@ impl SyncRemote for Dav {
     }
 }
 
+fn verify_workspace_key(w: &Workspace, key: &[u8; 32]) -> AppResult<()> {
+    let check: String = decrypt(
+        key,
+        &format!("{}:workspace", w.id),
+        &serde_json::to_vec(&w.check).map_err(|_| AppError::validation("空间配置损坏"))?,
+    )?;
+    if check != w.id {
+        return Err(AppError::validation("同步空间验证失败"));
+    }
+    Ok(())
+}
+
+async fn ensure_workspace_key_envelope(
+    db: &Db,
+    remote: &impl SyncRemote,
+    c: &Config,
+    token: &str,
+    key: &[u8; 32],
+) -> AppResult<()> {
+    let bytes = remote
+        .workspace(db)
+        .await?
+        .ok_or_else(|| AppError::validation("云端同步空间不存在，请重新连接；本机内容仍然保留"))?;
+    let mut workspace: Workspace =
+        serde_json::from_slice(&bytes).map_err(|_| AppError::validation("云端空间配置损坏"))?;
+    if workspace.version != 1 || workspace.id != c.workspace_id {
+        return Err(AppError::conflict(
+            "云端文件夹已换成其它同步空间，没有上传或覆盖内容",
+        ));
+    }
+    verify_workspace_key(&workspace, key)?;
+    if let Some(envelope) = workspace.key_envelope.as_deref() {
+        let envelope_key = unwrap_workspace_key(
+            envelope,
+            &c.owner,
+            &c.repository,
+            &c.branch,
+            &c.folder,
+            token,
+            &workspace.id,
+        )?;
+        if envelope_key != *key {
+            return Err(AppError::validation(
+                "云端同步保护信息与本机不一致；没有覆盖空间内容，请重新验证此 GitHub 仓库",
+            ));
+        }
+        return Ok(());
+    }
+    workspace.key_envelope = Some(wrap_workspace_key(
+        key,
+        &c.owner,
+        &c.repository,
+        &c.branch,
+        &c.folder,
+        token,
+        &workspace.id,
+    )?);
+    let updated = encoded(&workspace)?.into_bytes();
+    let code = remote
+        .stage(db, "workspace.json", updated.clone(), true)
+        .await?;
+    if !matches!(code, 200 | 201 | 204)
+        || remote
+            .read(db, "workspace.json", MAX_JSON)
+            .await?
+            .as_deref()
+            != Some(&updated)
+    {
+        return Err(AppError::new(
+            ErrorCode::Network,
+            "GitHub 同步保护信息更新失败；本机数据未被覆盖，请重试",
+        ));
+    }
+    Ok(())
+}
+
 async fn verify_space(db: &Db, dav: &impl SyncRemote, c: &Config, key: &[u8; 32]) -> AppResult<()> {
     let bytes = dav
         .read(db, "workspace.json", MAX_JSON)
@@ -1203,14 +1338,7 @@ async fn verify_space(db: &Db, dav: &impl SyncRemote, c: &Config, key: &[u8; 32]
             "云端文件夹已换成其它同步空间，没有上传或覆盖内容",
         ));
     }
-    let check: String = decrypt(
-        key,
-        &format!("{}:workspace", w.id),
-        &serde_json::to_vec(&w.check).map_err(|_| AppError::validation("空间配置损坏"))?,
-    )?;
-    if check != w.id {
-        return Err(AppError::validation("同步空间密钥验证失败"));
-    }
+    verify_workspace_key(&w, key)?;
     Ok(())
 }
 #[tauri::command]
@@ -1227,59 +1355,94 @@ pub async fn cloud_sync_connect(
     let existing = dav.workspace(db).await?;
     let create = existing.is_none();
     let previous = config(db).await?;
-    let mut key = [0; 32];
-    if !input.recovery_code.trim().is_empty() {
-        key = key_bytes(input.recovery_code.trim())?;
-    } else if let Some(previous) = previous.as_ref().filter(|p| match input.provider {
-        Provider::WebDav => {
+    let local_key = previous
+        .as_ref()
+        .filter(|p| {
             p.provider == input.provider
-                && p.server == input.server
-                && p.folder == input.folder
-                && p.account == input.account.trim()
-        }
-        Provider::GitHub => {
-            p.provider == input.provider
-                && p.owner == input.owner.trim()
-                && p.repository == input.repository.trim()
+                && p.owner.eq_ignore_ascii_case(input.owner.trim())
+                && p.repository.eq_ignore_ascii_case(input.repository.trim())
                 && p.branch == input.branch.trim()
                 && p.folder == input.folder
-        }
-    }) {
-        key = key_bytes(&credentials(&previous.connection_id, None)?.key)?;
-    } else if !create {
-        return Err(AppError::validation(
-            "请填写已连接设备提供的 Lumen 同步密钥，才能下载加密内容",
-        ));
-    } else {
-        getrandom::fill(&mut key).map_err(|_| AppError::internal("无法生成 Lumen 同步密钥"))?;
-    }
-    let workspace = match existing {
+        })
+        .map(|p| credentials(&p.connection_id, None).and_then(|value| key_bytes(&value.key)))
+        .transpose()?;
+    let mut workspace_needs_publish = false;
+    let (workspace, key) = match existing {
         Some(bytes) => {
-            let w: Workspace = serde_json::from_slice(&bytes)
+            let mut w: Workspace = serde_json::from_slice(&bytes)
                 .map_err(|_| AppError::validation("同步空间配置损坏"))?;
             id_ok(&w.id)?;
             if w.version != 1 {
                 return Err(AppError::validation("同步空间版本不兼容"));
             }
-            let check: String = decrypt(
-                &key,
-                &format!("{}:workspace", w.id),
-                &serde_json::to_vec(&w.check).map_err(|_| AppError::validation("空间配置损坏"))?,
-            )?;
-            if check != w.id {
-                return Err(AppError::validation("同步空间验证失败"));
+            let key = match (local_key, w.key_envelope.as_deref()) {
+                (Some(key), _) => key,
+                (None, Some(envelope)) => unwrap_workspace_key(
+                    envelope,
+                    &input.owner,
+                    &input.repository,
+                    &input.branch,
+                    &input.folder,
+                    &input.password,
+                    &w.id,
+                )?,
+                (None, None) => {
+                    return Err(AppError::validation(
+                        "这是旧版同步空间。请在之前连接过的电脑升级后运行一次同步，之后其他电脑只需使用同一个 GitHub Token。",
+                    ));
+                }
+            };
+            verify_workspace_key(&w, &key)?;
+            let envelope_key = w.key_envelope.as_deref().and_then(|envelope| {
+                unwrap_workspace_key(
+                    envelope,
+                    &input.owner,
+                    &input.repository,
+                    &input.branch,
+                    &input.folder,
+                    &input.password,
+                    &w.id,
+                )
+                .ok()
+            });
+            if envelope_key.as_ref() != Some(&key) {
+                w.key_envelope = Some(wrap_workspace_key(
+                    &key,
+                    &input.owner,
+                    &input.repository,
+                    &input.branch,
+                    &input.folder,
+                    &input.password,
+                    &w.id,
+                )?);
+                workspace_needs_publish = true;
             }
-            w
+            (w, key)
         }
         None => {
+            let mut key = [0; 32];
+            getrandom::fill(&mut key).map_err(|_| AppError::internal("无法生成云同步保护信息"))?;
             let id = uuid::Uuid::now_v7().to_string();
             let check = serde_json::from_slice(&encrypt(&key, &format!("{id}:workspace"), &id)?)
                 .map_err(|_| AppError::internal("空间加密失败"))?;
-            Workspace {
-                version: 1,
-                id,
-                check,
-            }
+            let key_envelope = Some(wrap_workspace_key(
+                &key,
+                &input.owner,
+                &input.repository,
+                &input.branch,
+                &input.folder,
+                &input.password,
+                &id,
+            )?);
+            (
+                Workspace {
+                    version: 1,
+                    id,
+                    check,
+                    key_envelope,
+                },
+                key,
+            )
         }
     };
     let mut c = Config {
@@ -1296,8 +1459,7 @@ pub async fn cloud_sync_connect(
         inherit_all: input.inherit_all,
         default_sync: previous.as_ref().and_then(|p| p.default_sync),
     };
-    // Save a recoverable key before creating anything remotely. A network/disk error cannot
-    // leave an encrypted workspace whose only recovery code was lost from process memory.
+    // Keep the data key in the OS credential vault before publishing remote metadata.
     credentials(
         &c.connection_id,
         Some(&Credentials {
@@ -1318,7 +1480,18 @@ pub async fn cloud_sync_connect(
             .await?;
         if !matches!(code, 201 | 204) {
             return Err(AppError::conflict(
-                "同步空间创建未成功，可能已由另一台电脑创建；请填写那台电脑提供的 Lumen 同步密钥再连接",
+                "同步空间创建未成功，可能已由另一台电脑创建；请使用相同的 GitHub Token 重新连接",
+            ));
+        }
+    } else if workspace_needs_publish {
+        let bytes = encoded(&workspace)?.into_bytes();
+        let code = dav.stage(db, "workspace.json", bytes.clone(), true).await?;
+        if !matches!(code, 200 | 201 | 204)
+            || dav.read(db, "workspace.json", MAX_JSON).await?.as_deref() != Some(&bytes)
+        {
+            return Err(AppError::new(
+                ErrorCode::Network,
+                "GitHub 同步保护信息更新失败；本机数据未被覆盖，请重试",
             ));
         }
     }
@@ -1352,16 +1525,6 @@ pub async fn cloud_sync_status(state: State<'_, AppState>) -> AppResult<Status> 
     status(&state.db).await
 }
 #[tauri::command]
-pub async fn cloud_sync_recovery_code(state: State<'_, AppState>) -> AppResult<String> {
-    let c = config(&state.db)
-        .await?
-        .ok_or_else(|| AppError::new(ErrorCode::NotConfigured, "请先连接同步空间"))?;
-    Ok(format!(
-        "LUMEN1-{}",
-        credentials(&c.connection_id, None)?.key
-    ))
-}
-#[tauri::command]
 pub async fn cloud_sync_set_enabled(
     state: State<'_, AppState>,
     enabled: bool,
@@ -1374,7 +1537,9 @@ pub async fn cloud_sync_set_enabled(
         require_github(c.provider)?;
         let cred = credentials(&c.connection_id, None)?;
         let dav = Remote::from_config(&c, &cred.password)?;
-        verify_space(&state.db, &dav, &c, &key_bytes(&cred.key)?).await?;
+        let key = key_bytes(&cred.key)?;
+        verify_space(&state.db, &dav, &c, &key).await?;
+        ensure_workspace_key_envelope(&state.db, &dav, &c, &cred.password, &key).await?;
     }
     c.enabled = enabled;
     store_config(&state.db, &c).await?;
@@ -1761,6 +1926,7 @@ async fn sync_with_config(db: &Db, scan: bool, c: &Config) -> AppResult<bool> {
     let dav = Remote::from_config(c, &cred.password)?;
     if scan {
         verify_space(db, &dav, c, &key).await?;
+        ensure_workspace_key_envelope(db, &dav, c, &cred.password, &key).await?;
     }
     let device = runtime(db).await?;
     sync_exchange(db, &dav, c, &key, &device, scan).await
