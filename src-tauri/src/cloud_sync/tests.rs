@@ -762,15 +762,19 @@ async fn missing_task_attachment_does_not_block_memo_upload_or_download() {
         .unwrap();
     push(&home, &dav, &c, &key).await;
     add_task(&company, "local-task", "公司已有任务").await;
-    sqlx::query("INSERT INTO attachments(id,task_id,file_name,byte_size,storage_mode,external_path,created_at) VALUES('missing-file','local-task','找不到的附件.txt',1,'reference',?,?)")
-        .bind(company.data_dir().join("absent.txt").to_string_lossy().as_ref()).bind(stamp()).execute(company.pool()).await.unwrap();
+    let missing_id = uuid::Uuid::now_v7().to_string();
+    sqlx::query("INSERT INTO attachments(id,task_id,file_name,byte_size,storage_mode,external_path,created_at) VALUES(?,'local-task','找不到的附件.txt',1,'reference',?,?)")
+        .bind(&missing_id).bind(company.data_dir().join("absent.txt").to_string_lossy().as_ref()).bind(stamp()).execute(company.pool()).await.unwrap();
     let local = memos::save_impl(&company, input("公司写的说明"))
         .await
         .unwrap();
     let device = runtime(&company).await.unwrap();
-    assert!(sync_exchange(&company, &dav, &c, &key, &device, true)
+    let sync_error = sync_exchange(&company, &dav, &c, &key, &device, true)
         .await
-        .is_err());
+        .unwrap_err();
+    assert!(sync_error
+        .message
+        .contains("附件「找不到的附件.txt」原文件无法读取"));
     assert_eq!(
         memos::get_impl(&company, &memo.summary.id)
             .await
@@ -795,6 +799,82 @@ async fn missing_task_attachment_does_not_block_memo_upload_or_download() {
             .unwrap(),
         1
     );
+    close(home).await;
+    close(company).await;
+}
+
+#[tokio::test]
+async fn missing_attachment_source_is_restored_from_existing_cloud_copy_before_sync() {
+    let mock = Mock::new();
+    let dav = mock.dav();
+    let home = db().await;
+    let company = db().await;
+    let c = cfg();
+    let key = [17; 32];
+    let task_id = "shared-task";
+    let task_title = "共享任务";
+    let task_created = stamp();
+    for target in [&home, &company] {
+        sqlx::query("INSERT INTO tasks(id,title,created_at,updated_at) VALUES(?,?,?,?)")
+            .bind(task_id)
+            .bind(task_title)
+            .bind(&task_created)
+            .bind(&task_created)
+            .execute(target.pool())
+            .await
+            .unwrap();
+    }
+
+    let id = uuid::Uuid::now_v7().to_string();
+    let file_name = "儿童忙碌块.zip";
+    let contents = b"existing encrypted cloud attachment bytes";
+    let original = home.data_dir().join(file_name);
+    std::fs::write(&original, contents).unwrap();
+    let missing = company.data_dir().join(file_name);
+    let created = stamp();
+    let sha256 = hex::encode(sha2::Sha256::digest(contents));
+    sqlx::query("INSERT INTO attachments(id,task_id,file_name,byte_size,sha256,storage_mode,external_path,created_at) VALUES(?,?,?,?,?,'reference',?,?)")
+        .bind(&id)
+        .bind(task_id)
+        .bind(file_name)
+        .bind(contents.len() as i64)
+        .bind(&sha256)
+        .bind(original.to_string_lossy().as_ref())
+        .bind(&created)
+        .execute(home.pool())
+        .await
+        .unwrap();
+    push_all(&home, &dav, &c, &key).await;
+
+    sqlx::query("INSERT INTO attachments(id,task_id,file_name,byte_size,sha256,storage_mode,external_path,created_at) VALUES(?,?,?,?,?,'reference',?,?)")
+        .bind(&id)
+        .bind(task_id)
+        .bind(file_name)
+        .bind(contents.len() as i64)
+        .bind(&sha256)
+        .bind(missing.to_string_lossy().as_ref())
+        .bind(&created)
+        .execute(company.pool())
+        .await
+        .unwrap();
+
+    let device = runtime(&company).await.unwrap();
+    sync_exchange(&company, &dav, &c, &key, &device, true)
+        .await
+        .unwrap();
+
+    let attachment: (String, String) =
+        sqlx::query_as("SELECT storage_mode,stored_path FROM attachments WHERE id=?")
+            .bind(&id)
+            .fetch_one(company.pool())
+            .await
+            .unwrap();
+    assert_eq!(attachment.0, "copied");
+    assert_eq!(
+        std::fs::read(company.data_dir().join(attachment.1)).unwrap(),
+        contents
+    );
+
     close(home).await;
     close(company).await;
 }
