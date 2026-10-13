@@ -4204,3 +4204,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [GitHub 云同步设置与旧空间重建](../src/components/CloudSettings.tsx)、[同步命令](../src-tauri/src/cloud_sync.rs)、[GitHub 目录清理](../src-tauri/src/cloud_sync/github.rs)、[界面回归测试](../src/components/CloudSyncButton.test.tsx)
 - [ChatGPT 备忘与流程导入](../src/components/ChatGPTContentImportDialog.tsx)、[格式提示](../src/lib/chatgpt-content-import.ts)、[导入说明](chatgpt-content-import-2026-10-12.md)
 - [DeepSeek 原生联网核对](../src-tauri/src/nutrition.rs)、[Android APK 签名和发布](android-release-signing.md)
+
+### 推送后验证补记
+
+- PR [#16](https://github.com/PLA0185/lumen/pull/16) 的 GitHub Actions CI run [38362647899](https://github.com/PLA0185/lumen/actions/runs/38362647899) 前端与 Rust 两个 job 均成功；5 个独立提交已合并到 main，合并提交为 `36ec8a72a7d388b439e153e3a7fa6c6ccbe0b01d`。
+- 没有创建 `v0.4.50` tag 或发布 APK：尚未验证 Android Actions Secrets 配置，也未核实它们是否使用了已有 0.4.34 APK 的同一签名证书；签名不一致会阻止覆盖升级。
