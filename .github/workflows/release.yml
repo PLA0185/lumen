@@ -1,9 +1,13 @@
 name: Release
 
-# 打 tag（形如 v0.4.0）时自动执行完整门禁、构建 Windows 安装包并发布 Release。
-# 仓库 Settings → Secrets and variables → Actions 必须配置两个 Secret：
+# 打 tag（形如 v0.4.0）时构建签名 Android APK、Windows 安装包并发布同一个 Release。
+# 仓库 Settings → Secrets and variables → Actions 必须配置以下 Secrets：
 #   - `TAURI_SIGNING_PRIVATE_KEY`：`lumen-updater.key` 的**文件内容**
 #   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：该密钥的密码
+#   - `LUMEN_ANDROID_KEYSTORE_BASE64`：Android 发布 keystore 的 Base64
+#   - `LUMEN_ANDROID_KEY_ALIAS`：Android 发布 key alias
+#   - `LUMEN_ANDROID_KEYSTORE_PASSWORD`：keystore 密码
+#   - `LUMEN_ANDROID_KEY_PASSWORD`：key 密码
 #
 # 注意：Windows 上没法用环境变量传空密码（PowerShell 与 .NET 都会把空串
 # 当成"删除该变量"），所以密钥必须带密码，否则 CLI 会卡在交互式提示上。
@@ -21,9 +25,90 @@ on:
       - 'v*'
 
 jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与三处应用版本
+        run: node tools/check-version.mjs --tag=${{ github.ref_name }}
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - name: 安装 Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 安装 Android SDK 与 NDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 Android 编译工具
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: 安装 Rust Android target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: 安装前端依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 初始化 Android 项目
+        run: pnpm tauri android init --ci
+
+      - name: 配置稳定的 Android 发布签名
+        shell: bash
+        env:
+          LUMEN_ANDROID_KEYSTORE_BASE64: ${{ secrets.LUMEN_ANDROID_KEYSTORE_BASE64 }}
+          LUMEN_ANDROID_KEY_ALIAS: ${{ secrets.LUMEN_ANDROID_KEY_ALIAS }}
+          LUMEN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LUMEN_ANDROID_KEYSTORE_PASSWORD }}
+          LUMEN_ANDROID_KEY_PASSWORD: ${{ secrets.LUMEN_ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          node tools/prepare-android-signing.mjs
+          echo "LUMEN_ANDROID_KEYSTORE_PATH=$PWD/src-tauri/gen/android/app/lumen-release.keystore" >> "$GITHUB_ENV"
+
+      - name: 构建签名 Android APK
+        run: pnpm tauri android build --apk --target aarch64
+
+      - name: 收集 arm64 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t apks < <(find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' ! -name '*unsigned*')
+          if [ "${#apks[@]}" -ne 1 ]; then
+            printf '预期恰好一个已签名 APK，实际找到 %s 个\n' "${#apks[@]}"
+            printf '%s\n' "${apks[@]}"
+            exit 1
+          fi
+          mkdir -p android-release
+          cp "${apks[0]}" "android-release/Lumen_${GITHUB_REF_NAME#v}_android_arm64.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk-${{ github.ref_name }}
+          path: android-release/*.apk
+          if-no-files-found: error
+          retention-days: 2
+
   release:
     permissions:
       contents: write
+    needs: android
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +225,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw '规范 updater manifest 失败' }
           gh release upload $env:GITHUB_REF_NAME latest.json --repo $env:GITHUB_REPOSITORY --clobber
           if ($LASTEXITCODE -ne 0) { throw '上传 updater manifest 失败' }
+
+      - name: 下载 Android APK 并添加到同一 Release
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk-${{ github.ref_name }}
+          path: android-release
+
+      - name: 上传 Android APK
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [array]$apks = Get-ChildItem -LiteralPath android-release -Filter '*.apk'
+          if ($apks.Count -ne 1) { throw "预期一个 Android APK，实际找到 $($apks.Count) 个" }
+          gh release upload $env:GITHUB_REF_NAME $apks[0].FullName --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { throw '上传 Android APK 失败' }
 
       - name: 发布已验签的 Release
         if: steps.guard.outputs.ok == 'true'
