@@ -16,6 +16,7 @@ import { onDataChanged } from '../lib/data-change'
 import type { Reminder, ReminderKind } from '../lib/reminder-ipc'
 import { fromUtcIso } from '../lib/datetime'
 import { Icon } from './Icons'
+import { format } from 'date-fns'
 
 function errText(e: unknown): string {
   return e instanceof IpcError ? e.userMessage() : String(e)
@@ -23,6 +24,11 @@ function errText(e: unknown): string {
 
 /** 常用提前量（分钟），覆盖绝大多数使用场景 */
 const PRESETS = [5, 10, 15, 30, 60, 120, 24 * 60]
+
+function toLocalDateTimeValue(iso: string): string {
+  const date = fromUtcIso(iso)
+  return date ? format(date, "yyyy-MM-dd'T'HH:mm") : ''
+}
 
 interface ReminderEditorProps {
   taskId: string
@@ -51,9 +57,11 @@ export function ReminderEditor({
   const [busy, setBusy] = useState(false)
 
   // 新建表单
-  const [kind, setKind] = useState<ReminderKind>(hasDue ? 'at_due' : hasPlanned ? 'at_planned' : 'custom')
+  const [kind, setKind] = useState<ReminderKind>('custom')
   const [offset, setOffset] = useState(30)
   const [customAt, setCustomAt] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingAt, setEditingAt] = useState('')
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -118,6 +126,26 @@ export function ReminderEditor({
         remindAt: kind === 'custom' ? new Date(customAt).toISOString() : undefined,
       })
       setCustomAt('')
+      await reload()
+    } catch (e) {
+      setError(errText(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const saveEditedTime = async (id: string) => {
+    const date = new Date(editingAt)
+    if (!editingAt || Number.isNaN(date.getTime())) {
+      setError('请选择提醒的具体日期与时间')
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await rem.reminderUpdateTime(id, date.toISOString())
+      setEditingId(null)
+      setEditingAt('')
       await reload()
     } catch (e) {
       setError(errText(e))
@@ -195,6 +223,24 @@ export function ReminderEditor({
                   <button
                     type="button"
                     className="icon-btn"
+                    title="修改提醒时间"
+                    aria-label="修改提醒时间"
+                    onClick={() => {
+                      if (editingId === r.id) {
+                        setEditingId(null)
+                        setEditingAt('')
+                      } else {
+                        setEditingId(r.id)
+                        setEditingAt(toLocalDateTimeValue(r.remindAt))
+                      }
+                      setError(null)
+                    }}
+                  >
+                    <Icon name="edit" size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
                     title={r.isEnabled === 1 ? '停用此提醒' : '启用此提醒'}
                     aria-label={r.isEnabled === 1 ? '停用提醒' : '启用提醒'}
                     onClick={async () => {
@@ -225,6 +271,22 @@ export function ReminderEditor({
                     <Icon name="close" size={14} />
                   </button>
                 </span>
+                {editingId === r.id && (
+                  <div className="remrow__edit">
+                    <label>
+                      提醒时间
+                      <input
+                        type="datetime-local"
+                        className="input input--compact"
+                        value={editingAt}
+                        aria-label="修改后的提醒日期与时间"
+                        onChange={(e) => setEditingAt(e.target.value)}
+                      />
+                    </label>
+                    <button type="button" className="btn btn--primary btn--sm" disabled={busy || !editingAt} onClick={() => void saveEditedTime(r.id)}>保存时间</button>
+                    <button type="button" className="btn btn--quiet btn--sm" disabled={busy} onClick={() => { setEditingId(null); setEditingAt('') }}>取消</button>
+                  </div>
+                )}
               </li>
             )
           })}
@@ -262,13 +324,16 @@ export function ReminderEditor({
         )}
 
         {kind === 'custom' && (
-          <input
-            type="datetime-local"
-            className="input input--compact"
-            value={customAt}
-            aria-label="提醒时间"
-            onChange={(e) => setCustomAt(e.target.value)}
-          />
+          <label className="remnew__time-field">
+            具体提醒时间
+            <input
+              type="datetime-local"
+              className="input"
+              value={customAt}
+              aria-label="具体提醒日期与时间"
+              onChange={(e) => setCustomAt(e.target.value)}
+            />
+          </label>
         )}
 
         <button

@@ -430,6 +430,7 @@ pub fn run() {
             reminders::reminder_create,
             reminders::reminder_list,
             reminders::reminder_set_enabled,
+            reminders::reminder_update_time,
             reminders::reminder_delete,
             reminders::reminder_snooze,
             reminders::reminder_scheduler_status,
