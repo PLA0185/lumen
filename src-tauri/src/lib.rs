@@ -472,6 +472,7 @@ pub fn run() {
             attachments::attachment_cleanup_orphans,
             // ---- 重复系列（§5）----
             weekly_recurring::recurring_weekly_list,
+            weekly_recurring::recurring_list,
             recurrence_service::recurring_create,
             recurrence_service::recurring_preview,
             recurrence_service::recurring_materialize,

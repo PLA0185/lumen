@@ -31,6 +31,8 @@ interface ReminderEditorProps {
   hasDue: boolean
   /** 任务是否已完成（已完成任务的提醒不会触发） */
   taskDone: boolean
+  /** 阻止在未保存的计划/截止时间基础上创建依赖型提醒；自定义时刻不受影响。 */
+  creationDisabledReason?: string
   /** 打开该重复系列的设置，让固定时刻应用到每一次重复发生。 */
   onEditRecurringRule?: () => void
 }
@@ -40,6 +42,7 @@ export function ReminderEditor({
   hasPlanned,
   hasDue,
   taskDone,
+  creationDisabledReason,
   onEditRecurringRule,
 }: ReminderEditorProps) {
   const [items, setItems] = useState<Reminder[]>([])
@@ -71,6 +74,7 @@ export function ReminderEditor({
 
   /** 当前选择的类型是否满足创建条件 */
   const canCreate = (() => {
+    if (creationDisabledReason && kind !== 'custom') return false
     switch (kind) {
       case 'at_due':
       case 'before_due':
@@ -87,6 +91,7 @@ export function ReminderEditor({
 
   const disabledReason = (() => {
     if (canCreate) return null
+    if (creationDisabledReason && kind !== 'custom') return creationDisabledReason
     switch (kind) {
       case 'at_due':
       case 'before_due':

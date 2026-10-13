@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
+import * as reminders from '../lib/reminder-ipc'
 import { publishDataChange } from '../lib/data-change'
 import type { Task } from '../lib/types'
 import { TaskEditor } from './TaskEditor'
@@ -27,6 +28,7 @@ beforeEach(() => {
   vi.spyOn(org, 'tagList').mockResolvedValue([tag])
   vi.spyOn(org, 'taskTagsGet').mockResolvedValue([])
   vi.spyOn(ipc, 'saveTask').mockResolvedValue(task)
+  vi.spyOn(reminders, 'reminderList').mockResolvedValue([])
 })
 afterEach(() => {
   act(() => root?.unmount())
@@ -70,6 +72,13 @@ it('Esc 只取消重复修改范围，保留任务编辑器和未保存标题', 
   expect(edit).not.toHaveBeenCalled()
   await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
   expect(onClose).toHaveBeenCalledOnce()
+})
+
+it('任务编辑窗口直接显示提醒时间类型选项', async () => {
+  await mount()
+  const options = [...document.querySelectorAll<HTMLSelectElement>('[aria-label="提醒类型"] option')]
+    .map(option => option.textContent)
+  expect(options).toEqual(expect.arrayContaining(['截止时提醒', '计划时间到点提醒', '自定义时间']))
 })
 
 it('组织刷新保留新增的未保存标签，保存仍提交用户选择', async () => {

@@ -23,7 +23,7 @@ import { AiAssistant } from './AiAssistant'
 
 interface QuickAddProps {
   /** 浮窗新建行：选项就地展开，不跳到另一个窗口。 */
-  defaultRepeat?: 'none' | 'weekly'
+  defaultRepeat?: 'none' | 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly'
   compact?: boolean
   onConfigureReminder?: (task: Task) => void
   /** 从今天/明天新建时沿用该视图日期；其它入口仍可不设日期。 */
@@ -39,6 +39,13 @@ interface QuickAddProps {
   onCancel?: () => void
   /** 可用标签（用于把 #名称 映射成标签 ID） */
   tags?: { id: string; name: string }[]
+}
+
+function repeatRrule(repeat: string, custom = 'FREQ=WEEKLY') {
+  if (repeat === 'custom') return custom
+  if (repeat === 'daily') return 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
+  if (repeat === 'quarterly') return 'FREQ=MONTHLY;INTERVAL=3'
+  return `FREQ=${repeat.toUpperCase()}`
 }
 
 export function QuickAdd({
@@ -62,7 +69,7 @@ export function QuickAdd({
   const [priority, setPriority] = useState(0)
   const [repeat, setRepeat] = useState<string>(defaultRepeat)
   const [rule, setRule] = useState<RuleEditorValue>({
-    rrule: 'FREQ=WEEKLY',
+    rrule: repeatRrule(defaultRepeat),
     dtstartLocal: '',
     hasStartTime: false,
   })
@@ -121,7 +128,7 @@ export function QuickAdd({
     setDescription('')
     setMaterializeDays(90)
     setConfigureReminder(false)
-    setRule({ rrule: 'FREQ=WEEKLY', dtstartLocal: '', hasStartTime: false })
+    setRule({ rrule: repeatRrule(defaultRepeat), dtstartLocal: '', hasStartTime: false })
   }, [defaultPlannedDate, defaultPeriodType, defaultRepeat])
 
   const save = useCallback(async () => {
@@ -397,12 +404,7 @@ export function QuickAdd({
                 setRepeat(next)
                 if (next !== 'none')
                   setRule({
-                    rrule:
-                      next === 'custom'
-                        ? rule.rrule
-                        : next === 'daily'
-                          ? 'FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR'
-                          : `FREQ=${next.toUpperCase()}`,
+                    rrule: repeatRrule(next, rule.rrule),
                     dtstartLocal:
                       rule.dtstartLocal ||
                       `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
@@ -416,6 +418,7 @@ export function QuickAdd({
               <option value="daily">每天</option>
               <option value="weekly">每周</option>
               <option value="monthly">每月</option>
+              <option value="quarterly">每季度</option>
               <option value="yearly">每年</option>
               <option value="custom">自定义规则</option>
             </select>
