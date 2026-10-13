@@ -4128,3 +4128,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.47 发布说明](../RELEASE_NOTES.md)
 - [附件恢复与任务同步](../src-tauri/src/cloud_sync/business.rs)、[同步入口](../src-tauri/src/cloud_sync.rs)、[附件同步回归测试](../src-tauri/src/cloud_sync/tests.rs)
 - [README 版本摘要](../README.md#文档索引)
+## 第 91 轮 · 2026-10-13 · 附件缺失时允许本次跳过任务同步
+
+### 做了
+
+- 云同步因任务附件原文件不可读取或云端附件缺失而失败时，设置页错误提示和顶部“同步”对话框都会提供一次性选项：跳过全部任务及关联附件，仅按本次方向同步备忘与流程。
+- 此选择不会删除任务、附件元数据或本机原文件，不更改保存的默认同步范围；提示说明自动同步下一次仍按原范围尝试。若想长期不传任务，可把默认范围改为“仅备忘与流程”。
+- 版本更新到 0.4.48，并更新发布说明、README 和本工作记录。
+
+### 没做到
+
+- 当前选项跳过的是全部任务及其关联数据，不支持只忽略某一个附件；省略单个附件而保留无效记录会让其他设备收到打不开的附件引用。本轮未删除或改写任何任务/附件记录。
+- `cargo test --lib` 汇总报告 591 项通过、0 失败、4 项忽略，但测试汇总后进程未退出；中断后退出码为 1，因此不能记为完整命令通过。
+- 未在用户当前运行的 Lumen 窗口中手动点击验收；需安装 0.4.48 后确认实际界面和同步行为。
+
+### 怎么验证的
+
+- `pnpm exec vitest run src/components/CloudSyncButton.test.tsx` 通过（13 项），新增场景验证错误后两处界面都能重新以 `scope: memos` 发起一次同步、保留同步方向，并且不改默认范围。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.48）、`pnpm typecheck`、前端测试（54 个文件、402 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、严格 Clippy 和 `git diff --check` 均实际通过。生产构建保留既有动态导入提示。
+
+### 相关文档
+
+- [附件缺失时的单次跳过操作](../src/components/MissingAttachmentSyncFallback.tsx)、[设置页同步入口](../src/components/CloudSettings.tsx)、[顶部同步对话框](../src/components/CloudSyncButton.tsx)
+- [回归测试](../src/components/CloudSyncButton.test.tsx)、[0.4.48 发布说明](../RELEASE_NOTES.md)
