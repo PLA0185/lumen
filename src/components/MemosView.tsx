@@ -15,6 +15,7 @@ import { contentImages } from '../lib/content-assets'
 import { FlowCanvas } from './FlowCanvas'
 import { FlowSwitcher } from './FlowSwitcher'
 import { FitToolbar } from './FitToolbar'
+import { ChatGPTContentImportDialog } from './ChatGPTContentImportDialog'
 
 function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
   return {
@@ -57,6 +58,7 @@ export function MemosView({
   const [autoSaving, setAutoSaving] = useState(false)
   const [historyId, setHistoryId] = useState('')
   const [aiOpen, setAiOpen] = useState(false)
+  const [chatGPTImportOpen, setChatGPTImportOpen] = useState(false)
   const [restructuring, setRestructuring] = useState<memo.SaveMemoInput | null>(null)
   const [aiDraft, setAiDraft] = useState(false)
   const [flowView, setFlowView] = useState<'canvas' | 'list'>('canvas')
@@ -433,6 +435,15 @@ export function MemosView({
       <FitToolbar>
         {documentActions}
         {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
+        <button className="btn btn--ghost" disabled={busy || autoSaving || trash} onClick={() => {
+          if (!canLeave()) return
+          if (dirty) {
+            setDraft(selected ? draftOf(selected) : null)
+            setEditing(false)
+            setAiDraft(false)
+          }
+          setChatGPTImportOpen(true)
+        }}>ChatGPT 导入</button>
         {kindFilter !== 'flow' && <button
           className="btn btn--primary"
           disabled={busy || trash}
@@ -696,6 +707,10 @@ export function MemosView({
         </article>
       </div>
       {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
+      {chatGPTImportOpen && <ChatGPTContentImportDialog initialDocumentId={selected?.id} kindFilter={kindFilter} onClose={() => setChatGPTImportOpen(false)} onSaved={async doc => {
+        setSelected(doc); setDraft(draftOf(doc)); setEditing(false); setAiDraft(false); setFlowView('canvas'); setCanvasSession(n => n + 1); setError(null); setNotice('ChatGPT 内容已确认并保存到本机');
+        await reload()
+      }} />}
       {restructuring && <FlowRestructureDialog original={restructuring} onClose={() => setRestructuring(null)} onApply={applyRestructure} />}
       {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setCanvasSession(n => n + 1); setFlowView('canvas'); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}
     </section>

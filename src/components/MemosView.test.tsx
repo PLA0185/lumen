@@ -503,6 +503,21 @@ describe('独立备忘与业务流程', () => {
     ).toBe('草稿')
     expect(document.querySelector('[aria-label="第 1 步标题"]')).toBeNull()
   })
+  it('ChatGPT 导入先预览，只有点击确认并保存才写入记录', async () => {
+    const save = vi.spyOn(memo, 'memoSave').mockImplementation(async input => ({ ...input, id: 'imported', revision: 1, createdAt: '', updatedAt: '', deletedAt: null }))
+    await mount('', [])
+    await click('ChatGPT 导入')
+    await fill('ChatGPT 导入内容', '# 发票 SOP\n\n先核对订单，再联系仓库。')
+    await click('生成修改预览')
+    expect(document.querySelector('[aria-label="从 ChatGPT 导入内容"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('发票 SOP')
+    expect(save).not.toHaveBeenCalled()
+    await click('确认并保存')
+    expect(save).toHaveBeenCalledOnce()
+    expect(save.mock.calls[0]![0]).toMatchObject({ title: '发票 SOP', kind: 'memo', bodyMd: '先核对订单，再联系仓库。' })
+    expect(document.querySelector('[aria-label="从 ChatGPT 导入内容"]')).toBeNull()
+  })
+
   it('Markdown 预览不执行 HTML 或危险链接', async () => {
     vi.spyOn(memo, 'memoSave').mockImplementation(async (input) => ({
       ...input,
