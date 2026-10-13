@@ -3,6 +3,7 @@ import * as cloud from '../lib/cloud-sync-ipc'
 import { IpcError } from '../lib/ipc'
 import { CloudHistory } from './CloudHistory'
 import { SyncOptionsFields } from './SyncOptionsFields'
+import { isMissingAttachmentSyncError, MissingAttachmentSyncFallback } from './MissingAttachmentSyncFallback'
 const labels: Record<string, string> = { tasks: '任务', subtasks: '子任务', projects: '项目', categories: '分类', tags: '标签', reminders: '提醒', attachments: '附件', task_series: '重复任务', task_series_template: '重复子任务', task_series_segments: '重复规则', task_series_skips: '跳过记录', task_series_rebuilds: '重建记录', task_series_tags: '重复标签', task_tags: '任务标签', task_dependencies: '依赖', focus_sessions: '专注记录', goals: '目标', settings: '业务设置', knowledge_sources: '知识库资料' }
 const message = (e: unknown) => e instanceof IpcError ? e.userMessage() : e instanceof Error ? e.message : String(e)
 type ConnectionFeedback = { type: 'pending' | 'success' | 'error' | 'waiting'; message: string }
@@ -53,11 +54,13 @@ export function CloudSettings() {
     } finally { setBusy(false) }
   }
   const updateForm = (patch: Partial<typeof form>) => { setForm(current => ({ ...current, ...patch })); setConnectionFeedback(null) }
+  const displayedError = error || status?.lastError || ''
+  const defaultOptions = status?.config ? cloud.defaultSync(status.config) : defaults
   return <section className="setgroup">
     <h2>云同步 · GitHub 私有仓库</h2>
     <p className="setgroup__hint">使用 GitHub 私有仓库在多台电脑之间同步。所有电脑升级到此版本后，用同一个 GitHub Token 即可；内容仍会加密，不需要单独复制或填写 Lumen 密钥。</p>
     {status?.config?.provider === 'webDav' && <p className="alert alert--warn" role="status">检测到旧版云同步配置，此版本已停止该连接。请在下方配置 GitHub 私有仓库；本机数据仍保留，但旧云端内容不会自动搬到 GitHub。</p>}
-    {((error || status?.lastError) && !connectionFeedback) && <p className="alert alert--error" role="alert">{error || status?.lastError}</p>}
+    {(displayedError && !connectionFeedback) && <div className="alert alert--error" role="alert"><p>{displayedError}</p>{status?.config?.provider === 'github' && isMissingAttachmentSyncError(displayedError) && <MissingAttachmentSyncFallback scope={defaultOptions.scope} busy={busy} onSkip={() => void run(async () => { const selected = { ...defaultOptions, scope: 'memos' as const }; setStatus(await cloud.cloudNow(selected)); setNotice(`本次跳过全部任务及附件，仅同步备忘与流程 · ${cloud.SYNC_DIRECTIONS[selected.direction]}。默认同步范围未修改。`) })} />}</div>}
     {notice && <p role="status">{notice}</p>}
     <fieldset disabled={busy} className="cloud-settings__fields">
       <div className="cloud-settings__fields-row">
