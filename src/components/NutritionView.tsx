@@ -27,7 +27,7 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [targetInput, setTargetInput] = useState('')
-  const [searchKeyConfigured, setSearchKeyConfigured] = useState(false)
+  const [searchStatus, setSearchStatus] = useState<api.NutritionSearchStatus>({ provider: 'tavily', configured: false })
   const [searchKey, setSearchKey] = useState('')
   const [foodQuery, setFoodQuery] = useState('')
   const [meal, setMeal] = useState<Exclude<MealType, 'training'>>('breakfast')
@@ -65,10 +65,10 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
       setDashboard(next)
       setTargetInput(next.targetKcal?.toString() ?? '')
       try {
-        setSearchKeyConfigured(await api.nutritionSearchKeyStatus())
+        setSearchStatus(await api.nutritionSearchStatus())
         setError('')
       } catch (reason) {
-        setSearchKeyConfigured(false)
+        setSearchStatus({ provider: 'tavily', configured: false })
         setError(errorText(reason))
       }
     } catch (reason) { setError(errorText(reason)) }
@@ -255,11 +255,11 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
   })
   const saveSearchKey = () => update(async () => {
     if (!searchKey.trim()) throw new Error('请输入 Tavily Search API Key。')
-    await api.nutritionSetSearchKey(searchKey.trim()); setSearchKey(''); setSearchKeyConfigured(true)
+    await api.nutritionSetSearchKey(searchKey.trim()); setSearchKey(''); setSearchStatus({ provider: 'tavily', configured: true })
     setNotice('联网搜索密钥已保存在本机系统凭据库。')
   })
   const removeSearchKey = () => update(async () => {
-    await api.nutritionSetSearchKey(''); setSearchKeyConfigured(false); setNotice('已删除本机联网搜索密钥。')
+    await api.nutritionSetSearchKey(''); setSearchStatus({ provider: 'tavily', configured: false }); setNotice('已删除本机联网搜索密钥。')
   })
 
   return (
@@ -294,7 +294,7 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
         <div className="nutrition-layout">
           <div className="nutrition-column">
             <section className="nutrition-panel">
-              <div className="nutrition-panel__heading"><div><span className="nutrition-eyebrow">联网核对</span><h3>添加食物</h3></div><span className={searchKeyConfigured ? 'nutrition-key-state is-ready' : 'nutrition-key-state'}>{searchKeyConfigured ? '搜索已配置' : '需要配置搜索密钥'}</span></div>
+              <div className="nutrition-panel__heading"><div><span className="nutrition-eyebrow">联网核对</span><h3>添加食物</h3></div><span className={searchStatus.configured ? 'nutrition-key-state is-ready' : 'nutrition-key-state'}>{searchStatus.configured ? `${searchStatus.provider === 'deepseek' ? 'DeepSeek' : 'Tavily'} 搜索已配置` : searchStatus.provider === 'deepseek' ? '需要配置 DeepSeek API' : '需要配置搜索密钥'}</span></div>
               {replacingEntry && <div className="nutrition-progress-note" role="status">正在修改「{replacingEntry.name}」：重新查询并选择热量来源后才会替换原记录。 <button type="button" className="btn btn--ghost btn--sm" onClick={() => { setReplacingEntryId(null); setCandidates([]); setSelectedCandidateId('') }}>取消修改</button></div>}
               <form className="nutrition-food-search" onSubmit={event => void lookup(event)}>
                 <label>食物名称<input value={foodQuery} onChange={event => setFoodQuery(event.target.value)} placeholder="例如：水煮鸡胸肉、燕麦片" maxLength={160} /></label>
@@ -319,9 +319,7 @@ export function NutritionView({ isAndroid = false }: { isAndroid?: boolean }) {
               </div>}
               <details className="nutrition-disclosure">
                 <summary>联网来源设置与隐私说明</summary>
-                <p>食物名称会发给 Tavily 搜索；搜索摘录和食物名称会发给你在“设置 → AI”里配置的模型核对。保存的记录会保留来源标题与链接。密钥只存本机凭据库。</p>
-                <p><a href="https://app.tavily.com/home" target="_blank" rel="noreferrer">打开 Tavily 获取 Search API Key ↗</a> · <a href="https://www.tavily.com/pricing" target="_blank" rel="noreferrer">查看官方额度与定价 ↗</a></p>
-                <div className="nutrition-key-form"><input type="password" value={searchKey} autoComplete="new-password" aria-label="Tavily Search API Key" placeholder={searchKeyConfigured ? '已配置；输入新密钥可替换' : '粘贴 Tavily Search API Key'} onChange={event => setSearchKey(event.target.value)} /><button type="button" className="btn btn--primary btn--sm" disabled={busy || !searchKey.trim()} onClick={() => void saveSearchKey()}>保存密钥</button>{searchKeyConfigured && <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => void removeSearchKey()}>删除本机密钥</button>}</div>
+                {searchStatus.provider === 'deepseek' ? <><p>当前设置 → AI 选择了 DeepSeek：食物名称会通过已保存的 DeepSeek API Key 发起官方联网搜索，搜索来源再交给同一模型按网页证据核对。不需要 Tavily 密钥；DeepSeek 会按其 API 规则计费，来源与热量保存在本机。</p><p>若 DeepSeek API Key 未配置，请先到“设置 → AI”保存密钥。联网搜索只在查询热量时调用。</p></> : <><p>当前模型不是 DeepSeek：食物名称会发给 Tavily 搜索，搜索摘录和食物名称会发给“设置 → AI”里的模型核对。来源与热量保存在本机，Tavily 密钥只存本机凭据库。</p><p><a href="https://app.tavily.com/home" target="_blank" rel="noreferrer">打开 Tavily 获取 Search API Key ↗</a> · <a href="https://www.tavily.com/pricing" target="_blank" rel="noreferrer">查看官方额度与定价 ↗</a></p><div className="nutrition-key-form"><input type="password" value={searchKey} autoComplete="new-password" aria-label="Tavily Search API Key" placeholder={searchStatus.configured ? '已配置；输入新密钥可替换' : '粘贴 Tavily Search API Key'} onChange={event => setSearchKey(event.target.value)} /><button type="button" className="btn btn--primary btn--sm" disabled={busy || !searchKey.trim()} onClick={() => void saveSearchKey()}>保存密钥</button>{searchStatus.configured && <button type="button" className="btn btn--ghost btn--sm" disabled={busy} onClick={() => void removeSearchKey()}>删除本机密钥</button>}</div></>}
               </details>
             </section>
 

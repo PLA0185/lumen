@@ -9,7 +9,11 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use std::{collections::HashMap, future::Future, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    future::Future,
+    sync::OnceLock,
+};
 use tauri::{Emitter, State};
 
 pub fn calories_for_grams(grams: f64, kcal_per_100g: f64) -> AppResult<i64> {
@@ -843,6 +847,112 @@ struct TavilySearchResult {
 }
 
 #[derive(Debug, Deserialize)]
+struct DeepSeekSearchResponse {
+    #[serde(default)]
+    content: Vec<DeepSeekSearchBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum DeepSeekSearchBlock {
+    #[serde(rename = "text")]
+    Text {
+        #[serde(default)]
+        citations: Vec<DeepSeekCitation>,
+    },
+    #[serde(rename = "web_search_tool_result")]
+    SearchResults {
+        #[serde(default)]
+        content: Vec<DeepSeekSearchItem>,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeepSeekCitation {
+    url: Option<String>,
+    cited_text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum DeepSeekSearchItem {
+    #[serde(rename = "web_search_result")]
+    Result { url: String, title: Option<String> },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NutritionSearchStatus {
+    pub provider: NutritionSearchProvider,
+    pub configured: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NutritionSearchProvider {
+    DeepSeek,
+    Tavily,
+}
+
+fn decode_deepseek_search_evidence(response: DeepSeekSearchResponse) -> Vec<TavilySearchResult> {
+    let mut titles = BTreeMap::<String, String>::new();
+    let mut excerpts = BTreeMap::<String, Vec<String>>::new();
+    for block in response.content {
+        match block {
+            DeepSeekSearchBlock::Text { citations } => {
+                for citation in citations {
+                    if let (Some(url), Some(text)) = (citation.url, citation.cited_text) {
+                        let text = text.trim();
+                        if valid_https_url(&url) && !text.is_empty() {
+                            excerpts.entry(url).or_default().push(text.to_owned());
+                        }
+                    }
+                }
+            }
+            DeepSeekSearchBlock::SearchResults { content } => {
+                for item in content {
+                    if let DeepSeekSearchItem::Result { url, title } = item {
+                        if valid_https_url(&url) {
+                            titles.insert(url, title.unwrap_or_default());
+                        }
+                    }
+                }
+            }
+            DeepSeekSearchBlock::Other => {}
+        }
+    }
+    excerpts
+        .into_iter()
+        .filter_map(|(url, excerpts)| {
+            let excerpt = excerpts.join("\n");
+            let host = reqwest::Url::parse(&url).ok()?.host_str()?.to_owned();
+            Some(TavilySearchResult {
+                title: titles
+                    .remove(&url)
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(host),
+                url,
+                content: String::new(),
+                raw_content: Some(excerpt),
+            })
+        })
+        .filter(|result| {
+            !result
+                .raw_content
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .is_empty()
+        })
+        .take(5)
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AiFoodResults {
     #[serde(default)]
@@ -890,8 +1000,19 @@ fn read_tavily_key() -> AppResult<Option<String>> {
 }
 
 #[tauri::command]
-pub fn nutrition_search_key_status() -> AppResult<bool> {
-    Ok(read_tavily_key()?.is_some())
+pub async fn nutrition_search_status(
+    state: State<'_, AppState>,
+) -> AppResult<NutritionSearchStatus> {
+    match ai::current_config(&state.db).await? {
+        Some(config) if config.provider == ai::Provider::DeepSeek => Ok(NutritionSearchStatus {
+            provider: NutritionSearchProvider::DeepSeek,
+            configured: ai::load_api_key(ai::Provider::DeepSeek)?.is_some(),
+        }),
+        _ => Ok(NutritionSearchStatus {
+            provider: NutritionSearchProvider::Tavily,
+            configured: read_tavily_key()?.is_some(),
+        }),
+    }
 }
 
 #[tauri::command]
@@ -965,13 +1086,29 @@ pub async fn nutrition_lookup_food(
     query: String,
 ) -> AppResult<Vec<FoodCandidate>> {
     let query = validate_food_query(&query)?;
-    let key = read_tavily_key()?.ok_or_else(|| {
-        AppError::new(ErrorCode::NotConfigured, "尚未配置联网营养搜索密钥")
-            .with_hint("可在食谱与采购页添加 Tavily Search API Key；密钥只存本机系统凭据库。")
-    })?;
     let cfg = ai::current_config(&state.db).await?.ok_or_else(|| {
         AppError::new(ErrorCode::NotConfigured, "尚未配置 AI 服务")
             .with_hint("请先在设置 → AI 中配置模型和 API Key；热量需要由 AI 根据联网来源核对。")
+    })?;
+    if cfg.provider == ai::Provider::DeepSeek {
+        let key = ai::load_api_key(ai::Provider::DeepSeek)?.ok_or_else(|| {
+            AppError::new(ErrorCode::NotConfigured, "DeepSeek API Key 尚未配置")
+                .with_hint("请先在设置 → AI 中保存 DeepSeek API Key。")
+        })?;
+        let evidence = deepseek_search_evidence(&key, &cfg.base_url, &cfg.model, &query).await?;
+        return lookup_food_from_evidence(
+            &state.db,
+            &query,
+            evidence,
+            cfg,
+            |config, request| async move { ai::chat(&config, &request).await },
+        )
+        .await;
+    }
+    let key = read_tavily_key()?.ok_or_else(|| {
+        AppError::new(ErrorCode::NotConfigured, "尚未配置联网营养搜索密钥").with_hint(
+            "请在食谱与采购页添加 Tavily Search API Key，或将设置 → AI 的模型切换为 DeepSeek。",
+        )
     })?;
     lookup_food_with(
         &state.db,
@@ -982,6 +1119,57 @@ pub async fn nutrition_lookup_food(
         |config, request| async move { ai::chat(&config, &request).await },
     )
     .await
+}
+
+async fn deepseek_search_evidence(
+    key: &str,
+    base_url: &str,
+    model: &str,
+    query: &str,
+) -> AppResult<Vec<TavilySearchResult>> {
+    let base = base_url.trim().trim_end_matches('/');
+    let endpoint = if base.ends_with("/anthropic") {
+        format!("{base}/v1/messages")
+    } else {
+        format!("{base}/anthropic/v1/messages")
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| AppError::new(ErrorCode::Network, "无法创建 DeepSeek 联网搜索请求"))?;
+    let response = client
+        .post(endpoint)
+        .header("x-api-key", key)
+        .bearer_auth(key)
+        .header("anthropic-version", "2023-06-01")
+        .json(&serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "system": "Use web search to find reliable nutrition sources for the exact food requested. Return cited source excerpts; never guess calories from memory.",
+            "messages": [{"role":"user","content":format!("Search for reliable information about {query}, especially calories per 100 grams, preparation state, and nutrition facts.")}],
+            "tools": [{"type":"web_search_20250305","name":"web_search","max_uses":5}]
+        }))
+        .send()
+        .await
+        .map_err(|_| AppError::new(ErrorCode::Network, "DeepSeek 联网搜索失败，请检查网络后重试"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let (code, message) = match status.as_u16() {
+            401 | 403 => (ErrorCode::Unauthorized, "DeepSeek API Key 无效或无权限"),
+            429 => (ErrorCode::RateLimited, "DeepSeek API 请求已限流或额度不足"),
+            _ => (ErrorCode::Network, "DeepSeek 联网搜索暂时不可用"),
+        };
+        return Err(AppError::new(
+            code,
+            format!("{message}（HTTP {}）", status.as_u16()),
+        ));
+    }
+    let response: DeepSeekSearchResponse = response
+        .json()
+        .await
+        .map_err(|_| AppError::new(ErrorCode::Network, "DeepSeek 搜索结果无法读取"))?;
+    Ok(decode_deepseek_search_evidence(response))
 }
 
 async fn lookup_food_with<F, Fut>(
@@ -1039,6 +1227,20 @@ where
         .filter(|result| valid_https_url(&result.url) && !result.title.trim().is_empty())
         .take(5)
         .collect::<Vec<_>>();
+    lookup_food_from_evidence(db, query, evidence, config, chat).await
+}
+
+async fn lookup_food_from_evidence<F, Fut>(
+    db: &Db,
+    query: &str,
+    evidence: Vec<TavilySearchResult>,
+    config: ai::ProviderConfig,
+    chat: F,
+) -> AppResult<Vec<FoodCandidate>>
+where
+    F: FnOnce(ai::ProviderConfig, ChatRequest) -> Fut,
+    Fut: Future<Output = AppResult<ai::ChatResponse>>,
+{
     if evidence.is_empty() {
         return Ok(Vec::new());
     }
@@ -1762,6 +1964,69 @@ mod tests {
             decode_ai_food_results(response, &evidence).unwrap().len(),
             3
         );
+    }
+
+    #[test]
+    fn deepseek_native_search_only_returns_https_citations_with_source_text() {
+        let response: DeepSeekSearchResponse = serde_json::from_value(serde_json::json!({
+            "content": [
+                {"type":"web_search_tool_result","content":[
+                    {"type":"web_search_result","url":"https://nutrition.example/egg","title":"营养资料"},
+                    {"type":"web_search_result","url":"http://127.0.0.1/private","title":"内网结果"}
+                ]},
+                {"type":"text","text":"已找到来源","citations":[
+                    {"url":"https://nutrition.example/egg","cited_text":"每 100 克含 155 千卡"},
+                    {"url":"http://127.0.0.1/private","cited_text":"不应保留"},
+                    {"url":"https://uncited.example/food","cited_text":"无对应搜索结果仍可作为引用文本"}
+                ]}
+            ]
+        })).unwrap();
+        let evidence = decode_deepseek_search_evidence(response);
+        assert_eq!(evidence.len(), 2);
+        assert_eq!(evidence[0].url, "https://nutrition.example/egg");
+        assert_eq!(evidence[0].title, "营养资料");
+        assert!(evidence[0]
+            .raw_content
+            .as_deref()
+            .unwrap()
+            .contains("155 千卡"));
+        assert_eq!(evidence[1].url, "https://uncited.example/food");
+        assert_eq!(evidence[1].title, "uncited.example");
+    }
+
+    #[tokio::test]
+    async fn deepseek_food_search_uses_native_web_search_tool_and_anthropic_endpoint() {
+        let mock = TavilyMock::respond(
+            200,
+            serde_json::json!({"content":[
+                {"type":"web_search_tool_result","content":[
+                    {"type":"web_search_result","url":"https://nutrition.example/chicken","title":"营养资料"}
+                ]},
+                {"type":"text","citations":[
+                    {"url":"https://nutrition.example/chicken","cited_text":"熟鸡胸肉每100克约165千卡"}
+                ]}
+            ]}),
+        );
+        let base = mock.url.trim_end_matches("/search").to_owned();
+        let evidence =
+            deepseek_search_evidence("local-test-key", &base, "deepseek-flash", "熟鸡胸肉")
+                .await
+                .unwrap();
+        let request = mock.captured_request();
+        assert!(request.starts_with("POST /anthropic/v1/messages HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("anthropic-version: 2023-06-01"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("x-api-key: local-test-key"));
+        assert!(request.contains("web_search_20250305"));
+        assert_eq!(evidence.len(), 1);
+        assert!(evidence[0]
+            .raw_content
+            .as_deref()
+            .unwrap()
+            .contains("165千卡"));
     }
 
     #[tokio::test]
