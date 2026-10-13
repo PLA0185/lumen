@@ -7,58 +7,25 @@
  * - **检查失败**：显示具体原因 + 手动下载入口，绝不说成"已是最新"。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import * as up from '../lib/update-ipc'
-
-type Phase = 'idle' | 'checking' | 'latest' | 'available' | 'installing' | 'failed'
+import {
+  checkForUpdates,
+  ensureUpdateChecked,
+  getUpdateState,
+  installAvailableUpdate,
+  reportUpdateFailure,
+  subscribeUpdateState,
+} from '../lib/update-manager'
 
 export function UpdatePanel({ currentVersion }: { currentVersion: string | undefined }) {
-  const [phase, setPhase] = useState<Phase>('idle')
-  const [info, setInfo] = useState<up.UpdateInfo | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [progress, setProgress] = useState<up.UpdateProgress | null>(null)
-  const [checkedAt, setCheckedAt] = useState<string | null>(null)
-  const handle = useRef<up.UpdateHandle>(null)
-
-  const doCheck = useCallback(async () => {
-    setPhase('checking')
-    setError(null)
-    setInfo(null)
-    setProgress(null)
-    try {
-      const { info: found, handle: h } = await up.checkUpdate()
-      handle.current = h
-      setInfo(found)
-      setPhase(found ? 'available' : 'latest')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setPhase('failed')
-    } finally {
-      setCheckedAt(
-        new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }),
-      )
-    }
-  }, [])
-
-  const doInstall = useCallback(async () => {
-    if (!handle.current) return
-    setPhase('installing')
-    setError(null)
-    try {
-      await up.downloadAndInstall(handle.current, setProgress)
-      // 正常情况下走不到这里：Windows 上安装器会接管并结束本进程
-      setError('更新已下载完成，安装程序应当已经启动。若界面没有关闭，请手动重启 Lumen。')
-      setPhase('failed')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-      setPhase('failed')
-    }
-  }, [])
+  const update = useSyncExternalStore(subscribeUpdateState, getUpdateState, getUpdateState)
+  const { phase, info, error, progress, checkedAt } = update
 
   // 打开面板时自动查一次：用户点进「关于」多半就是想知道有没有新版
   useEffect(() => {
-    void doCheck()
-  }, [doCheck])
+    void ensureUpdateChecked()
+  }, [])
 
   return (
     <div className="setgroup">
@@ -73,13 +40,13 @@ export function UpdatePanel({ currentVersion }: { currentVersion: string | undef
           type="button"
           className="btn btn--ghost"
           disabled={phase === 'checking' || phase === 'installing'}
-          onClick={() => void doCheck()}
+          onClick={() => void checkForUpdates()}
         >
           {phase === 'checking' ? '检查中…' : '检查更新'}
         </button>
 
         {phase === 'available' && (
-          <button type="button" className="btn btn--primary" onClick={() => void doInstall()}>
+          <button type="button" className="btn btn--primary" onClick={() => void installAvailableUpdate()}>
             下载并安装 v{info?.version}
           </button>
         )}
@@ -147,10 +114,9 @@ export function UpdatePanel({ currentVersion }: { currentVersion: string | undef
               try {
                 await up.openReleasesPage()
               } catch (e) {
-                setError(
+                reportUpdateFailure(
                   `打不开浏览器，请手动访问：${up.RELEASES_URL}（${e instanceof Error ? e.message : String(e)}）`,
                 )
-                setPhase('failed')
               }
             })()
           }
