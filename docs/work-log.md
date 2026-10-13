@@ -4024,6 +4024,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 保留业务数据 AES-256-GCM 加密。GitHub Token 通过带仓库和空间上下文的派生密钥保护内部数据密钥包；Token 不离开本机凭据库。Token 不一致时拒绝覆盖，Token 轮换须在已有设备主动重新连接，避免旧设备把保护信息回写成旧 Token。
 - 已连接旧版 GitHub 空间会在旧设备首次扫描同步时补写加密密钥包；WebDAV 仍停用，不触碰旧云端内容。
 - 更新云同步文档与 0.4.44 版本记录；没有改数据库或新增迁移。
+- PR #9 已创建；原始代码提交 `dffde3c` 的 GitHub CI run 124 前端与 Rust 全部通过，合并等待最终记录提交 CI。
 
 ### 没做到
 
@@ -4034,7 +4035,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.44）、`pnpm typecheck`、云同步界面定向测试（11 项）、`pnpm test`（53 个文件、399 项）、`pnpm build`、`pnpm lint` 均实际运行并通过；构建保留已有动态导入提示。
 - `cargo fmt --check`、Token 自动解开密钥包定向测试（1 项）、严格 `cargo clippy --all-targets --all-features -- -D warnings` 和 `git diff --check` 实际运行并通过。
-- 完整 `cargo test --lib` 汇报 587 项通过、4 项忽略，但 Windows 测试进程在结果汇总后仍未退出；汇总后中断命令，退出码为 1，不能记作完整命令通过。GitHub CI 尚未验证。
+- 完整 `cargo test --lib` 汇报 587 项通过、4 项忽略，但 Windows 测试进程在结果汇总后仍未退出；汇总后中断命令，退出码为 1，不能记作完整命令通过。PR #9 的 GitHub CI run 124 正常完成了 Rust 格式、编译、测试及严格 Clippy，并且前端类型检查、399 项测试、构建与 lint 全部通过。
 - 前端测试首次因文案断言与新 UI 文案不一致而失败，更新断言后 11 项定向测试及 399 项完整前端套件均通过。
 
 ### 相关文档
