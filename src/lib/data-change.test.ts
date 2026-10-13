@@ -22,7 +22,7 @@ describe('mutation architecture', () => {
       'tag_update', 'tag_delete', 'tag_merge', 'task_tags_set', 'subtask_create',
       'subtask_update', 'subtask_delete', 'dependency_add', 'dependency_remove',
       'attachment_add', 'attachment_remove', 'reminder_create',
-      'reminder_set_enabled', 'reminder_delete', 'reminder_snooze', 'focus_end',
+      'reminder_set_enabled', 'reminder_update_time', 'reminder_delete', 'reminder_snooze', 'focus_end',
       'backup_restore',
     ]) {
       expect(MUTATION_DOMAINS, cmd).toHaveProperty(cmd)

@@ -53,6 +53,7 @@ export interface SchedulerStatus {
 export const REM_CMD = {
   create: 'reminder_create',
   list: 'reminder_list',
+  updateTime: 'reminder_update_time',
   setEnabled: 'reminder_set_enabled',
   delete: 'reminder_delete',
   snooze: 'reminder_snooze',
@@ -96,6 +97,9 @@ export const reminderList = (taskId: string): Promise<Reminder[]> =>
 
 export const reminderSetEnabled = (id: string, enabled: boolean): Promise<Reminder> =>
   call(REM_CMD.setEnabled, { id, enabled })
+
+export const reminderUpdateTime = (id: string, remindAt: string): Promise<Reminder> =>
+  call(REM_CMD.updateTime, { id, remindAt })
 
 export const reminderDelete = (id: string): Promise<number> => call(REM_CMD.delete, { id })
 

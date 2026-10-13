@@ -745,6 +745,8 @@ impl From<SeriesSegmentRow> for Segment {
 pub(crate) async fn create_recurring_seed_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     input: &CreateRecurringInput,
+    subtasks: &[crate::recurrence_subtasks::SubtaskTemplate],
+    completion_mode: crate::recurrence_subtasks::SubtaskCompletionMode,
 ) -> AppResult<(String, String, RecurrenceRule)> {
     let title = input.title.trim();
     if title.is_empty() {
@@ -794,11 +796,13 @@ pub(crate) async fn create_recurring_seed_tx(
     .execute(&mut **tx)
     .await?;
 
+    let subtasks_json = serde_json::to_string(subtasks)
+        .map_err(|e| AppError::internal(format!("序列化重复子任务模板失败：{e}")))?;
     sqlx::query(
         "INSERT INTO task_series_template
          (series_id, title, description, note_md, link_url, priority,
-          project_id, category_id, estimated_minutes)
-         VALUES (?1, ?2, ?3, '', NULL, ?4, ?5, ?6, ?7)",
+          project_id, category_id, estimated_minutes, subtasks_json, subtask_completion_mode)
+         VALUES (?1, ?2, ?3, '', NULL, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(&series_id)
     .bind(title)
@@ -807,6 +811,8 @@ pub(crate) async fn create_recurring_seed_tx(
     .bind(input.project_id.as_deref().filter(|s| !s.is_empty()))
     .bind(input.category_id.as_deref().filter(|s| !s.is_empty()))
     .bind(input.estimated_minutes)
+    .bind(&subtasks_json)
+    .bind(completion_mode.as_db())
     .execute(&mut **tx)
     .await?;
 
@@ -825,12 +831,13 @@ pub(crate) async fn create_recurring_seed_tx(
             id, title, description, priority, project_id, category_id,
             status, planned_at, has_planned_time,
             estimated_minutes, created_at, updated_at,
-            sort_order, series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception, period_type
+            sort_order, series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception,
+            period_type, subtask_completion_mode
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6,
             'todo', ?7, ?8,
             ?9, ?10, ?10,
-            0, ?11, ?7, ?12, 'generated', 0, ?13
+            0, ?11, ?7, ?12, 'generated', 0, ?13, ?14
          )",
     )
     .bind(&task_id)
@@ -846,8 +853,11 @@ pub(crate) async fn create_recurring_seed_tx(
     .bind(&series_id)
     .bind(first_occ.index)
     .bind(rule.task_period.as_deref().unwrap_or("none"))
+    .bind(completion_mode.as_db())
     .execute(&mut **tx)
     .await?;
+
+    crate::recurrence_subtasks::insert_templates(tx, &task_id, subtasks, &now).await?;
 
     if let Some(reminder_time) = rule.reminder_time.as_deref() {
         insert_series_default_reminder(tx, &task_id, &first_occ, reminder_time, &tzid, &now)
@@ -875,8 +885,20 @@ pub async fn create_recurring_impl(
     state: &AppState,
     input: CreateRecurringInput,
 ) -> AppResult<CreateRecurringResult> {
+    create_recurring_with_subtasks_impl(state, input, &[], None).await
+}
+
+pub async fn create_recurring_with_subtasks_impl(
+    state: &AppState,
+    input: CreateRecurringInput,
+    subtask_titles: &[String],
+    completion_mode: Option<&str>,
+) -> AppResult<CreateRecurringResult> {
+    let subtasks = crate::recurrence_subtasks::templates_from_titles(subtask_titles)?;
+    let completion_mode = crate::recurrence_subtasks::parse_completion_mode(completion_mode)?;
     let mut tx = state.db.pool().begin().await?;
-    let (series_id, first_utc, rule) = create_recurring_seed_tx(&mut tx, &input).await?;
+    let (series_id, first_utc, rule) =
+        create_recurring_seed_tx(&mut tx, &input, &subtasks, completion_mode).await?;
     tx.commit().await?;
     // 物化后续实例（默认 90 天）。
     //
@@ -942,8 +964,16 @@ pub async fn create_recurring_impl(
 pub async fn recurring_create(
     state: State<'_, AppState>,
     input: CreateRecurringInput,
+    subtasks: Option<Vec<String>>,
+    subtask_completion_mode: Option<String>,
 ) -> AppResult<CreateRecurringResult> {
-    create_recurring_impl(&state, input).await
+    create_recurring_with_subtasks_impl(
+        &state,
+        input,
+        subtasks.as_deref().unwrap_or_default(),
+        subtask_completion_mode.as_deref(),
+    )
+    .await
 }
 
 /// 展开预览：接下来 N 次发生的本地日期（§5 要求"提供规则预览"）

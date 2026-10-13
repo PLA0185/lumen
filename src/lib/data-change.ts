@@ -91,6 +91,7 @@ export const MUTATION_DOMAINS = {
   attachment_cleanup_orphans: ['attachments'],
   reminder_create: ['reminders'],
   reminder_set_enabled: ['reminders'],
+  reminder_update_time: ['reminders'],
   reminder_delete: ['reminders'],
   reminder_snooze: ['reminders'],
   reminder_set_grace: ['reminders'],

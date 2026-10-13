@@ -16,8 +16,8 @@
 //! - 任务时间与相对提醒的时刻必须一起成功或一起失败。
 
 use crate::commands::{
-    create_task_impl, duplicate_task_impl, list_tasks_impl, reorder_task_impl, save_task_impl,
-    update_task_impl, AppState, ReorderInput,
+    create_task_impl, create_task_with_subtasks_impl, duplicate_task_impl, list_tasks_impl,
+    reorder_task_impl, save_task_impl, update_task_impl, AppState, ReorderInput,
 };
 use crate::db::Db;
 use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
@@ -130,6 +130,54 @@ async fn recurring_groups_are_counted_before_paging_and_preserve_occurrences() {
     );
     db.pool().close().await;
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn task_creation_saves_ordered_subtasks_and_rolls_back_on_child_failure() {
+    let (state, dir) = setup("create-task-subtasks").await;
+    let db = &state.db;
+    let names = vec!["第一步".to_string(), "第二步".to_string()];
+    let parent =
+        create_task_with_subtasks_impl(db, task("带子任务的周任务"), &names, Some("sequential"))
+            .await
+            .unwrap();
+    let children: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT title, sort_order FROM subtasks WHERE task_id=?1 ORDER BY sort_order,id",
+    )
+    .bind(&parent.id)
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        children,
+        vec![("第一步".into(), 1.0), ("第二步".into(), 2.0)]
+    );
+    let mode: String = sqlx::query_scalar("SELECT subtask_completion_mode FROM tasks WHERE id=?1")
+        .bind(&parent.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(mode, "sequential");
+
+    sqlx::query(
+        "CREATE TRIGGER reject_initial_subtask BEFORE INSERT ON subtasks
+        WHEN NEW.title='拒绝保存' BEGIN SELECT RAISE(ABORT,'test'); END",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    let rejected =
+        create_task_with_subtasks_impl(db, task("不能留下的父任务"), &["拒绝保存".into()], None)
+            .await;
+    assert!(rejected.is_err());
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE title='不能留下的父任务'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0, "子任务失败时父任务必须一并回滚");
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[tokio::test]

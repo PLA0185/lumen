@@ -31,10 +31,10 @@ async function mount(node: React.ReactNode) {
 }
 async function input(label: string, value: string) {
   const field = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`)!
-  const prototype = field.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+  const prototype = Object.getPrototypeOf(field) as typeof HTMLInputElement.prototype
   await act(async () => {
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(field, value)
-    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field.dispatchEvent(new Event(field.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }))
   })
 }
 async function click(text: string) {
@@ -58,8 +58,13 @@ it('普通新建真正提交多行描述，保存失败保留草稿，成功后�
   await mount(<QuickAdd onCreated={() => {}} />)
   await input('任务标题，可包含日期、标签与优先级', '包装')
   await input('任务描述', '要完成什么\n注意事项')
+  await input('子任务列表，每行一项', '准备材料\n完成核对')
+  await input('子任务完成方式', 'sequential')
   await click('添加')
-  expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ description: '要完成什么\n注意事项' }))
+  expect(create).toHaveBeenLastCalledWith(
+    expect.objectContaining({ description: '要完成什么\n注意事项' }),
+    { subtasks: ['准备材料', '完成核对'], subtaskCompletionMode: 'sequential' },
+  )
   expect(document.querySelector<HTMLTextAreaElement>('[aria-label="任务描述"]')!.value).toBe('要完成什么\n注意事项')
   expect(document.body.textContent).toContain('写入失败')
   await click('添加')

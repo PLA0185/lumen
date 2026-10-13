@@ -189,8 +189,15 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 /** 创建重复任务 */
-export const recurringCreate = (input: CreateRecurringInput): Promise<CreateRecurringResult> =>
-  call(REC_CMD.create, { input })
+export const recurringCreate = (
+  input: CreateRecurringInput,
+  options?: { subtasks?: string[]; subtaskCompletionMode?: 'free' | 'sequential' },
+): Promise<CreateRecurringResult> =>
+  call(REC_CMD.create, {
+    input,
+    subtasks: options?.subtasks ?? [],
+    subtaskCompletionMode: options?.subtaskCompletionMode ?? 'free',
+  })
 
 /**
  * 规则预览：接下来 N 次发生。

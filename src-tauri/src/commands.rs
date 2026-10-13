@@ -281,12 +281,32 @@ pub(crate) async fn get_task_row(db: &Db, id: &str) -> AppResult<Task> {
 /// 任务书 §4.4/§6：AI 或自然语言解析的结果必须先经用户确认，
 /// 因此本命令不做任何隐式字段推断，传入什么就存什么。
 #[tauri::command]
-pub async fn task_create(state: State<'_, AppState>, input: CreateTaskInput) -> AppResult<Task> {
-    create_task_impl(&state.db, input).await
+pub async fn task_create(
+    state: State<'_, AppState>,
+    input: CreateTaskInput,
+    subtasks: Option<Vec<String>>,
+    subtask_completion_mode: Option<String>,
+) -> AppResult<Task> {
+    create_task_with_subtasks_impl(
+        &state.db,
+        input,
+        subtasks.as_deref().unwrap_or_default(),
+        subtask_completion_mode.as_deref(),
+    )
+    .await
 }
 
 /// 创建任务的实现（与 Tauri 解耦，便于集成测试直接调用）。
 pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task> {
+    create_task_with_subtasks_impl(db, input, &[], None).await
+}
+
+pub async fn create_task_with_subtasks_impl(
+    db: &Db,
+    input: CreateTaskInput,
+    subtask_titles: &[String],
+    completion_mode: Option<&str>,
+) -> AppResult<Task> {
     let title = validate_title(&input.title)?;
     let description = validate_long_text("描述", input.description.as_deref().unwrap_or(""))?;
     let note_md = validate_long_text("备注", input.note_md.as_deref().unwrap_or(""))?;
@@ -305,6 +325,8 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
 
     let planned = validate_opt_time("计划时间", input.planned_at.as_ref())?;
     let due = validate_opt_time("截止时间", input.due_at.as_ref())?;
+    let subtasks = crate::recurrence_subtasks::templates_from_titles(subtask_titles)?;
+    let completion_mode = crate::recurrence_subtasks::parse_completion_mode(completion_mode)?;
 
     if let Some(m) = input.estimated_minutes {
         if !(0..=600_000).contains(&m) {
@@ -333,7 +355,7 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
             completed_at, created_at, updated_at,
             sort_order, is_pinned, is_favorite,
             series_id, occurrence_key, occurrence_index, occurrence_kind, is_exception,
-            period_type
+            period_type, subtask_completion_mode
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5,
             ?6, ?7, ?8, ?9,
@@ -342,7 +364,7 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
             ?15, ?16, ?16,
             ?17, ?18, ?19,
             NULL, NULL, NULL, 'single', 0,
-            ?20
+            ?20, ?21
          )",
     )
     .bind(&id)
@@ -373,6 +395,7 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
     .bind(validate_period(
         input.period_type.as_deref().unwrap_or("none"),
     )?)
+    .bind(completion_mode.as_db())
     .execute(&mut *tx)
     .await?;
 
@@ -383,6 +406,8 @@ pub async fn create_task_impl(db: &Db, input: CreateTaskInput) -> AppResult<Task
             .execute(&mut *tx)
             .await?;
     }
+
+    crate::recurrence_subtasks::insert_plain_subtasks(&mut tx, &id, &subtasks, &now).await?;
 
     tx.commit().await?;
     get_task_row(db, &id).await

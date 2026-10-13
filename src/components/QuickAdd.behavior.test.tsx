@@ -73,7 +73,10 @@ it('保存期间允许继续输入，旧保存返回后保留新标题、描述�
   expect(field('优先级').value).toBe('3')
   expect(create).toHaveBeenCalledOnce()
   await enter()
-  expect(create).toHaveBeenLastCalledWith(expect.objectContaining({ title: '第二项', description: '第二项材料', priority: 3 }))
+  expect(create).toHaveBeenLastCalledWith(
+    expect.objectContaining({ title: '第二项', description: '第二项材料', priority: 3 }),
+    { subtasks: [], subtaskCompletionMode: 'free' },
+  )
   expect(field(TITLE).value).toBe('')
 })
 

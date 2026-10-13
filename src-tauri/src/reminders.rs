@@ -378,6 +378,54 @@ pub async fn reminder_set_enabled(
     get_reminder(&state, &id).await
 }
 
+pub async fn reminder_update_time_impl(
+    db: &crate::db::Db,
+    id: &str,
+    remind_at: &str,
+) -> AppResult<Reminder> {
+    let parsed = chrono::DateTime::parse_from_rfc3339(remind_at).map_err(|_| {
+        AppError::validation("提醒时间格式不正确").with_hint("请选择具体日期与时间")
+    })?;
+    let remind_at = to_db_time(parsed.with_timezone(&chrono::Utc));
+    let now = to_db_time(utc_now());
+    let mut tx = db.pool().begin().await?;
+    preserve_series_occurrence_for_reminder_tx(&mut tx, id, &now).await?;
+    let result = sqlx::query(
+        "UPDATE reminders SET kind='custom', offset_minutes=NULL, remind_at=?1,
+         snoozed_until=NULL, fired_at=NULL, series_default=0, updated_at=?2 WHERE id=?3",
+    )
+    .bind(remind_at)
+    .bind(now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::not_found("提醒", id));
+    }
+    tx.commit().await?;
+    get_reminder_db(db, id).await
+}
+
+#[tauri::command]
+pub async fn reminder_update_time(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    remind_at: String,
+) -> AppResult<Reminder> {
+    let updated = reminder_update_time_impl(&state.db, &id, &remind_at).await?;
+    let _ = app.emit("reminders-changed", ());
+    Ok(updated)
+}
+
+async fn get_reminder_db(db: &crate::db::Db, id: &str) -> AppResult<Reminder> {
+    let r = sqlx::query_as::<_, Reminder>("SELECT * FROM reminders WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(db.pool())
+        .await?;
+    r.ok_or_else(|| AppError::not_found("提醒", id))
+}
+
 /// 删除提醒
 #[tauri::command]
 pub async fn reminder_delete(state: State<'_, AppState>, id: String) -> AppResult<i64> {
@@ -1537,5 +1585,48 @@ mod tests {
         }
         // 未知值安全回落为 Custom，不 panic
         assert_eq!(ReminderKind::from_db("weird"), ReminderKind::Custom);
+    }
+}
+
+#[cfg(test)]
+mod reminder_time_edit_tests {
+    use super::*;
+    use crate::db::Db;
+
+    #[tokio::test]
+    async fn exact_time_edit_converts_existing_reminder_to_custom_and_rearms_it() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-reminder-time-edit-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let task_id = uuid::Uuid::now_v7().to_string();
+        let reminder_id = uuid::Uuid::now_v7().to_string();
+        let now = to_db_time(utc_now());
+        sqlx::query(
+            "INSERT INTO tasks(id,title,created_at,updated_at) VALUES(?1,'精确提醒测试',?2,?2)",
+        )
+        .bind(&task_id)
+        .bind(&now)
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO reminders(id,task_id,kind,remind_at,is_enabled,fired_at,created_at,updated_at)
+            VALUES(?1,?2,'at_planned','2026-10-13T00:00:00.000Z',1,'expired',?3,?3)")
+            .bind(&reminder_id)
+            .bind(&task_id)
+            .bind(&now)
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let updated = reminder_update_time_impl(&db, &reminder_id, "2026-10-13T02:30:00+08:00")
+            .await
+            .unwrap();
+        assert_eq!(updated.kind, "custom");
+        assert_eq!(updated.remind_at, "2026-10-12T18:30:00.000Z");
+        assert!(updated.fired_at.is_none());
+        assert!(updated.snoozed_until.is_none());
+        assert_eq!(updated.is_enabled, 1);
+        db.pool().close().await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

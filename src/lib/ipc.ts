@@ -157,8 +157,15 @@ export const setRemindersPaused = (paused: boolean): Promise<boolean> =>
 // =============================================================================
 
 /** 创建任务 */
-export const createTask = (input: CreateTaskInput): Promise<Task> =>
-  call<Task>(CMD.taskCreate, { input })
+export const createTask = (
+  input: CreateTaskInput,
+  options?: { subtasks?: string[]; subtaskCompletionMode?: 'free' | 'sequential' },
+): Promise<Task> =>
+  call<Task>(CMD.taskCreate, {
+    input,
+    subtasks: options?.subtasks ?? [],
+    subtaskCompletionMode: options?.subtaskCompletionMode ?? 'free',
+  })
 
 /** 更新任务（部分更新） */
 export const updateTask = (id: string, input: UpdateTaskInput): Promise<Task> =>
