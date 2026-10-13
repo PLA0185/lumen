@@ -1956,6 +1956,7 @@ async fn sync_exchange(
     }
     if options.scope != SyncScope::Memos {
         let business_result: AppResult<()> = async {
+            business::restore_missing_attachment_sources(db, dav, c, key).await?;
             business::capture_scope(db, options.scope == SyncScope::All).await?;
             business::upload_scope(db, dav, c, key, options.scope == SyncScope::All).await?;
             Ok(())

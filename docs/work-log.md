@@ -4100,3 +4100,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [通用新建任务与子任务入口](../src/components/QuickAdd.tsx)、[提醒新建与时刻编辑](../src/components/ReminderEditor.tsx)
 - [任务与重复模板的原子写入](../src-tauri/src/commands.rs)、[提醒时刻更新](../src-tauri/src/reminders.rs)
 - [README 版本摘要](../README.md#文档索引)
+
+## 第 90 轮 · 2026-10-13 · 云端已有副本时恢复丢失的附件
+
+### 做了
+
+- 排查到 Lumen 本机「儿童忙碌块.zip」附件记录是仅引用原文件；登记的外部路径已不存在，本机 `cloud_files` 也没有该附件缓存。
+- 任务同步捕获快照前，先检查缺失的附件原路径；若本机缓存或 GitHub 已存在相同附件编号的副本，则校验编号、摘要与内容后恢复到本机受控附件目录，再继续同步。
+- 若云端和本机都没有附件内容，仍返回原有明确错误；恢复探测留在任务同步的错误处理范围内，不阻断可独立继续的备忘同步。
+- 不改数据库结构；版本更新为 0.4.47，补充发布说明与 README。
+
+### 没做到
+
+- 未读取本机 GitHub 私有仓库凭据，也未检查这个具体附件编号在远端是否已有对象；本机只确认外部文件与本地缓存均缺失。因此，若云端从未上传过这个 zip，仍须从原位置恢复文件后重试。
+- 未在用户当前运行的 Lumen 窗口或另一台电脑上实机同步验收；需安装 0.4.47 后确认真实 GitHub 远端行为。
+- 本机 `cargo test --lib` 汇总为 591 项通过、0 失败、4 项忽略，但进程汇总后未退出；中断命令退出码为 1，不能记为完整命令通过。
+
+### 怎么验证的
+
+- 新增复现先在修复前重现了截图中的精确错误；修复后，云端已有副本可下载、校验并恢复，任务同步通过。
+- `cargo test --lib cloud_sync::tests::missing_ -- --nocapture` 的 3 项定向测试通过，覆盖云端有副本时恢复、云端无副本时仍报原文件错误，以及知识库缺失原件的既有保护。
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.47）、`pnpm typecheck`、前端测试（54 个文件、400 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、严格 Clippy 和 `git diff --check` 均实际通过。构建仍显示既有动态导入提示。
+- GitHub PR / 发布 CI 尚未运行；待远端结果确认后补记。没有声称本机完整 Rust 测试通过。
+
+### 相关文档
+
+- [0.4.47 发布说明](../RELEASE_NOTES.md)
+- [附件恢复与任务同步](../src-tauri/src/cloud_sync/business.rs)、[同步入口](../src-tauri/src/cloud_sync.rs)、[附件同步回归测试](../src-tauri/src/cloud_sync/tests.rs)
+- [README 版本摘要](../README.md#文档索引)

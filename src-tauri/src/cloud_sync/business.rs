@@ -933,25 +933,45 @@ async fn attachment_download(
     key: &[u8; 32],
     row: &Value,
 ) -> AppResult<()> {
+    if !restore_attachment_from_cloud(db, dav, c, key, row).await? {
+        return Err(AppError::validation("云端任务附件缺失，没有覆盖本机"));
+    }
+    Ok(())
+}
+
+/// Reuse an already uploaded attachment when this device's original/reference path is gone.
+/// Returns false only when the cloud has no immutable file for this attachment ID.
+async fn restore_attachment_from_cloud(
+    db: &Db,
+    dav: &impl SyncRemote,
+    c: &Config,
+    key: &[u8; 32],
+    row: &Value,
+) -> AppResult<bool> {
     let id = row
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::validation("附件编号缺失"))?;
     let path = bucket("files", id)?;
-    let bytes = dav
-        .read(db, &path, 400 * 1024 * 1024)
-        .await?
-        .ok_or_else(|| AppError::validation("云端任务附件缺失，没有覆盖本机"))?;
-    let body: AttachmentBody = decrypt(key, &aad(c, &path), &bytes)?;
+    let cached_local: Option<String> =
+        sqlx::query_scalar("SELECT body_json FROM cloud_files WHERE id=?")
+            .bind(id)
+            .fetch_optional(db.pool())
+            .await?;
+    let body: AttachmentBody = if let Some(raw) = cached_local {
+        decoded(&raw)?
+    } else {
+        let Some(encrypted) = dav.read(db, &path, 400 * 1024 * 1024).await? else {
+            return Ok(false);
+        };
+        decrypt(key, &aad(c, &path), &encrypted)?
+    };
     let cached = encoded(&body)?;
-    if body.id != id || body.data.len() > 280 * 1024 * 1024 {
-        return Err(AppError::validation("云端任务附件编号或长度无效"));
-    }
-    let bytes = STANDARD
-        .decode(body.data)
-        .map_err(|_| AppError::validation("云端任务附件编码损坏"))?;
-    if bytes.len() > 200 * 1024 * 1024 || hex::encode(Sha256::digest(&bytes)) != body.sha256 {
-        return Err(AppError::validation("云端任务附件校验失败"));
+    let file_bytes = validate_file(&body, id)?;
+    if let Some(expected) = row.get("sha256").and_then(Value::as_str) {
+        if expected != body.sha256 {
+            return Err(AppError::conflict("云端任务附件与本机记录摘要不一致"));
+        }
     }
     sqlx::query("INSERT INTO cloud_files(id,body_json) VALUES(?,?) ON CONFLICT(id) DO NOTHING")
         .bind(id)
@@ -967,11 +987,67 @@ async fn attachment_download(
             "本机与云端附件历史副本不一致，没有覆盖文件",
         ));
     }
-    let stored = row
+    let mut portable = row.clone();
+    portable_attachment(&mut portable)?;
+    let stored = portable
         .get("stored_path")
         .and_then(Value::as_str)
         .ok_or_else(|| AppError::validation("附件保存路径缺失"))?;
-    write_cached_file(db.data_dir(), stored, &bytes)
+    write_cached_file(db.data_dir(), stored, &file_bytes)?;
+    sqlx::query(
+        "UPDATE attachments SET stored_path=?,external_path=NULL,storage_mode='copied' WHERE id=?",
+    )
+    .bind(stored)
+    .bind(id)
+    .execute(db.pool())
+    .await?;
+    Ok(true)
+}
+
+/// Hydrate missing local attachment files before snapshot capture. If the cloud has no
+/// copy, leave the row untouched so capture returns the actionable missing-source error.
+pub async fn restore_missing_attachment_sources(
+    db: &Db,
+    dav: &impl SyncRemote,
+    c: &Config,
+    key: &[u8; 32],
+) -> AppResult<()> {
+    let rows = sqlx::query(
+        "SELECT id,file_name,sha256,storage_mode,stored_path,external_path FROM attachments",
+    )
+    .fetch_all(db.pool())
+    .await?;
+    for row in rows {
+        let id: String = row.get("id");
+        let name: String = row.get("file_name");
+        let copied: bool = row.get::<String, _>("storage_mode") == "copied";
+        let source = row
+            .get::<Option<String>, _>(if copied {
+                "stored_path"
+            } else {
+                "external_path"
+            })
+            .map(|path| {
+                if copied {
+                    crate::attachments::resolve_stored_path(db.data_dir(), &path)
+                } else {
+                    std::path::PathBuf::from(path)
+                }
+            });
+        if source
+            .as_ref()
+            .is_some_and(|path| std::fs::File::open(path).is_ok())
+        {
+            continue;
+        }
+        let portable = serde_json::json!({
+            "id": id,
+            "file_name": name,
+            "sha256": row.get::<Option<String>, _>("sha256"),
+        });
+        restore_attachment_from_cloud(db, dav, c, key, &portable).await?;
+    }
+    Ok(())
 }
 fn write_cached_file(dir: &std::path::Path, stored: &str, bytes: &[u8]) -> AppResult<()> {
     let target = dir.join(stored);
