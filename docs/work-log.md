@@ -4309,3 +4309,25 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [Android Release 工作流](../.github/workflows/release.yml)
 - [Android APK 签名和发布说明](android-release-signing.md)
+
+
+## 第 98 轮 · 2026-10-14 · 补齐 Tauri Android 移动入口
+
+### 做了
+
+- 合并签名环境变量修复后，重新运行 v0.4.50 Release；签名配置成功，但 Android 库验证失败，提示缺少 Tauri `mobile_entry_point` 运行时符号。
+- 在 `lumen_lib::run` 添加 `#[cfg_attr(mobile, tauri::mobile_entry_point)]`，让 Tauri 在 Android/iOS 构建时生成移动端入口，同时桌面构建保持原有入口行为。
+
+### 没做到
+
+- 修复尚未合并，签名 APK 与完整 Release 仍未生成。
+
+### 怎么验证的
+
+- GitHub Release run [38501936628](https://github.com/PLA0185/lumen/actions/runs/38501936628) 已越过签名配置，Rust 库编译完成后由 Tauri Android 插件以缺少 `mobile_entry_point` 运行时符号拒绝继续构建。
+- 本地 `git diff --check` 通过；移动端入口修复需依赖 GitHub Android 目标重新构建验证。
+
+### 相关文档
+
+- [Tauri 应用入口](../src-tauri/src/lib.rs)
+- [Android Release 工作流](../.github/workflows/release.yml)
