@@ -16,7 +16,7 @@
 0.4.34 记录的 APK 是 ARM64 Debug 签名包。若要让已安装该 APK 的手机直接升级，应使用构建该包时的同一 keystore。此 Windows 账户当前有 Android 默认 debug keystore，可以运行下面的脚本将文件 Base64 安全复制到剪贴板；脚本不会把内容打印到终端：
 
 ```powershell
-pwsh -File tools/copy-android-keystore-base64.ps1
+.\tools\copy-android-keystore-base64.ps1
 ```
 
 把剪贴板内容粘贴到 `LUMEN_ANDROID_KEYSTORE_BASE64`。Android 默认 debug keystore 的 alias 通常为 `androiddebugkey`，store/key 密码通常为 `android`；只有确认用的正是这份默认 debug keystore 时才使用这些默认值。自有发布 keystore 请填创建时的 alias 和密码。请勿删除或重建正在使用的 keystore。
