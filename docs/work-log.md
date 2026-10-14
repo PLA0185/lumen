@@ -4276,8 +4276,9 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - `memo_package::tests::memo_and_flow_packages_round_trip_content_and_attachments` 通过：流程标题、正文、步骤、分组布局与附件字节往返一致；备忘正文也成功导入为新记录。
 - `cargo test --lib knowledge_base::tests` 通过（17 项），覆盖追踪术语规范化、写法不同仍命中流程、默认流程检索及文件限定行为；`cargo test --lib nutrition::tests` 通过（20 项），包括 Tavily HTTPS 来源过滤、DeepSeek 通用联网搜索请求与既有营养搜索行为。
-- `pnpm exec vitest run src/components/KnowledgeBase.test.tsx src/components/MemosView.test.tsx` 通过（44 项）；新增断言覆盖联网来源标记/原文链接以及记录包导入/导出入口。`pnpm typecheck` 通过。
-- 上述结果是目标范围检查。完整仓库门禁、GitHub PR CI、Android Release 构建和 APK 签名验收尚未完成，不能记为通过。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、前端全套测试（54 个文件、406 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、严格 Clippy 和 `git diff --check` 均实际通过。版本脚本确认源码与 `v0.4.50` 一致。
+- 本机 `cargo test --lib` 汇总 599 项通过、4 项忽略、0 项失败，但 Windows 测试进程在结果汇总后不退出；手动中止后退出码为 1，因此本机完整 Rust 测试命令不记为通过。PR #19 的 GitHub CI run [38498961571](https://github.com/PLA0185/lumen/actions/runs/38498961571) 前端与 Rust 两个 job 均通过，包含 Rust 全套测试与严格 Clippy。
+- Android Release 构建、签名和 APK 下载尚未验证；需将失败的 `v0.4.50` tag 指向最终合并提交并等待发布工作流。
 
 ### 相关文档
 
