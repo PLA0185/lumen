@@ -846,6 +846,13 @@ struct TavilySearchResult {
     raw_content: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct KnowledgeWebResult {
+    pub title: String,
+    pub url: String,
+    pub excerpt: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct DeepSeekSearchResponse {
     #[serde(default)]
@@ -999,6 +1006,98 @@ fn read_tavily_key() -> AppResult<Option<String>> {
     }
 }
 
+/// Search the web only for a knowledge-base miss. DeepSeek's configured API can
+/// use its native search tool; other providers reuse the local Tavily credential.
+pub(crate) async fn knowledge_web_search(
+    config: &ai::ProviderConfig,
+    query: &str,
+) -> AppResult<Option<Vec<KnowledgeWebResult>>> {
+    let results = if config.provider == ai::Provider::DeepSeek {
+        let Some(key) = ai::load_api_key(ai::Provider::DeepSeek)? else {
+            return Ok(None);
+        };
+        deepseek_web_search_evidence(
+            &key,
+            &config.base_url,
+            &config.model,
+            "Search the web for reliable sources relevant to the user's exact question. Return source excerpts and citations; do not guess or add unsupported claims.",
+            query,
+        )
+        .await?
+    } else {
+        let Some(key) = read_tavily_key()? else {
+            return Ok(None);
+        };
+        tavily_knowledge_search_at(&key, "https://api.tavily.com/search", query).await?
+    };
+    Ok(Some(map_knowledge_web_results(results)))
+}
+
+fn map_knowledge_web_results(results: Vec<TavilySearchResult>) -> Vec<KnowledgeWebResult> {
+    results
+        .into_iter()
+        .filter(|result| valid_https_url(&result.url) && !result.title.trim().is_empty())
+        .filter_map(|result| {
+            let excerpt = result
+                .raw_content
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or(result.content);
+            (!excerpt.trim().is_empty()).then_some(KnowledgeWebResult {
+                title: result.title.trim().to_owned(),
+                url: result.url,
+                excerpt,
+            })
+        })
+        .take(5)
+        .collect()
+}
+
+async fn tavily_knowledge_search_at(
+    key: &str,
+    endpoint: &str,
+    query: &str,
+) -> AppResult<Vec<TavilySearchResult>> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            AppError::new(ErrorCode::Network, format!("无法创建联网搜索请求：{error}"))
+        })?;
+    let response = client
+        .post(endpoint)
+        .bearer_auth(key)
+        .json(&serde_json::json!({
+            "query": query,
+            "topic": "general",
+            "search_depth": "basic",
+            "max_results": 5,
+            "include_answer": false,
+            "include_raw_content": true,
+            "include_usage": true
+        }))
+        .send()
+        .await
+        .map_err(|_| AppError::new(ErrorCode::Network, "联网搜索失败，请检查网络后重试"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let (code, message) = match status.as_u16() {
+            401 | 403 => (ErrorCode::Unauthorized, "联网搜索密钥无效或无权限"),
+            429 => (ErrorCode::RateLimited, "联网搜索服务已限流或额度不足"),
+            _ => (ErrorCode::Network, "联网搜索服务暂时不可用"),
+        };
+        return Err(AppError::new(
+            code,
+            format!("{message}（HTTP {}）", status.as_u16()),
+        ));
+    }
+    let search: TavilySearchResponse = response
+        .json()
+        .await
+        .map_err(|_| AppError::new(ErrorCode::Network, "联网搜索服务返回了无法读取的结果"))?;
+    Ok(search.results)
+}
+
 #[tauri::command]
 pub async fn nutrition_search_status(
     state: State<'_, AppState>,
@@ -1127,6 +1226,23 @@ async fn deepseek_search_evidence(
     model: &str,
     query: &str,
 ) -> AppResult<Vec<TavilySearchResult>> {
+    deepseek_web_search_evidence(
+        key,
+        base_url,
+        model,
+        "Use web search to find reliable nutrition sources for the exact food requested. Return cited source excerpts; never guess calories from memory.",
+        &format!("Search for reliable information about {query}, especially calories per 100 grams, preparation state, and nutrition facts."),
+    )
+    .await
+}
+
+async fn deepseek_web_search_evidence(
+    key: &str,
+    base_url: &str,
+    model: &str,
+    system_prompt: &str,
+    query: &str,
+) -> AppResult<Vec<TavilySearchResult>> {
     let base = base_url.trim().trim_end_matches('/');
     let endpoint = if base.ends_with("/anthropic") {
         format!("{base}/v1/messages")
@@ -1146,13 +1262,18 @@ async fn deepseek_search_evidence(
         .json(&serde_json::json!({
             "model": model,
             "max_tokens": 4096,
-            "system": "Use web search to find reliable nutrition sources for the exact food requested. Return cited source excerpts; never guess calories from memory.",
-            "messages": [{"role":"user","content":format!("Search for reliable information about {query}, especially calories per 100 grams, preparation state, and nutrition facts.")}],
+            "system": system_prompt,
+            "messages": [{"role":"user","content":query}],
             "tools": [{"type":"web_search_20250305","name":"web_search","max_uses":5}]
         }))
         .send()
         .await
-        .map_err(|_| AppError::new(ErrorCode::Network, "DeepSeek 联网搜索失败，请检查网络后重试"))?;
+        .map_err(|_| {
+            AppError::new(
+                ErrorCode::Network,
+                "DeepSeek 联网搜索失败，请检查网络后重试",
+            )
+        })?;
     let status = response.status();
     if !status.is_success() {
         let (code, message) = match status.as_u16() {
@@ -2221,6 +2342,73 @@ mod tests {
         mock.captured_request();
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn knowledge_tavily_search_returns_only_cited_https_results() {
+        let mock = TavilyMock::respond(
+            200,
+            serde_json::json!({"results": [
+                {"title":"本地地址", "url":"http://127.0.0.1/private", "content":"must be filtered"},
+                {"title":"", "url":"https://example.com/empty-title", "content":"must be filtered"},
+                {"title":"物流追踪说明", "url":"https://docs.example.com/tracking", "content":"追踪编号录入后核对物流状态。", "raw_content":"追踪编号录入后核对物流状态和异常信息。"}
+            ]}),
+        );
+        let results = map_knowledge_web_results(
+            tavily_knowledge_search_at(
+                "local-test-key",
+                &mock.url,
+                "追踪编码 追踪编号 tracking number",
+            )
+            .await
+            .unwrap(),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "物流追踪说明");
+        assert_eq!(results[0].url, "https://docs.example.com/tracking");
+        assert!(results[0].excerpt.contains("异常信息"));
+        let request = mock.captured_request();
+        assert!(request.starts_with("POST /search HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer local-test-key"));
+        assert!(request.contains("追踪编码 追踪编号 tracking number"));
+    }
+
+    #[tokio::test]
+    async fn deepseek_knowledge_search_uses_general_web_search_prompt() {
+        let mock = TavilyMock::respond(
+            200,
+            serde_json::json!({"content":[
+                {"type":"web_search_tool_result","content":[
+                    {"type":"web_search_result","url":"https://docs.example.com/tracking","title":"物流追踪说明"}
+                ]},
+                {"type":"text","citations":[
+                    {"url":"https://docs.example.com/tracking","cited_text":"先录入追踪编号，再核对物流状态。"}
+                ]}
+            ]}),
+        );
+        let base = mock.url.trim_end_matches("/search").to_owned();
+        let evidence = deepseek_web_search_evidence(
+            "local-test-key",
+            &base,
+            "deepseek-flash",
+            "Search the web for reliable sources relevant to the user's exact question.",
+            "How do I enter a shipment tracking number?",
+        )
+        .await
+        .unwrap();
+        let request = mock.captured_request();
+
+        assert!(request.contains("relevant to the user's exact question"));
+        assert!(request.contains("How do I enter a shipment tracking number?"));
+        assert_eq!(evidence.len(), 1);
+        assert!(evidence[0]
+            .raw_content
+            .as_deref()
+            .unwrap()
+            .contains("核对物流状态"));
     }
 
     #[test]

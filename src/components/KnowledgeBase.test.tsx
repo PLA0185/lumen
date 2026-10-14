@@ -38,6 +38,12 @@ const documentCitation: api.KnowledgeCitation = {
   category: null, assetId: 'asset-1', flowId: null, stepId: null, revision: null,
   contentHash: 'abc123', locator: '第 2 页；发票处理', excerpt: '核对抬头与税号。', startOffset: 120,
 }
+const webCitation: api.KnowledgeCitation = {
+  ...flowCitation, id: 'web:1', sourceKind: 'web', sourceId: 'https://docs.example.com/tracking',
+  title: '物流追踪说明', category: null, assetId: null, flowId: null, stepId: null,
+  revision: null, contentHash: null, locator: '联网搜索结果', excerpt: '先录入追踪编号，再核对物流状态。',
+  url: 'https://docs.example.com/tracking',
+}
 
 let root: Root | undefined
 let host: HTMLDivElement | undefined
@@ -54,6 +60,9 @@ async function mount(onOpenFlow = vi.fn(), initialSources: api.KnowledgeSourceSu
 it('在提问前明确说明最近对话也会发送给 AI 服务商', async () => {
   await mount()
   expect(document.querySelector('.knowledge-base__intro h2')).toBeNull()
+  expect(document.querySelector('[aria-label="资料库"] h3')?.textContent).toBe('已加入的文件资料')
+  expect(document.querySelector('.knowledge-panel__scope-note')?.textContent).toContain('已保存的业务流程')
+  expect(document.body.textContent).toContain('当前没有导入文件。')
   expect(document.body.textContent).toContain('当前问题、最近必要对话和少量相关摘录会发送')
   expect(document.body.textContent).toContain('选择“全部业务数据”后，二者会加密同步到其他电脑')
   expect(document.body.textContent).toContain('已保存流程按“备忘与流程”范围同步并自动纳入检索')
@@ -100,6 +109,23 @@ it('回答展示真实引用，并能从流程引用跳转到具体节点', asyn
   expect(document.querySelector<HTMLDetailsElement>('.knowledge-evidence__excerpt')?.open).toBe(false)
   await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === '打开并定位到流程节点')!.click())
   expect(openFlow).toHaveBeenCalledWith('flow-1', 'step-3')
+})
+
+it('联网补全的回答把网页来源与本机资料分开标识并提供原文链接', async () => {
+  await mount()
+  vi.mocked(api.knowledgeAsk).mockResolvedValue({
+    status: 'answered', answer: '先录入追踪编号，再核对物流状态。', searchTerms: ['追踪编码', '追踪编号'],
+    citations: [webCitation], flowCandidates: [], message: '本机资料和流程没有命中，回答根据联网搜索结果整理；请打开网页来源核对原文。', providerNotice: '',
+  })
+  await enterQuestion('物流追踪编码怎么录入')
+  await act(async () => document.querySelector<HTMLButtonElement>('form button[type="submit"]')!.click())
+
+  expect(document.body.textContent).toContain('联网来源')
+  expect(document.body.textContent).toContain('请打开网页来源核对原文')
+  const link = document.querySelector<HTMLAnchorElement>('a[href="https://docs.example.com/tracking"]')
+  expect(link?.textContent).toContain('打开网页来源')
+  expect(link?.target).toBe('_blank')
+  expect(link?.rel).toContain('noreferrer')
 })
 
 it('命中多个流程时要求选择，选择后把明确的流程编号交给后端', async () => {
