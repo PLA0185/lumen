@@ -70,6 +70,10 @@ export const memoList = (query = '', deletedOnly = false) =>
 export const memoGet = (id: string) => call<MemoDocument>('memo_get', { id })
 export const memoSave = (input: SaveMemoInput) =>
   call<MemoDocument>('memo_save', { input })
+export const memoPackageExport = (id: string, path: string) =>
+  call<number>('memo_package_export', { id, path })
+export const memoPackageImport = (path: string) =>
+  call<MemoDocument>('memo_package_import', { path })
 export const memoSetDeleted = (
   id: string,
   revision: number,

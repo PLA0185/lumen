@@ -4256,3 +4256,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android Release 工作流](../.github/workflows/release.yml)
 - [Android APK 签名和发布说明](android-release-signing.md)
 - [setup-android 上游发布说明](https://github.com/android-actions/setup-android/releases)
+
+## 第 96 轮 · 2026-10-14 · 备忘流程记录包与知识问答联网补全
+
+### 做了
+
+- 备忘和流程可导出为 `.lumen-record` 单记录包，保留 Markdown 正文、流程步骤、负责人、分组与画布布局，以及正文/步骤引用的图片和文件原始字节。导入会校验包版本、资源引用、长度、摘要和内容类型，再在事务中新建记录；发生资源编号冲突时会改写引用，不覆盖已有记录。
+- 知识问答的文件资料计数旁明确说明：流程不计入文件数量，但已保存流程仍在默认问答范围内。空资料时也会保留这条说明。
+- 检索词分析提示会保留用户原词并扩展口语、易混写法和中英文业务名词；对“追踪编码”增加“追踪编号、物流追踪号、运单号、tracking number”等确定近义词。
+- 本机文件和流程都没有证据时，若已有可用联网配置，知识问答才搜索网页：DeepSeek 使用已配置 API Key 的原生联网搜索，其它服务商复用本机 Tavily 密钥。仅采纳有 HTTPS 来源、标题和摘录的网页，回答与引用标为联网来源并提供原文链接；搜索失败明确返回错误。界面隐私说明已指出问题与检索词会发送给对应搜索服务。
+
+### 没做到
+
+- 未用真实 DeepSeek 或 Tavily 账号发起联网搜索；本轮只用本地 HTTP mock 验证请求、鉴权头、查询词、来源过滤和 DeepSeek 的通用搜索提示。用户侧服务配额及真实返回内容尚未验证。
+- Android APK 尚未构建或发布。本轮结束前需要先提交合并代码，再将失败的 `v0.4.50` Release tag 移到最终提交并等待工作流产出 APK；用户此前配置的签名 Secrets 是否仍能通过实际 Release 运行确认。
+- 未在用户运行中的 Lumen 窗口实机验收备忘/流程导入导出和联网问答 UI。
+
+### 怎么验证的
+
+- `memo_package::tests::memo_and_flow_packages_round_trip_content_and_attachments` 通过：流程标题、正文、步骤、分组布局与附件字节往返一致；备忘正文也成功导入为新记录。
+- `cargo test --lib knowledge_base::tests` 通过（17 项），覆盖追踪术语规范化、写法不同仍命中流程、默认流程检索及文件限定行为；`cargo test --lib nutrition::tests` 通过（20 项），包括 Tavily HTTPS 来源过滤、DeepSeek 通用联网搜索请求与既有营养搜索行为。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、前端全套测试（54 个文件、406 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、严格 Clippy 和 `git diff --check` 均实际通过。版本脚本确认源码与 `v0.4.50` 一致。
+- 本机 `cargo test --lib` 汇总 599 项通过、4 项忽略、0 项失败，但 Windows 测试进程在结果汇总后不退出；手动中止后退出码为 1，因此本机完整 Rust 测试命令不记为通过。PR #19 的 GitHub CI run [38498961571](https://github.com/PLA0185/lumen/actions/runs/38498961571) 前端与 Rust 两个 job 均通过，包含 Rust 全套测试与严格 Clippy。
+- Android Release 构建、签名和 APK 下载尚未验证；需将失败的 `v0.4.50` tag 指向最终合并提交并等待发布工作流。
+
+### 相关文档
+
+- [备忘/流程记录包实现](../src-tauri/src/memo_package.rs)、[导入导出界面](../src/components/MemosView.tsx)
+- [知识问答和术语扩展](../src-tauri/src/knowledge_base.rs)、[DeepSeek/Tavily 搜索实现](../src-tauri/src/nutrition.rs)、[知识库界面与来源标识](../src/components/KnowledgeBase.tsx)
+- [0.4.50 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)

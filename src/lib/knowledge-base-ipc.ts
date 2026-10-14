@@ -17,7 +17,7 @@ export interface KnowledgeSourceSummary {
 
 export interface KnowledgeCitation {
   id: string
-  sourceKind: 'document' | 'flow'
+  sourceKind: 'document' | 'flow' | 'web'
   sourceId: string
   title: string
   category: string | null
@@ -29,6 +29,7 @@ export interface KnowledgeCitation {
   locator: string
   excerpt: string
   startOffset: number | null
+  url?: string | null
 }
 
 export interface KnowledgeSearchResult { citations: KnowledgeCitation[] }

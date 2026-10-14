@@ -31,6 +31,9 @@ function draftOf(doc: memo.MemoDocument): memo.SaveMemoInput {
 function errorText(e: unknown) {
   return e instanceof IpcError ? e.userMessage() : String(e)
 }
+function formatPackageSize(bytes: number) {
+  return bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(0)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
 
 export function MemosView({
   query = '',
@@ -284,6 +287,42 @@ export function MemosView({
       setBusy(false)
     }
   }
+  const exportRecordPackage = async () => {
+    if (!selected || dirty || busy || autoSaving) return
+    try {
+      const { save: choosePath } = await import('@tauri-apps/plugin-dialog')
+      const safeTitle = selected.title.replace(/[<>:"/\\|?*]/g, '_').trim() || 'Lumen记录'
+      const path = await choosePath({
+        title: `导出${selected.kind === 'flow' ? '流程' : '备忘'}记录包`,
+        defaultPath: `${safeTitle}.lumen-record`,
+        filters: [{ name: 'Lumen 记录包', extensions: ['lumen-record'] }],
+      })
+      if (typeof path !== 'string') return
+      const bytes = await memo.memoPackageExport(selected.id, path)
+      setNotice(`已导出记录包（${formatPackageSize(bytes)}），可在 Lumen 中原样导入。`)
+      setError(null)
+    } catch (e) { setError(`导出失败：${errorText(e)}`) }
+  }
+  const importRecordPackage = async () => {
+    if (!canLeave()) return
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const path = await open({
+        title: '导入 Lumen 备忘或流程',
+        multiple: false,
+        filters: [{ name: 'Lumen 记录包', extensions: ['lumen-record'] }],
+      })
+      if (typeof path !== 'string') return
+      setBusy(true); setError(null)
+      const doc = await memo.memoPackageImport(path)
+      detailGate.invalidate()
+      setSelected(doc); setDraft(draftOf(doc)); setEditing(false); setAiDraft(false)
+      setFlowView(doc.kind === 'flow' ? 'canvas' : 'list'); setCanvasSession(n => n + 1)
+      setNotice(`已导入${doc.kind === 'flow' ? '流程' : '备忘'}「${doc.title}」。正文、步骤结构和配套图片已恢复。`)
+      await reload()
+    } catch (e) { setError(`导入失败：${errorText(e)}`) }
+    finally { setBusy(false) }
+  }
   const patch = (changes: Partial<memo.SaveMemoInput>) => {
     setError(null)
     setDraft((d) => (d ? { ...d, ...changes } : d))
@@ -367,6 +406,7 @@ export function MemosView({
                   : <span className="sr-only" role="status">{saveStatus}</span>)}
                 {draft.kind === 'flow' && !selected?.deletedAt && draft.steps.length > 0 && <button className="btn btn--ghost" disabled={busy || autoSaving || aiDraft} onClick={() => { if (missingImages.length) { setError('当前流程还有原图未关联步骤，自动细分无法确定这些图片的位置；现有流程已保留'); return }; setRestructuring(structuredClone(draft)) }}>细分流程</button>}
                 {selected && <button className="btn btn--ghost" disabled={busy || autoSaving || dirty} onClick={() => setHistoryId(selected.id)}>历史版本</button>}
+                {selected && <button className="btn btn--ghost" title="包含正文、流程步骤、分组布局及引用的图片和文件" disabled={busy || autoSaving || dirty} onClick={() => void exportRecordPackage()}>导出记录包</button>}
                 {!selected?.deletedAt &&
                   (editing ? (
                     <>
@@ -444,6 +484,7 @@ export function MemosView({
           }
           setChatGPTImportOpen(true)
         }}>ChatGPT 导入</button>
+        <button className="btn btn--ghost" title="导入会新建一条记录，不会覆盖现有备忘或流程" disabled={busy || autoSaving || trash} onClick={() => void importRecordPackage()}>导入记录包</button>
         {kindFilter !== 'flow' && <button
           className="btn btn--primary"
           disabled={busy || trash}
