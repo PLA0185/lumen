@@ -4232,3 +4232,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [Android keystore Base64 复制脚本](../tools/copy-android-keystore-base64.ps1)
 - [Android APK 签名和发布说明](android-release-signing.md)
+
+## 第 95 轮 · 2026-10-14 · 修复 Android 发布工作流的 SDK 安装器
+
+### 做了
+
+- Android 发布首次运行在 SDK 安装阶段失败：`android-actions/setup-android@v3` 请求 Google 已移除的 `tools` 包。升级到 `v4.0.4`，该版本不再请求这个包。
+- Android 签名说明将复制命令改为可直接在 Windows PowerShell 5.1 运行的格式，不再要求安装 `pwsh`。
+
+### 没做到
+
+- `v0.4.50` 首次发布运行尚未生成 APK：失败发生在 Android SDK 安装阶段，签名步骤和 Gradle 构建没有执行。
+- 本轮修复合并后，仍需将 `v0.4.50` tag 移到修复提交并重新运行 Release；APK 成功构建和发布前都不能提供下载文件。
+
+### 怎么验证的
+
+- GitHub Actions run [38494184242](https://github.com/PLA0185/lumen/actions/runs/38494184242) 的日志确认失败为 `Failed to find package 'tools'`，Android 签名步骤未运行。
+- 上游 `setup-android` 发布说明确认 v4 系列跳过已移除的 `tools` 包；当前选择 v4.0.4。修复后的 Release 尚未运行。
+- `node tools/check-version.mjs --tag=v0.4.50` 与 `git diff --check` 通过。
+
+### 相关文档
+
+- [Android Release 工作流](../.github/workflows/release.yml)
+- [Android APK 签名和发布说明](android-release-signing.md)
+- [setup-android 上游发布说明](https://github.com/android-actions/setup-android/releases)
