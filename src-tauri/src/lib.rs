@@ -92,6 +92,7 @@ pub const MAIN_WINDOW: &str = window_mgr::MAIN;
 const TRAY_ID: &str = "main-tray";
 
 /// 装配并启动应用。
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
