@@ -23,6 +23,7 @@ export const MUTATION_DOMAINS = {
   ai_clear_key: ['aiConfig'],
   memo_save: ['memos'],
   memo_set_deleted: ['memos'],
+  memo_package_import: ['memos'],
   knowledge_import: ['knowledge'],
   knowledge_delete: ['knowledge'],
   nutrition_set_daily_target: ['nutrition'],

@@ -1,6 +1,6 @@
 //! 独立备忘和顺序业务流程；版本条件写入避免主窗口与其它入口互相覆盖。
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 use tauri::State;
 
 use crate::commands::AppState;
@@ -211,6 +211,27 @@ pub async fn save_impl(db: &Db, input: SaveMemoInput) -> AppResult<MemoDocument>
     let doc = document(row)?;
     crate::cloud_sync::record_event(&mut tx, &doc, None).await?;
     tx.commit().await?;
+    Ok(doc)
+}
+
+pub(crate) async fn save_new_in_transaction(
+    conn: &mut SqliteConnection,
+    input: SaveMemoInput,
+) -> AppResult<MemoDocument> {
+    validate(&input)?;
+    if input.id.is_some() || input.expected_revision.is_some() {
+        return Err(AppError::validation("导入记录必须作为新记录保存"));
+    }
+    let json =
+        serde_json::to_string(&input.steps).map_err(|_| AppError::internal("流程序列化失败"))?;
+    let now = to_db_time(utc_now());
+    let row = sqlx::query("INSERT INTO memo_documents (id,title,category,kind,body_md,steps_json,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?) RETURNING *")
+        .bind(uuid::Uuid::now_v7().to_string()).bind(input.title.trim()).bind(input.category.trim())
+        .bind(&input.kind).bind(&input.body_md).bind(json).bind(&now).bind(&now)
+        .fetch_one(&mut *conn).await?;
+    let doc = document(row)?;
+    crate::cloud_sync::record_event(conn, &doc, None).await?;
     Ok(doc)
 }
 

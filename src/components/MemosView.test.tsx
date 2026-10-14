@@ -57,6 +57,19 @@ async function fill(label: string, value: string) {
   })
 }
 describe('独立备忘与业务流程', () => {
+  it('可导入 Lumen 记录包，并为已保存记录提供对应的导出入口', async () => {
+    const doc: memo.MemoDocument = {
+      id: 'package-flow', title: '出货流程', category: '物流', kind: 'flow', revision: 1,
+      createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '',
+      steps: [{ id: 'step-1', title: '核对货件', owner: '', detail: '' }],
+    }
+    vi.spyOn(memo, 'memoGet').mockResolvedValue(doc)
+    await mount('', [doc])
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).toContain('导入记录包')
+    await act(async () => (document.querySelector('.memos__item') as HTMLButtonElement).click())
+    expect([...document.querySelectorAll('.memos__toolbar button')].map(button => button.textContent?.trim())).toContain('导出记录包')
+  })
+
   it('备忘与流程模式只展示本类型记录和对应的新建操作', async () => {
     const rows: memo.MemoSummary[] = [
       { id: 'memo-1', title: '报关术语', category: '常用资料', kind: 'memo', revision: 1, createdAt: '', updatedAt: '', deletedAt: null },
