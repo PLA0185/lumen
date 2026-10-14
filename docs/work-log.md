@@ -4285,3 +4285,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [备忘/流程记录包实现](../src-tauri/src/memo_package.rs)、[导入导出界面](../src/components/MemosView.tsx)
 - [知识问答和术语扩展](../src-tauri/src/knowledge_base.rs)、[DeepSeek/Tavily 搜索实现](../src-tauri/src/nutrition.rs)、[知识库界面与来源标识](../src/components/KnowledgeBase.tsx)
 - [0.4.50 发布说明](../RELEASE_NOTES.md)、[README 文档索引](../README.md#文档索引)
+
+
+## 第 97 轮 · 2026-10-14 · 修复 Android 发布构建的签名环境变量
+
+### 做了
+
+- 核对 `v0.4.50` Android Release 失败原因：四个签名 Secret 名称都存在，签名配置脚本也成功，但 Gradle 构建步骤没有收到 `LUMEN_ANDROID_KEY_ALIAS`、store 密码和 key 密码，因此构建阶段报 `Missing LUMEN_ANDROID_KEY_ALIAS`。
+- 在 APK 构建步骤显式传入 Gradle 读取的三个签名 Secret。keystore 文件路径仍由前一步写入 `GITHUB_ENV`，keystore Base64 仍只在解码步骤中使用。
+
+### 没做到
+
+- 修复提交尚未合并，`v0.4.50` 尚未重新触发；签名 APK、Windows Release 和 APK 下载地址尚未产出。
+- 没有读取或输出任何 Secret 值；已通过 GitHub Actions Secret 元数据确认所需名称存在，但无法从 GitHub 读取 Secret 内容验证其值。
+
+### 怎么验证的
+
+- GitHub Actions run [38500446669](https://github.com/PLA0185/lumen/actions/runs/38500446669) 中版本检查、Android SDK、Rust target、依赖安装、Android 项目初始化和密钥文件配置均成功；Gradle 日志明确报 `Missing LUMEN_ANDROID_KEY_ALIAS`。
+- 只检查了 GitHub 返回的 Secret 名称，不读取 Secret 值。
+- `git diff --check` 通过；修复的实际效果需要合并后重新运行签名 APK 工作流确认。
+
+### 相关文档
+
+- [Android Release 工作流](../.github/workflows/release.yml)
+- [Android APK 签名和发布说明](android-release-signing.md)

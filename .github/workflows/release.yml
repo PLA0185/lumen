@@ -83,6 +83,12 @@ jobs:
           echo "LUMEN_ANDROID_KEYSTORE_PATH=$PWD/src-tauri/gen/android/app/lumen-release.keystore" >> "$GITHUB_ENV"
 
       - name: 构建签名 Android APK
+        env:
+          # Gradle reads these values while building, so they must be present
+          # in this step as well as in the step that configures signing.
+          LUMEN_ANDROID_KEY_ALIAS: ${{ secrets.LUMEN_ANDROID_KEY_ALIAS }}
+          LUMEN_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LUMEN_ANDROID_KEYSTORE_PASSWORD }}
+          LUMEN_ANDROID_KEY_PASSWORD: ${{ secrets.LUMEN_ANDROID_KEY_PASSWORD }}
         run: pnpm tauri android build --apk --target aarch64
 
       - name: 收集 arm64 APK
