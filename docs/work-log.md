@@ -4331,3 +4331,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [Tauri 应用入口](../src-tauri/src/lib.rs)
 - [Android Release 工作流](../.github/workflows/release.yml)
+
+
+## 第 99 轮 · 2026-10-14 · 生成并交付 v0.4.50 Android APK
+
+### 做了
+
+- 修复 Android 签名 Secret 未传到 Gradle 步骤的问题，并给 Tauri 应用入口添加移动端宏；两项修复已分别通过 PR #20、PR #21 合并。
+- v0.4.50 Android arm64 签名 APK 已成功构建并上传到 GitHub Actions artifact。文件名 `Lumen_0.4.50_android_arm64.apk`，大小 38,202,866 字节，SHA-256：`2B6A291C35EB5306F8A3B57882DA1D190FABE46096C115B8F20778E7A4CB1F30`。
+- 已从 Actions artifact 下载 APK 到本机临时目录，用户可直接安装。
+
+### 没做到
+
+- 记录本条时，Windows 安装包构建和同一 GitHub Release 的上传/正式发布仍在运行，尚无正式 Release 页面下载链接；Android APK 已可通过本机文件或 Actions artifact 下载。
+- 未在实体 Android 手机上安装和验收。
+
+### 怎么验证的
+
+- Release workflow run [38503307863](https://github.com/PLA0185/lumen/actions/runs/38503307863) 的 Android job 成功；签名 APK artifact 已存在（artifact ID 11867581091）。
+- 主分支 CI run [38503257302](https://github.com/PLA0185/lumen/actions/runs/38503257302) 前端与 Rust job 均通过。
+- 已成功下载并解压唯一 APK，核对文件大小和 SHA-256；未向终端或仓库输出签名密钥。
+
+### 相关文档
+
+- [Android Release 运行](https://github.com/PLA0185/lumen/actions/runs/38503307863)
+- [v0.4.50 Android APK artifact 页面](https://github.com/PLA0185/lumen/actions/runs/38503307863)
+- [Android 签名工作流](../.github/workflows/release.yml)
