@@ -4460,3 +4460,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [v0.4.51 Release workflow](https://github.com/PLA0185/lumen/actions/runs/38699957405)
 - [发布工作流](../.github/workflows/release.yml)
 - [第 102 轮：合并 GitHub 同步修复并核对发布状态](#第-102-轮--2026-10-15--合并-github-同步修复并核对发布状态)
+
+
+## 第 104 轮 · 2026-10-15 · 完成父任务时同步勾选子任务
+
+### 做了
+
+- 修复父任务完成后仍显示子任务未完成的问题。通过列表勾选父任务、或在编辑中把状态设为“已完成”，都会在同一数据库事务内勾选所有子任务并记录完成时间。
+- 子任务写入失败时，父任务完成状态也会回滚；取消父任务完成时保留已完成的子任务状态。
+- PR #24 已合并到 main，合并提交为 `1b1aa330e95d5524ba810d912cb12fde2e91fc7a`。
+
+### 没做到
+
+- OnePlus Ace 2 / Android 16 尚未实机验收，因为本轮无法连接设备采集日志；此前报告的启动闪退仍未验证是否解决。
+- v0.4.51 官方 Release 尚未发布；Android 签名 APK 已构建并上传为 Actions 工件，Release workflow 仍在构建与验证 Windows 签名包。
+
+### 怎么验证的
+
+- 定向回归测试 `completing_parent_marks_every_subtask_done_atomically` 通过，覆盖父任务勾选所有子任务，以及模拟子任务写入失败时整体回滚。
+- `cargo fmt --all -- --check` 与 `cargo clippy --lib -- -D warnings` 通过。
+- GitHub CI run [38702864209](https://github.com/PLA0185/lumen/actions/runs/38702864209) 全部通过；Rust 全量测试为 604 项通过、4 项忽略、0 项失败，严格 Clippy 通过。
+- Release workflow [38699957405](https://github.com/PLA0185/lumen/actions/runs/38699957405) 的 Android 构建与工件上传步骤成功；官方 Release 尚未完成。
+
+### 相关文档
+
+- [任务完成逻辑](../src-tauri/src/commands.rs)
+- [父子任务事务回归检查](../src-tauri/src/commands_e2e.rs)
+- [PR #24](https://github.com/PLA0185/lumen/pull/24)
+- [v0.4.51 Release workflow](https://github.com/PLA0185/lumen/actions/runs/38699957405)
