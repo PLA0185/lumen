@@ -4435,3 +4435,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [第 101 轮：GitHub 同步限流提示](#第-101-轮--2026-10-15--改进-github-同步限流等待提示)
 - [Release 工作流](../.github/workflows/release.yml)
 - [PR #23](https://github.com/PLA0185/lumen/pull/23)
+
+## 第 103 轮 · 2026-10-15 · 恢复 Git 标签推送并启动 v0.4.51 发布
+
+### 做了
+
+- 排查发现系统默认代理为 `127.0.0.1:7897`，PowerShell 的网页/API 请求会使用它，但 Git 命令未继承代理；通过仅作用于此次 Git 操作的代理参数恢复连接。
+- 从远端 main 获取最新提交，确认 `package.json`、`src-tauri/Cargo.toml` 和 `src-tauri/tauri.conf.json` 均为 v0.4.51。
+- 推送 annotated tag `v0.4.51`，成功启动 GitHub Release workflow [38699957405](https://github.com/PLA0185/lumen/actions/runs/38699957405)。
+
+### 没做到
+
+- 记录时 Android APK 与 Windows 安装包仍在 GitHub Actions 构建中，尚未验证 Release 成功或下载资产已上传。
+- OnePlus Ace 2 / Android 16 启动闪退仍缺设备日志；新 APK 未在该设备验收。
+
+### 怎么验证的
+
+- `git fetch`、`git ls-remote` 和 `git push origin v0.4.51` 经系统 HTTP 代理成功。
+- 从远端 main 读取三个版本文件，均显示 0.4.51。
+- GitHub API 确认 tag `v0.4.51` 已指向当前发布提交；Release workflow 状态为运行中。
+
+### 相关文档
+
+- [v0.4.51 Release workflow](https://github.com/PLA0185/lumen/actions/runs/38699957405)
+- [发布工作流](../.github/workflows/release.yml)
+- [第 102 轮：合并 GitHub 同步修复并核对发布状态](#第-102-轮--2026-10-15--合并-github-同步修复并核对发布状态)
