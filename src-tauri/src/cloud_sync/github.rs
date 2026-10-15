@@ -1030,4 +1030,3 @@ mod tests {
         assert!(!is_workspace_blob(&directory, "Lumen"));
     }
 }
-
