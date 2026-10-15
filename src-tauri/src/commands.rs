@@ -700,7 +700,7 @@ async fn mark_subtasks_done_tx(
 /// 完成 / 撤销完成的可测试实现。
 pub async fn task_toggle_done_impl(db: &Db, id: &str, done: bool) -> AppResult<Task> {
     // 先确认任务存在：不存在时返回 not_found，而不是静默影响 0 行
-    get_task_row(db, &id).await?;
+    get_task_row(db, id).await?;
     let now = to_db_time(utc_now());
 
     // 注意用 clone：now 后面还要绑定给 updated_at，不能被移走
