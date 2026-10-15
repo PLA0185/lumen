@@ -616,12 +616,16 @@ pub async fn save_task_impl(
             .push_bind_unseparated(validate_period(v)?.to_string());
     }
 
-    sep.push("updated_at = ").push_bind_unseparated(now);
+    sep.push("updated_at = ").push_bind_unseparated(now.clone());
     b.push(" WHERE id = ").push_bind(id);
 
     let affected = b.build().execute(&mut *tx).await?.rows_affected();
     if affected == 0 {
         return Err(AppError::not_found("任务", id));
+    }
+
+    if status == Some("done") {
+        mark_subtasks_done_tx(&mut tx, id, &now).await?;
     }
 
     // §4.3「重算待提醒项」：用户改了计划/截止时间后，所有相对型提醒
@@ -669,9 +673,34 @@ pub async fn task_toggle_done(
     id: String,
     done: bool,
 ) -> AppResult<Task> {
-    let db = &state.db;
+    task_toggle_done_impl(&state.db, &id, done).await
+}
+
+/// 完成任务时同步完成它的子任务。父任务和所有子任务共享一次事务，
+/// 这样列表里不会出现父任务已完成、子任务仍未完成的半成品状态。
+async fn mark_subtasks_done_tx(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    task_id: &str,
+    now: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE subtasks
+         SET completed_at = CASE WHEN is_done = 1 THEN completed_at ELSE ?1 END,
+             is_done = 1,
+             updated_at = ?1
+         WHERE task_id = ?2 AND is_done = 0",
+    )
+    .bind(now)
+    .bind(task_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// 完成 / 撤销完成的可测试实现。
+pub async fn task_toggle_done_impl(db: &Db, id: &str, done: bool) -> AppResult<Task> {
     // 先确认任务存在：不存在时返回 not_found，而不是静默影响 0 行
-    get_task_row(db, &id).await?;
+    get_task_row(db, id).await?;
     let now = to_db_time(utc_now());
 
     // 注意用 clone：now 后面还要绑定给 updated_at，不能被移走
@@ -681,15 +710,26 @@ pub async fn task_toggle_done(
         ("todo", None)
     };
 
-    sqlx::query("UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4")
-        .bind(status)
-        .bind(completed_at)
-        .bind(&now)
-        .bind(&id)
-        .execute(db.pool())
-        .await?;
+    let mut tx = db.pool().begin().await?;
+    let affected = sqlx::query(
+        "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4",
+    )
+    .bind(status)
+    .bind(completed_at.clone())
+    .bind(&now)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(AppError::not_found("任务", id));
+    }
+    if done {
+        mark_subtasks_done_tx(&mut tx, id, &now).await?;
+    }
+    tx.commit().await?;
 
-    get_task_row(db, &id).await
+    get_task_row(db, id).await
 }
 
 /// 软删除（移入回收站）。

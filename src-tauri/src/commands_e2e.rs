@@ -17,7 +17,8 @@
 
 use crate::commands::{
     create_task_impl, create_task_with_subtasks_impl, duplicate_task_impl, list_tasks_impl,
-    reorder_task_impl, save_task_impl, update_task_impl, AppState, ReorderInput,
+    reorder_task_impl, save_task_impl, task_toggle_done_impl, update_task_impl, AppState,
+    ReorderInput,
 };
 use crate::db::Db;
 use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
@@ -309,6 +310,81 @@ async fn last_completed_subtask_completes_parent_atomically() {
         .await
         .unwrap();
     assert_eq!(is_done, 0, "父任务保存失败也必须回滚子任务");
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn completing_parent_marks_every_subtask_done_atomically() {
+    use crate::subtasks::create_subtask_impl;
+    let (state, dir) = setup("parent-completes-subtasks").await;
+    let db = &state.db;
+    let parent = create_task_impl(db, task("父任务完成时同步子任务"))
+        .await
+        .unwrap();
+    create_subtask_impl(db, &parent.id, "CA").await.unwrap();
+    create_subtask_impl(db, &parent.id, "UK").await.unwrap();
+
+    sqlx::query(
+        "CREATE TRIGGER reject_subtask_completion BEFORE UPDATE OF is_done ON subtasks
+         WHEN NEW.is_done = 1 BEGIN SELECT RAISE(ABORT, 'test failure'); END",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    assert!(task_toggle_done_impl(db, &parent.id, true).await.is_err());
+    assert_eq!(
+        col_str(db, &parent.id, "status").await.as_deref(),
+        Some("todo"),
+        "子任务保存失败时父任务也必须回滚"
+    );
+    let undone: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM subtasks WHERE task_id=?1 AND is_done=0 AND completed_at IS NULL",
+    )
+    .bind(&parent.id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(undone, 2, "失败时两个子任务都应保持未完成");
+
+    sqlx::query("DROP TRIGGER reject_subtask_completion")
+        .execute(db.pool())
+        .await
+        .unwrap();
+    let completed = task_toggle_done_impl(db, &parent.id, true).await.unwrap();
+    assert_eq!(completed.status, "done");
+    let done: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM subtasks WHERE task_id=?1 AND is_done=1 AND completed_at IS NOT NULL",
+    )
+    .bind(&parent.id)
+    .fetch_one(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(done, 2, "完成父任务应同时勾选并记录两个子任务");
+
+    let edited_parent = create_task_impl(db, task("编辑完成状态也同步子任务"))
+        .await
+        .unwrap();
+    let edited_child = create_subtask_impl(db, &edited_parent.id, "步骤")
+        .await
+        .unwrap();
+    update_task_impl(
+        db,
+        &edited_parent.id,
+        UpdateTaskInput {
+            status: Some("done".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let child_done: i64 = sqlx::query_scalar("SELECT is_done FROM subtasks WHERE id=?1")
+        .bind(edited_child.id)
+        .fetch_one(db.pool())
+        .await
+        .unwrap();
+    assert_eq!(child_done, 1, "编辑为已完成也应勾选子任务");
+
     state.db.pool().close().await;
     let _ = std::fs::remove_dir_all(dir);
 }
