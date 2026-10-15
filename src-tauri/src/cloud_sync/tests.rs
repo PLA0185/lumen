@@ -1943,4 +1943,3 @@ fn old_github_workspace_without_key_envelope_remains_readable_for_upgrade() {
         serde_json::from_str(r#"{"version":1,"id":"workspace-test","check":{}}"#).unwrap();
     assert!(workspace.key_envelope.is_none());
 }
-
