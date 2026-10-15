@@ -501,6 +501,14 @@ async fn waiting_rate_limit_does_not_extend_retry_or_hide_original_error() {
     close(db).await;
 }
 
+#[test]
+fn github_retry_message_explains_api_limit_and_saved_local_content() {
+    let message = waiting_retry_message(Some(SYNC_GITHUB_API_RATE_LIMITED), 24);
+    assert!(message.contains("GitHub API 暂时限制请求"));
+    assert!(message.contains("约24秒后自动继续"));
+    assert!(message.contains("本机内容已保存"));
+}
+
 #[tokio::test]
 async fn rate_limit_cause_does_not_extend_provider_retry_after() {
     let db = db().await;
@@ -1935,3 +1943,4 @@ fn old_github_workspace_without_key_envelope_remains_readable_for_upgrade() {
         serde_json::from_str(r#"{"version":1,"id":"workspace-test","check":{}}"#).unwrap();
     assert!(workspace.key_envelope.is_none());
 }
+
