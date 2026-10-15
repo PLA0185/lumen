@@ -4488,3 +4488,30 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [父子任务事务回归检查](../src-tauri/src/commands_e2e.rs)
 - [PR #24](https://github.com/PLA0185/lumen/pull/24)
 - [v0.4.51 Release workflow](https://github.com/PLA0185/lumen/actions/runs/38699957405)
+
+## 第 105 轮 · 2026-10-15 · 发布父子任务联动修复的 v0.4.52（Windows + Android）
+
+### 做了
+
+- 正式发布 v0.4.52。父任务设为已完成时会在同一事务内勾选未完成子任务；子任务更新失败会回滚父任务。
+- Android arm64 签名 APK 与 Windows x64 安装包已上传到同一个正式 Release；Windows 安装包已通过签名验证与篡改拒绝检查。
+- 正式下载：[v0.4.52 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.52)、[Android APK](https://github.com/PLA0185/lumen/releases/download/v0.4.52/Lumen_0.4.52_android_arm64.apk)、[Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.52/Lumen_0.4.52_x64-setup.exe)。
+
+### 没做到
+
+- 没有在 OnePlus Ace 2 / Android 16 实机上安装验收：用户当前不方便连接 USB 调试设备，因此此前报告的启动闪退是否解决仍未验证。
+- 记录本条时 Release workflow 的构建、验签、APK 上传和正式发布步骤均已成功；GitHub Actions 仍在执行最后的 Rust 缓存清理步骤，整个 workflow 还没有最终状态。
+
+### 怎么验证的
+
+- PR #25 的完整 CI run [38704394938](https://github.com/PLA0185/lumen/actions/runs/38704394938) 全部通过。
+- Release run [38705137340](https://github.com/PLA0185/lumen/actions/runs/38705137340) 的 Android arm64 构建与上传成功；Windows 发版完整门禁、安装包验签及篡改拒绝检查、latest.json 更新、Android APK 加入同一 Release 和发布步骤均成功。
+- GitHub Release API 确认 v0.4.52 为正式发布状态，包含 APK、Windows 安装包、安装包签名和 latest.json。
+
+### 相关文档
+
+- [父子任务完成逻辑](../src-tauri/src/commands.rs)
+- [父子任务事务回归检查](../src-tauri/src/commands_e2e.rs)
+- [第 104 轮：父任务完成时同步勾选子任务](#第-104-轮--2026-10-15--完成父任务时同步勾选子任务)
+- [v0.4.52 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.52)
+
