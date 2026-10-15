@@ -4410,3 +4410,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [云同步通用等待提示](../src-tauri/src/cloud_sync.rs)
 - [云同步定向测试](../src-tauri/src/cloud_sync/tests.rs)
 
+## 第 102 轮 · 2026-10-15 · 合并 GitHub 同步修复并核对发布状态
+
+### 做了
+
+- 第 101 轮修复已通过 PR #23 合并到 main（合并提交 `615a702043157e4bd96fb083944019520f487706`）。
+- GitHub Actions CI run [38695755670](https://github.com/PLA0185/lumen/actions/runs/38695755670) 的前端与 Rust job 均通过；Rust 格式、编译、全量测试和严格 Clippy 均完成。
+- 核对最新正式 Release 仍为 v0.4.50，含 ARM64 Android APK；v0.4.51 尚未创建 Release。
+
+### 没做到
+
+- 未生成或上传 v0.4.51 Android APK。发布工作流由 `v*` Git tag 触发；当前执行环境连接 `github.com:443` 失败，GitHub 仓库连接器没有创建 tag / Release 的接口，因此无法触发签名 APK 构建。
+- 未用用户 Token 实际连接 GitHub 同步；截图中的单次 24 秒等待无法追溯到 GitHub 限流还是 Lumen 本机额度，因为当时没有保存响应头或状态记录。
+- OnePlus Ace 2 / Android 16 启动闪退仍未定位；没有设备日志，也没有在该设备验收 APK。
+
+### 怎么验证的
+
+- CI run [38695755670](https://github.com/PLA0185/lumen/actions/runs/38695755670) 全部成功；此前全量 Rust 测试在本机汇总后未退出，CI 完整执行后通过。
+- 确认 [最新 Release 页面](https://github.com/PLA0185/lumen/releases/latest) 为 v0.4.50，仍附有 `Lumen_0.4.50_android_arm64.apk`。
+- 对 `git fetch` 的两次重试均因无法连接 GitHub 失败；未伪称已发布 v0.4.51 APK。
+
+### 相关文档
+
+- [第 101 轮：GitHub 同步限流提示](#第-101-轮--2026-10-15--改进-github-同步限流等待提示)
+- [Release 工作流](../.github/workflows/release.yml)
+- [PR #23](https://github.com/PLA0185/lumen/pull/23)
