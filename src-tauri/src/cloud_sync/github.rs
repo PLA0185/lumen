@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::Duration;
+use tokio::sync::{Mutex, MutexGuard};
+use tokio::time::Instant;
 
 const API: &str = "https://api.github.com/";
 const CHUNK_BYTES: usize = 45 * 1024 * 1024;
@@ -18,6 +20,7 @@ pub(super) struct GitHub {
     branch: String,
     folder: String,
     token: String,
+    last_mutation_at: Mutex<Option<Instant>>,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +69,38 @@ fn is_workspace_blob(entry: &GitTreeEntry, folder: &str) -> bool {
         && entry
             .path
             .starts_with(&format!("{}/", folder.trim_matches('/')))
+}
+
+fn rate_limit_delay(
+    status: u16,
+    response_body: &str,
+    retry_after: Option<i64>,
+    remaining: Option<&str>,
+    reset_at: Option<i64>,
+    now: i64,
+) -> Option<i64> {
+    let message = serde_json::from_str::<serde_json::Value>(response_body)
+        .ok()
+        .and_then(|value| value.get("message")?.as_str().map(str::to_owned))
+        .unwrap_or_else(|| response_body.to_owned())
+        .to_ascii_lowercase();
+    let rate_limited =
+        status == 429 || message.contains("rate limit") || message.contains("abuse detection");
+    if !rate_limited {
+        return None;
+    }
+
+    let retry_after = retry_after.filter(|seconds| *seconds > 0);
+    let reset_delay = if remaining == Some("0") {
+        reset_at
+            .map(|timestamp| timestamp.saturating_sub(now))
+            .filter(|seconds| *seconds > 0)
+    } else {
+        None
+    };
+    // GitHub requires at least one minute before retrying secondary-limit
+    // responses that do not provide Retry-After or a primary reset time.
+    Some(retry_after.or(reset_delay).unwrap_or(60).clamp(1, 86_400))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,7 +169,29 @@ impl GitHub {
             branch: branch.trim().into(),
             folder: folder.trim_matches('/').into(),
             token: token.trim().into(),
+            last_mutation_at: Mutex::new(None),
         })
+    }
+
+    async fn wait_for_mutation_slot(&self) -> MutexGuard<'_, Option<Instant>> {
+        let last_mutation_at = self.last_mutation_at.lock().await;
+        if let Some(last) = *last_mutation_at {
+            tokio::time::sleep_until(last + Duration::from_secs(1)).await;
+        }
+        last_mutation_at
+    }
+
+    fn waiting_retry_message(cause: Option<&str>, seconds: i64) -> String {
+        if cause == Some(super::SYNC_GITHUB_BUDGET_EXCEEDED)
+            || cause == Some(super::SYNC_GITHUB_API_RATE_LIMITED)
+        {
+            super::waiting_retry_message(cause, seconds)
+        } else {
+            format!(
+                "GitHub 同步正在等待重试，约{}后自动继续；本机内容已保存。",
+                super::retry_wait_text(seconds)
+            )
+        }
     }
 
     fn physical_path(&self, path: &str) -> AppResult<String> {
@@ -391,18 +448,25 @@ impl GitHub {
         body: Option<serde_json::Value>,
         accept: &str,
     ) -> AppResult<reqwest::Response> {
+        let mut mutation_slot = if method == reqwest::Method::POST
+            || method == reqwest::Method::PUT
+            || method == reqwest::Method::PATCH
+            || method == reqwest::Method::DELETE
+        {
+            Some(self.wait_for_mutation_slot().await)
+        } else {
+            None
+        };
         let now = chrono::Utc::now().timestamp();
         super::runtime(db).await?;
         let row = sqlx::query("SELECT budget_start,request_count,device_count,retry_until,last_error FROM memo_sync_runtime WHERE singleton=1")
             .fetch_one(db.pool()).await?;
         let retry_until: i64 = row.try_get("retry_until")?;
         if retry_until > now {
+            let cause: Option<String> = row.try_get("last_error")?;
             return Err(AppError::new(
                 ErrorCode::RateLimited,
-                format!(
-                    "GitHub 同步正在等待重试，约 {} 后自动继续；本机内容仍已保存。",
-                    super::retry_wait_text(retry_until - now)
-                ),
+                Self::waiting_retry_message(cause.as_deref(), retry_until - now),
             ));
         }
         let reset = now - row.try_get::<i64, _>("budget_start")? >= 1800;
@@ -424,7 +488,7 @@ impl GitHub {
             return Err(AppError::new(
                 ErrorCode::RateLimited,
                 format!(
-                    "Lumen 本机 GitHub 请求额度已用完，约 {} 后自动续传；本机未上传内容仍保留。",
+                    "Lumen 本机 GitHub 请求额度已用完，约{}后自动续传；本机未上传内容仍保留。",
                     super::retry_wait_text(retry_until - now)
                 ),
             ));
@@ -443,6 +507,9 @@ impl GitHub {
             );
         if let Some(body) = body {
             request = request.json(&body);
+        }
+        if let Some(slot) = mutation_slot.as_mut() {
+            **slot = Some(Instant::now());
         }
         let response = request.send().await.map_err(|_| {
             AppError::new(
@@ -466,34 +533,32 @@ impl GitHub {
             let remaining = response
                 .headers()
                 .get("X-RateLimit-Remaining")
-                .and_then(|v| v.to_str().ok());
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
             let reset_at = response
                 .headers()
                 .get("X-RateLimit-Reset")
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<i64>().ok());
-            let delay = retry_after
-                .or_else(|| {
-                    (remaining == Some("0"))
-                        .then(|| reset_at.map(|v| v - now))
-                        .flatten()
-                })
-                .unwrap_or(0);
-            if delay > 0 {
-                let delay = delay.clamp(1, 86_400);
+            let response_body = response.text().await.unwrap_or_default();
+            if let Some(delay) = rate_limit_delay(
+                status,
+                &response_body,
+                retry_after,
+                remaining.as_deref(),
+                reset_at,
+                now,
+            ) {
                 sqlx::query(
                     "UPDATE memo_sync_runtime SET retry_until=?,last_error=? WHERE singleton=1",
                 )
                 .bind(now + delay)
-                .bind("GitHub API 请求受限")
+                .bind(super::SYNC_GITHUB_API_RATE_LIMITED)
                 .execute(db.pool())
                 .await?;
                 return Err(AppError::new(
                     ErrorCode::RateLimited,
-                    format!(
-                        "GitHub 暂时限制 API 请求，约 {} 后自动重试；本机未上传内容仍保留。",
-                        super::retry_wait_text(delay)
-                    ),
+                    super::waiting_retry_message(Some(super::SYNC_GITHUB_API_RATE_LIMITED), delay),
                 ));
             }
             return Err(AppError::new(
@@ -881,6 +946,67 @@ impl SyncRemote for GitHub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_rate_limit_honors_retry_after_and_secondary_minimum() {
+        assert_eq!(
+            rate_limit_delay(
+                403,
+                r#"{"message":"You have exceeded a secondary rate limit."}"#,
+                Some(24),
+                Some("4999"),
+                None,
+                1_000,
+            ),
+            Some(24)
+        );
+        assert_eq!(
+            rate_limit_delay(
+                403,
+                r#"{"message":"You have exceeded a secondary rate limit."}"#,
+                None,
+                Some("4999"),
+                None,
+                1_000,
+            ),
+            Some(60)
+        );
+        assert_eq!(
+            rate_limit_delay(
+                403,
+                r#"{"message":"Resource not accessible by personal access token."}"#,
+                None,
+                Some("4999"),
+                None,
+                1_000,
+            ),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn mutating_requests_are_spaced_by_at_least_one_second() {
+        let github = GitHub::new("owner", "repo", "main", "Lumen", "token").unwrap();
+        let mut first_slot = github.wait_for_mutation_slot().await;
+        *first_slot = Some(Instant::now());
+        drop(first_slot);
+        let start = Instant::now();
+        let second_slot = github.wait_for_mutation_slot().await;
+
+        assert!(start.elapsed() >= Duration::from_secs(1));
+        drop(second_slot);
+    }
+
+    #[test]
+    fn github_waiting_message_preserves_the_limiter_cause() {
+        let api_limited =
+            GitHub::waiting_retry_message(Some(super::super::SYNC_GITHUB_API_RATE_LIMITED), 24);
+        assert!(api_limited.contains("GitHub API 暂时限制请求"));
+
+        let budget_limited =
+            GitHub::waiting_retry_message(Some(super::super::SYNC_GITHUB_BUDGET_EXCEEDED), 24);
+        assert!(budget_limited.contains("本机 GitHub 请求额度已用完"));
+    }
 
     #[test]
     fn workspace_reset_only_selects_files_inside_the_configured_folder() {

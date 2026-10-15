@@ -261,7 +261,7 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
-    <details className="knowledge-base__privacy"><summary>云同步与 AI 隐私说明</summary><p>资料原件和解析正文先保存在本机；连接云同步并选择“全部业务数据”后，二者会加密同步到其他电脑，检索索引由各电脑本机重建。已保存流程按“备忘与流程”范围同步并自动纳入检索。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；本机文件和流程没有匹配内容时，只有配置了联网搜索才会把问题和检索词发送给 DeepSeek 或 Tavily，网页摘录会作为单独标注的来源展示。导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p></details>
+    <details className="knowledge-base__privacy"><summary>云同步与 AI 隐私说明</summary><p>资料原件和解析正文先保存在本机；连接云同步并选择“全部业务数据”后，二者会加密同步到其他电脑，检索索引由各电脑本机重建。已保存流程按“备忘与流程”范围同步并自动纳入检索。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；本机文件和流程没有匹配内容，或回答判断本机来源没有覆盖问题要点时，只有配置了联网搜索才会把问题和检索词发送给 DeepSeek 或 Tavily，网页摘录会作为单独标注的来源展示。导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p></details>
     <div className="knowledge-base__grid">
       <section className="knowledge-panel" aria-label="资料库">
         <header><h3>已加入的文件资料</h3><span>{sources.length} 项</span></header>
@@ -360,3 +360,4 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
     </div>
   </section>
 }
+

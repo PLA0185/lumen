@@ -36,6 +36,7 @@ const CONFIG_KEY: &str = "memo_cloud_sync";
 const SYNC_WAITING_RETRY: &str = "云同步正在等待重试，本机修改已经保存";
 const SYNC_BUDGET_EXCEEDED: &str = "已达到当前共享请求预算，稍后自动续传";
 const SYNC_GITHUB_BUDGET_EXCEEDED: &str = "已达到当前 GitHub 请求预算，稍后自动续传";
+const SYNC_GITHUB_API_RATE_LIMITED: &str = "GitHub API 请求受限";
 const SYNC_PROVIDER_RATE_LIMITED: &str = "网盘要求稍后重试，本机修改没有丢失";
 const MAX_JSON: usize = 4 * 1024 * 1024;
 const MAX_HEADS: usize = 10_000;
@@ -73,23 +74,25 @@ fn retry_wait_text(seconds: i64) -> String {
     let minutes = seconds / 60;
     let remainder = seconds % 60;
     if minutes == 0 {
-        format!("{seconds} 秒")
+        format!("{seconds}秒")
     } else if remainder == 0 {
-        format!("{minutes} 分钟")
+        format!("{minutes}分钟")
     } else {
-        format!("{minutes} 分 {remainder} 秒")
+        format!("{minutes}分{remainder}秒")
     }
 }
 fn waiting_retry_message(cause: Option<&str>, seconds: i64) -> String {
     let wait = retry_wait_text(seconds);
     if cause == Some(SYNC_GITHUB_BUDGET_EXCEEDED) {
-        format!("Lumen 本机 GitHub 请求额度已用完，约 {wait} 后自动续传；当前 GitHub 请求尚未发出，本机未上传内容仍保留。")
+        format!("Lumen 本机 GitHub 请求额度已用完，约{wait}后自动续传；当前 GitHub 请求尚未发出，本机未上传内容仍保留。")
+    } else if cause == Some(SYNC_GITHUB_API_RATE_LIMITED) {
+        format!("GitHub API 暂时限制请求，约{wait}后自动继续；请勿重复点击同步，本机内容已保存。")
     } else if cause == Some(SYNC_BUDGET_EXCEEDED) {
-        format!("Lumen 本机 WebDAV 请求额度已用完，约 {wait} 后自动续传；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+        format!("Lumen 本机 WebDAV 请求额度已用完，约{wait}后自动续传；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
     } else if cause == Some(SYNC_PROVIDER_RATE_LIMITED) {
-        format!("坚果云暂时限制了 WebDAV 请求，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+        format!("坚果云暂时限制了 WebDAV 请求，约{wait}后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
     } else {
-        format!("云同步正在等待重试，约 {wait} 后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
+        format!("云同步正在等待重试，约{wait}后自动重试；当前 WebDAV 请求尚未发出，本机未上传内容仍保留。")
     }
 }
 pub const HISTORY_TABLES: [&str; 9] = [
@@ -804,7 +807,7 @@ impl Dav {
             return Err(AppError::new(
                 ErrorCode::RateLimited,
                 format!(
-                    "坚果云返回 WebDAV 请求频率限制，Lumen 将按要求等待约 {} 后自动重试；本机未上传内容仍保留。",
+                    "坚果云返回 WebDAV 请求频率限制，Lumen 将按要求等待约{}后自动重试；本机未上传内容仍保留。",
                     retry_wait_text(delay)
                 ),
             ));

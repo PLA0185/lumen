@@ -4357,3 +4357,56 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android Release 运行](https://github.com/PLA0185/lumen/actions/runs/38503307863)
 - [v0.4.50 Android APK artifact 页面](https://github.com/PLA0185/lumen/actions/runs/38503307863)
 - [Android 签名工作流](../.github/workflows/release.yml)
+
+## 第 100 轮 · 2026-10-15 · 知识问答根据部分证据联网补全
+
+### 做了
+
+- 知识问答现在能识别模型明确表示资料不足的回答；本机只覆盖问题一部分时，若已配置联网搜索，会把问题和检索词交给 DeepSeek 或 Tavily 搜索，并将最多 3 条本机证据与网页证据组合后重新作答。
+- 搜索未配置、无可核对结果、调用失败或补全后仍缺证时，结果会显示对应情况；网页来源继续单独标记并要求用户核对，隐私说明已写明会额外发送问题和检索词。
+
+### 没做到
+
+- 未使用真实 DeepSeek 或 Tavily 账号验证服务端返回；本地测试使用模拟 HTTP 服务。
+- Android 16 上的启动闪退仍未定位，用户目前不方便提供 USB 调试日志；本轮没有声称修复该闪退。
+- 未在用户运行的 Lumen 窗口进行 UI 验收。
+
+### 怎么验证的
+
+- 知识问答不足回答回退测试通过。
+- 本轮 pnpm install --frozen-lockfile、pnpm typecheck、前端测试（406 项）、pnpm build 和 pnpm lint 均退出码为 0。
+- 全量 cargo test --lib 显示 603 项通过、4 项忽略、0 项失败，但 Windows 测试进程在汇总后未退出；手动中止后退出码为 1，因此不记作全量 Rust 测试通过。Clippy 与定向 Rust 测试另行记录在第 101 轮。
+
+### 相关文档
+
+- [知识问答补全逻辑](../src-tauri/src/knowledge_base.rs)
+- [知识库隐私说明](../src/components/KnowledgeBase.tsx)
+- [版本说明](../RELEASE_NOTES.md)
+
+## 第 101 轮 · 2026-10-15 · 改进 GitHub 同步限流等待提示
+
+### 做了
+
+- GitHub API 限流时保留限流原因并明确提示；本机请求预算耗尽时显示为本机预算，避免把两种等待状态混成一句话。
+- 按 GitHub 响应的 Retry-After 或主限额重置时间等待；次级限流未给出时间头时至少等 60 秒。
+- 对连续 GitHub 写请求增加至少一秒间隔，减少触发内容写入频率限制。等待期间本机保存的同步内容继续保留，后台按截止时间自动重试。
+
+### 没做到
+
+- 截图没有附带本机同步状态表或 GitHub 响应头，无法追溯其中这一次 24 秒倒计时究竟来自 GitHub 限流还是本机请求预算；修复后的提示会区分后续发生的原因。
+- 未使用用户的 GitHub 仓库 Token 进行线上同步测试。
+- Android 16 闪退仍缺设备日志，故无法确认新 APK 是否能在该设备正常启动；正式 APK 构建及设备验收尚未完成。
+
+### 怎么验证的
+
+- cargo test --lib cloud_sync::：43 项通过；覆盖原因文案、Retry-After、次级限流的 60 秒默认等待及写请求间隔。
+- cargo fmt --check 与 cargo clippy --all-targets --all-features -- -D warnings 通过。
+- cargo test --lib 汇总 603 项通过、4 项忽略、0 项失败，但测试进程没有退出；手动中止后退出码为 1，不将其记作通过。
+- 完整 GitHub CI、真实 API 同步、Android 构建与设备启动验收尚未验证。
+
+### 相关文档
+
+- [GitHub 同步请求与重试逻辑](../src-tauri/src/cloud_sync/github.rs)
+- [云同步通用等待提示](../src-tauri/src/cloud_sync.rs)
+- [云同步定向测试](../src-tauri/src/cloud_sync/tests.rs)
+
