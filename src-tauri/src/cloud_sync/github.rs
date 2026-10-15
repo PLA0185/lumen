@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard};
 use tokio::time::Instant;
 
 const API: &str = "https://api.github.com/";
@@ -173,12 +173,12 @@ impl GitHub {
         })
     }
 
-    async fn wait_for_mutation_slot(&self) {
-        let mut last_mutation_at = self.last_mutation_at.lock().await;
+    async fn wait_for_mutation_slot(&self) -> MutexGuard<'_, Option<Instant>> {
+        let last_mutation_at = self.last_mutation_at.lock().await;
         if let Some(last) = *last_mutation_at {
             tokio::time::sleep_until(last + Duration::from_secs(1)).await;
         }
-        *last_mutation_at = Some(Instant::now());
+        last_mutation_at
     }
 
     fn waiting_retry_message(cause: Option<&str>, seconds: i64) -> String {
@@ -448,6 +448,15 @@ impl GitHub {
         body: Option<serde_json::Value>,
         accept: &str,
     ) -> AppResult<reqwest::Response> {
+        let mut mutation_slot = if method == reqwest::Method::POST
+            || method == reqwest::Method::PUT
+            || method == reqwest::Method::PATCH
+            || method == reqwest::Method::DELETE
+        {
+            Some(self.wait_for_mutation_slot().await)
+        } else {
+            None
+        };
         let now = chrono::Utc::now().timestamp();
         super::runtime(db).await?;
         let row = sqlx::query("SELECT budget_start,request_count,device_count,retry_until,last_error FROM memo_sync_runtime WHERE singleton=1")
@@ -484,13 +493,6 @@ impl GitHub {
                 ),
             ));
         }
-        if method == reqwest::Method::POST
-            || method == reqwest::Method::PUT
-            || method == reqwest::Method::PATCH
-            || method == reqwest::Method::DELETE
-        {
-            self.wait_for_mutation_slot().await;
-        }
         sqlx::query("UPDATE memo_sync_runtime SET budget_start=CASE WHEN ? THEN ? ELSE budget_start END,request_count=? WHERE singleton=1")
             .bind(reset).bind(now).bind(count + 1).execute(db.pool()).await?;
         let mut request = self
@@ -505,6 +507,9 @@ impl GitHub {
             );
         if let Some(body) = body {
             request = request.json(&body);
+        }
+        if let Some(slot) = mutation_slot.as_mut() {
+            **slot = Some(Instant::now());
         }
         let response = request.send().await.map_err(|_| {
             AppError::new(
@@ -982,12 +987,14 @@ mod tests {
     #[tokio::test]
     async fn mutating_requests_are_spaced_by_at_least_one_second() {
         let github = GitHub::new("owner", "repo", "main", "Lumen", "token").unwrap();
+        let mut first_slot = github.wait_for_mutation_slot().await;
+        *first_slot = Some(Instant::now());
+        drop(first_slot);
         let start = Instant::now();
-
-        github.wait_for_mutation_slot().await;
-        github.wait_for_mutation_slot().await;
+        let second_slot = github.wait_for_mutation_slot().await;
 
         assert!(start.elapsed() >= Duration::from_secs(1));
+        drop(second_slot);
     }
 
     #[test]
