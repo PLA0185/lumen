@@ -549,6 +549,23 @@ export function QuickAdd({
           <AiAssistant compact creationDefaults={{ plannedDate: defaultPlannedDate, periodType: defaultPeriodType, ...context }} />
         </div>
       )}
+      {!compact && (
+        <div className="quickadd__actions quickadd__actions--bottom">
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            onClick={() => void save()}
+            disabled={saving || !text.trim()}
+          >
+            {saving ? '保存中…' : '添加'}
+          </button>
+          {onCancel && (
+            <button type="button" className="btn btn--quiet btn--sm" onClick={onCancel}>
+              取消
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

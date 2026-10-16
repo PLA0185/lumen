@@ -22,4 +22,13 @@ describe('统一新建任务入口', () => {
     const html = renderToStaticMarkup(<QuickAdd onCreated={() => {}} />)
     expect(html).toMatch(/<textarea[^>]+aria-label="任务描述"/)
   })
+
+  it('长重复任务表单底部也提供添加与取消按钮', () => {
+    const html = renderToStaticMarkup(
+      <QuickAdd onCreated={() => {}} onCancel={() => {}} defaultRepeat="weekly" />,
+    )
+    const bottomActions = html.slice(html.indexOf('quickadd__actions--bottom'))
+    expect(bottomActions).toContain('>添加</button>')
+    expect(bottomActions).toContain('>取消</button>')
+  })
 })
