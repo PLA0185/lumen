@@ -4549,3 +4549,35 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android 发布工作流](../.github/workflows/release.yml)
 - [PR #26](https://github.com/PLA0185/lumen/pull/26)
 - [v0.4.53 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.53)
+
+## 第 107 轮 · 2026-10-16 · 按草图重做重复任务导航
+
+### 做了
+
+- 移除可折叠的五项重复导航组，侧栏只留下一个常驻的“重复”主入口；任一重复频率页都会高亮它。
+- 在重复页面顶栏下方增加横向常驻选项：每日、每周、每月、每季度、每年；点击即可切换，不需要展开或在侧栏长列表中寻找。
+- 从其他页面点击“重复”时默认进入每周重复；已经在重复页面时再次点主入口保留当前频率。
+- 应用版本号准备更新为 0.4.54；Release notes 记录 Windows 与 Android 同步发布。
+
+### 没做到
+
+- 尚未在用户正在使用的 Lumen 窗口进行视觉验收；当前布局通过组件回归验证，待用户在新版本中确认。
+- v0.4.54 尚未合并、发布；Android APK 与 Windows 安装包尚未生成。
+- OnePlus Ace 2 / Android 16 的启动闪退仍未取得设备日志，不能确认已解决。
+
+### 怎么验证的
+
+- 重复导航和横向频率栏定向回归测试 4 项通过，覆盖入口常驻、重复状态高亮、频率项始终可见和点击切换。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、完整 `pnpm test`（410 项）、`pnpm build`、`pnpm lint` 均退出码为 0。
+- `cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 退出码为 0。
+- `cargo test --lib` 显示 604 项通过、4 项忽略、0 项失败；但 Windows Cargo 启动器在汇总后仍不退出，手动停止后退出码为 1，因此本机命令不记为完整通过，等待 GitHub CI 独立确认。
+- `node tools/check-version.mjs` 显示三个应用版本一致为 0.4.54；`git diff --check` 无空白错误。
+- 合并后的 GitHub CI 与 v0.4.54 Release 状态待后续记录。
+
+### 相关文档
+
+- [侧栏重复入口](../src/components/Sidebar.tsx)
+- [重复频率横向导航](../src/components/RepeatViewTabs.tsx)
+- [重复频率定义](../src/lib/repeat-views.ts)
+- [0.4.54 发布说明](../RELEASE_NOTES.md)
+- [发布工作流](../.github/workflows/release.yml)
