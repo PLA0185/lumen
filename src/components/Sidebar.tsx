@@ -36,13 +36,13 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'board', icon: 'board', label: '看板' },
       { id: 'inbox', icon: 'inbox', label: '收件箱' },
       { id: 'all', icon: 'list', label: '全部任务' },
-      { id: 'recurring-weekly', icon: 'repeat', label: '重复' },
     ],
   },
   {
     // 周期任务与「重复」视图不同：它按任务自身的完成窗口筛选，不是循环系列。
     label: '周期任务',
     items: [
+      { id: 'recurring-weekly', icon: 'repeat', label: '重复' },
       { id: 'period-week', icon: 'period-week', label: '周任务' },
       { id: 'period-month', icon: 'period-month', label: '月任务' },
       { id: 'period-quarter', icon: 'period-quarter', label: '季度任务' },

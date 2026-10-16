@@ -48,6 +48,9 @@ it('侧栏只保留常驻的重复主入口，点击后默认进入每周重复'
   expect(labels.filter((label) => label === '重复')).toHaveLength(1)
   expect(labels).not.toEqual(expect.arrayContaining(['每日重复', '每周重复', '每月重复', '每季度重复', '每年重复']))
   expect(labels).toContain('周任务')
+  const periodGroup = [...document.querySelectorAll<HTMLElement>('.nav-group')]
+    .find(group => group.querySelector('.nav-group__label')?.textContent === '周期任务')!
+  expect(periodGroup.querySelector('.nav-item__label')?.textContent).toBe('重复')
   const repeat = [...document.querySelectorAll<HTMLButtonElement>('.nav-item')]
     .find(button => button.querySelector('.nav-item__label')?.textContent === '重复')!
   await act(async () => repeat.click())
