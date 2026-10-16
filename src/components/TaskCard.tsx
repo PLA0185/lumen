@@ -12,8 +12,7 @@ import { ContentMarkdown } from './ContentMarkdown'
 
 import { useEffect, useState } from 'react'
 import type { Task } from '../lib/types'
-import { PERIOD_BADGES, PERIOD_LABELS } from '../lib/types'
-import { formatCompletionTime, formatTaskTime, isOverdue } from '../lib/datetime'
+import { formatCompletionTime, formatTaskTime, isOverdue, periodBadgeLabel } from '../lib/datetime'
 import { ReminderEditor } from './ReminderEditor'
 import { SubtaskList } from './SubtaskList'
 import { SubtaskPreview } from './SubtaskPreview'
@@ -193,6 +192,7 @@ export function TaskCard({
   const timeText = formatTaskTime(task)
   const inTrash = mode === 'trash'
   const isRecurring = task.seriesId !== null
+  const periodLabel = periodBadgeLabel(task.periodType, task.plannedAt)
   const [expanded, setExpanded] = useState(false)
 
   const hasDetail = !inTrash
@@ -301,9 +301,9 @@ export function TaskCard({
             {task.periodType && task.periodType !== 'none' && (
               <span
                 className="badge badge--period"
-                title={`周期任务：${PERIOD_LABELS[task.periodType]}完成即可，不绑定到具体某一天`}
+                title={`周期任务：${periodLabel}完成即可，不绑定到具体某一天`}
               >
-                {PERIOD_BADGES[task.periodType]}
+                {periodLabel}
               </span>
             )}
             {isRecurring && (

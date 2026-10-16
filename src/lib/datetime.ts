@@ -9,7 +9,8 @@
  *   00:00–24:00，绝不能被当作"当天凌晨到期"（§4.3 明确禁止）。
  */
 
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, addDays } from 'date-fns'
+import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, addDays, differenceInCalendarWeeks } from 'date-fns'
+import { PERIOD_BADGES, type PeriodType } from './types'
 import type { Task } from './types'
 
 /** 把 Date 转为后端要求的 UTC ISO-8601（毫秒精度，带 Z） */
@@ -22,6 +23,26 @@ export function fromUtcIso(s: string | null | undefined): Date | null {
   if (!s) return null
   const d = new Date(s)
   return Number.isNaN(d.getTime()) ? null : d
+}
+
+/**
+ * 周跨度任务若绑定了计划日期，徽标显示该日期所在的周，避免下周的任务仍标成「本周内」。
+ * 没有具体计划日期时保留原来的相对周期文案。
+ */
+export function periodBadgeLabel(
+  periodType: PeriodType,
+  plannedAt: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (periodType !== 'week' || !plannedAt) return PERIOD_BADGES[periodType]
+  const planned = fromUtcIso(plannedAt)
+  if (!planned) return PERIOD_BADGES[periodType]
+
+  const weekOffset = differenceInCalendarWeeks(planned, now, { weekStartsOn: 1 })
+  if (weekOffset === 0) return '本周内'
+  if (weekOffset === 1) return '下周内'
+  if (weekOffset === -1) return '上周内'
+  return `${format(startOfWeek(planned, { weekStartsOn: 1 }), 'M月d日')}当周内`
 }
 
 /** 本地日期 → `yyyy-MM-dd`，用于 `<input type="date">` */
