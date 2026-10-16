@@ -4523,14 +4523,12 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 周跨度任务的徽标按计划日期所在周显示：下周日期显示“下周内”，前后周显示对应周次；未填写计划日期时保留原周期文案。
 - 侧栏的五种重复任务入口收进可折叠的“重复”分组；当前处于重复页面时自动展开。
 - 长任务表单在底部补充“添加”和“取消”，仍与顶部按钮共用相同保存状态和校验。
-- 更新版本号至 0.4.53，并记录发布说明；准备在合并后通过既有 Release 工作流一起发布 Windows 安装包与 Android ARM64 APK。
+- 更新版本号至 0.4.53，并记录发布说明；PR #26 已合并至 main（merge commit `a2103ed`），v0.4.53 正式 Release 已同时发布 Windows x64 安装包与 Android ARM64 APK。
 
 ### 没做到
 
-- 目前尚未推送 PR，GitHub CI 和 0.4.53 Release（含 Android APK）尚未验证。
-- 未在用户正在使用的 Lumen 窗口进行实机 UI 验收。
-- 本机 Rust 全量测试完整输出 604 项通过、4 项忽略、0 项失败；测试程序退出后 Windows Cargo 启动器仍保持空闲，手动中断启动器返回退出码 1，因此本机不将该命令记为完整通过，最终以 GitHub CI 为准。
-- Android 16 上的启动闪退仍没有设备日志，本轮不声称已修复。
+- 本机 Rust 全量测试输出 604 项通过、4 项忽略、0 项失败；测试程序结束后 Windows Cargo 启动器没有退出，手动中断启动器返回退出码 1，故本机命令不记为完整通过。GitHub PR CI 与发布门禁均独立完成 Rust 全量测试并成功。
+- 未在用户正在使用的 Lumen 窗口进行实机 UI 验收。Android 16 启动闪退仍没有设备日志，本轮不声称已修复。
 
 ### 怎么验证的
 
@@ -4539,6 +4537,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 退出码为 0。
 - `cargo test --lib --quiet` 显示 604 项通过、4 项忽略、0 项失败，但 Cargo 启动器在测试结果输出后未退出；已如实记录，等待 GitHub CI 独立确认。
 - `node tools/check-version.mjs` 显示三个应用版本一致为 0.4.53；`git diff --check` 无空白错误。
+- PR #26 的 GitHub CI run [38847041921](https://github.com/PLA0185/lumen/actions/runs/38847041921) 前端与 Rust job 全部通过；合并后的 main CI run [38847838312](https://github.com/PLA0185/lumen/actions/runs/38847838312) 也全部通过。
+- Release workflow [38847884003](https://github.com/PLA0185/lumen/actions/runs/38847884003) 的发布门禁、Android arm64 APK 构建、Windows 签名安装包构建、验签与篡改拒绝检查、latest.json 更新、APK 上传及 Release 发布步骤均成功。GitHub Release API 确认 v0.4.53 为正式发布，含 APK、Windows 安装包、签名文件和 latest.json。
 
 ### 相关文档
 
@@ -4547,3 +4547,5 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [快速添加长表单](../src/components/QuickAdd.tsx)
 - [0.4.53 发布说明](../RELEASE_NOTES.md)
 - [Android 发布工作流](../.github/workflows/release.yml)
+- [PR #26](https://github.com/PLA0185/lumen/pull/26)
+- [v0.4.53 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.53)
