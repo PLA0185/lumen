@@ -11,7 +11,7 @@
 
 import { Icon, type IconName } from './Icons'
 import type { ViewId } from '../lib/types'
-import { useEffect, useState } from 'react'
+import { isRepeatView } from '../lib/repeat-views'
 
 interface NavEntry {
   id: ViewId
@@ -20,10 +20,8 @@ interface NavEntry {
 }
 
 interface NavGroup {
-  id?: string
   label: string
   items: NavEntry[]
-  collapsible?: boolean
 }
 
 /** 导航分组。顺序按使用频率排列，今天的任务在第一位。 */
@@ -41,21 +39,10 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: 'repeat',
-    label: '重复',
-    collapsible: true,
-    items: [
-      { id: 'recurring-daily', icon: 'repeat', label: '每日重复' },
-      { id: 'recurring-weekly', icon: 'repeat', label: '每周重复' },
-      { id: 'recurring-monthly', icon: 'repeat', label: '每月重复' },
-      { id: 'recurring-quarterly', icon: 'repeat', label: '每季度重复' },
-      { id: 'recurring-yearly', icon: 'repeat', label: '每年重复' },
-    ],
-  },
-  {
     // 周期任务与「重复」视图不同：它按任务自身的完成窗口筛选，不是循环系列。
     label: '周期任务',
     items: [
+      { id: 'recurring-weekly', icon: 'repeat', label: '重复' },
       { id: 'period-week', icon: 'period-week', label: '周任务' },
       { id: 'period-month', icon: 'period-month', label: '月任务' },
       { id: 'period-quarter', icon: 'period-quarter', label: '季度任务' },
@@ -140,24 +127,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ current, onSelect, counts, version, mobileOpen = false }: SidebarProps) {
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(
-      NAV_GROUPS.filter((group) => group.collapsible).map((group) => [
-        group.id ?? group.label,
-        group.items.some((item) => item.id === current),
-      ]),
-    ),
-  )
-
-  useEffect(() => {
-    const selectedGroup = NAV_GROUPS.find(
-      (group) => group.collapsible && group.items.some((item) => item.id === current),
-    )
-    if (!selectedGroup) return
-    const key = selectedGroup.id ?? selectedGroup.label
-    setExpandedGroups((groups) => (groups[key] ? groups : { ...groups, [key]: true }))
-  }, [current])
-
   return (
     <aside className={`sidebar${mobileOpen ? ' sidebar--mobile-open' : ''}`}>
       <div className="sidebar__brand">
@@ -173,34 +142,12 @@ export function Sidebar({ current, onSelect, counts, version, mobileOpen = false
       <nav className="sidebar__nav" aria-label="主导航">
         {NAV_GROUPS.map((g) => (
           <div className="nav-group" key={g.label}>
-            {g.collapsible ? (
-              <button
-                type="button"
-                className={`nav-group__toggle${g.items.some((item) => item.id === current) ? ' nav-group__toggle--current' : ''}`}
-                aria-expanded={Boolean(expandedGroups[g.id ?? g.label])}
-                aria-controls={`nav-group-${g.id ?? g.label}-items`}
-                aria-label={`${expandedGroups[g.id ?? g.label] ? '收起' : '展开'}${g.label}菜单`}
-                onClick={() => {
-                  const key = g.id ?? g.label
-                  setExpandedGroups((groups) => ({ ...groups, [key]: !groups[key] }))
-                }}
-              >
-                <span>{g.label}</span>
-                <span className="nav-group__chevron" aria-hidden="true">
-                  {expandedGroups[g.id ?? g.label] ? '⌄' : '›'}
-                </span>
-              </button>
-            ) : (
-              <div className="nav-group__label">{g.label}</div>
-            )}
-            <div
-              id={g.collapsible ? `nav-group-${g.id ?? g.label}-items` : undefined}
-              className={`nav-group__items${g.id === 'repeat' ? ' nav-group__items--repeat' : ''}`}
-              hidden={g.collapsible && !expandedGroups[g.id ?? g.label]}
-            >
+            <div className="nav-group__label">{g.label}</div>
+            <div className="nav-group__items">
               {g.items.map((it) => {
                 const count = counts[it.id]
-                const isCurrent = current === it.id
+                const isRepeatEntry = it.id === 'recurring-weekly'
+                const isCurrent = current === it.id || (isRepeatEntry && isRepeatView(current))
                 return (
                   <button
                     key={it.id}
@@ -208,7 +155,7 @@ export function Sidebar({ current, onSelect, counts, version, mobileOpen = false
                     className="nav-item"
                     // aria-current 让辅助技术能识别当前页（§3）
                     aria-current={isCurrent ? 'page' : undefined}
-                    onClick={() => onSelect(it.id)}
+                    onClick={() => onSelect(isRepeatEntry && isRepeatView(current) ? current : it.id)}
                   >
                     <span className="nav-item__icon" aria-hidden="true">
                       <Icon name={it.icon} size={18} />

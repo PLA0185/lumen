@@ -18,6 +18,8 @@ import type { SubtaskSummary } from './lib/store'
 import { IpcError } from './lib/ipc'
 import * as ipc from './lib/ipc'
 import { Sidebar, VIEW_META } from './components/Sidebar'
+import { RepeatViewTabs } from './components/RepeatViewTabs'
+import { isRepeatView } from './lib/repeat-views'
 import { TaskCard } from './components/TaskCard'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
@@ -657,6 +659,8 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {isRepeatView(view) && <RepeatViewTabs current={view} onSelect={navigate} />}
 
         <main className="content">
           {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
