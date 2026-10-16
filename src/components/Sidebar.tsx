@@ -11,6 +11,7 @@
 
 import { Icon, type IconName } from './Icons'
 import type { ViewId } from '../lib/types'
+import { useEffect, useState } from 'react'
 
 interface NavEntry {
   id: ViewId
@@ -19,8 +20,10 @@ interface NavEntry {
 }
 
 interface NavGroup {
+  id?: string
   label: string
   items: NavEntry[]
+  collapsible?: boolean
 }
 
 /** 导航分组。顺序按使用频率排列，今天的任务在第一位。 */
@@ -38,7 +41,9 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    id: 'repeat',
     label: '重复',
+    collapsible: true,
     items: [
       { id: 'recurring-daily', icon: 'repeat', label: '每日重复' },
       { id: 'recurring-weekly', icon: 'repeat', label: '每周重复' },
@@ -135,6 +140,24 @@ interface SidebarProps {
 }
 
 export function Sidebar({ current, onSelect, counts, version, mobileOpen = false }: SidebarProps) {
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      NAV_GROUPS.filter((group) => group.collapsible).map((group) => [
+        group.id ?? group.label,
+        group.items.some((item) => item.id === current),
+      ]),
+    ),
+  )
+
+  useEffect(() => {
+    const selectedGroup = NAV_GROUPS.find(
+      (group) => group.collapsible && group.items.some((item) => item.id === current),
+    )
+    if (!selectedGroup) return
+    const key = selectedGroup.id ?? selectedGroup.label
+    setExpandedGroups((groups) => (groups[key] ? groups : { ...groups, [key]: true }))
+  }, [current])
+
   return (
     <aside className={`sidebar${mobileOpen ? ' sidebar--mobile-open' : ''}`}>
       <div className="sidebar__brand">
@@ -150,34 +173,59 @@ export function Sidebar({ current, onSelect, counts, version, mobileOpen = false
       <nav className="sidebar__nav" aria-label="主导航">
         {NAV_GROUPS.map((g) => (
           <div className="nav-group" key={g.label}>
-            <div className="nav-group__label">{g.label}</div>
-            {g.items.map((it) => {
-              const count = counts[it.id]
-              const isCurrent = current === it.id
-              return (
-                <button
-                  key={it.id}
-                  type="button"
-                  className="nav-item"
-                  // aria-current 让辅助技术能识别当前页（§3）
-                  aria-current={isCurrent ? 'page' : undefined}
-                  onClick={() => onSelect(it.id)}
-                >
-                  <span className="nav-item__icon" aria-hidden="true">
-                    <Icon name={it.icon} size={18} />
-                  </span>
-                  <span className="nav-item__label">{it.label}</span>
-                  {typeof count === 'number' && count > 0 && (
-                    <span
-                      className={`nav-item__count${it.id === 'today' ? ' nav-item__count--alert' : ''}`}
-                      aria-label={`${count} 项`}
-                    >
-                      {count > 99 ? '99+' : count}
+            {g.collapsible ? (
+              <button
+                type="button"
+                className={`nav-group__toggle${g.items.some((item) => item.id === current) ? ' nav-group__toggle--current' : ''}`}
+                aria-expanded={Boolean(expandedGroups[g.id ?? g.label])}
+                aria-controls={`nav-group-${g.id ?? g.label}-items`}
+                aria-label={`${expandedGroups[g.id ?? g.label] ? '收起' : '展开'}${g.label}菜单`}
+                onClick={() => {
+                  const key = g.id ?? g.label
+                  setExpandedGroups((groups) => ({ ...groups, [key]: !groups[key] }))
+                }}
+              >
+                <span>{g.label}</span>
+                <span className="nav-group__chevron" aria-hidden="true">
+                  {expandedGroups[g.id ?? g.label] ? '⌄' : '›'}
+                </span>
+              </button>
+            ) : (
+              <div className="nav-group__label">{g.label}</div>
+            )}
+            <div
+              id={g.collapsible ? `nav-group-${g.id ?? g.label}-items` : undefined}
+              className={`nav-group__items${g.id === 'repeat' ? ' nav-group__items--repeat' : ''}`}
+              hidden={g.collapsible && !expandedGroups[g.id ?? g.label]}
+            >
+              {g.items.map((it) => {
+                const count = counts[it.id]
+                const isCurrent = current === it.id
+                return (
+                  <button
+                    key={it.id}
+                    type="button"
+                    className="nav-item"
+                    // aria-current 让辅助技术能识别当前页（§3）
+                    aria-current={isCurrent ? 'page' : undefined}
+                    onClick={() => onSelect(it.id)}
+                  >
+                    <span className="nav-item__icon" aria-hidden="true">
+                      <Icon name={it.icon} size={18} />
                     </span>
-                  )}
-                </button>
-              )
-            })}
+                    <span className="nav-item__label">{it.label}</span>
+                    {typeof count === 'number' && count > 0 && (
+                      <span
+                        className={`nav-item__count${it.id === 'today' ? ' nav-item__count--alert' : ''}`}
+                        aria-label={`${count} 项`}
+                      >
+                        {count > 99 ? '99+' : count}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         ))}
       </nav>

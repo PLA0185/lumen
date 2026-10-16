@@ -52,3 +52,25 @@ it('重复大类分别提供每日、每周、每月、每季度和每年的系�
   await act(async () => daily.click())
   expect(onSelect).toHaveBeenCalledWith('recurring-daily')
 })
+
+it('重复大类默认收起，并可展开查看所有重复频率', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  await act(async () => root!.render(<Sidebar current="today" onSelect={() => {}} counts={{}} />))
+
+  const toggle = document.querySelector<HTMLButtonElement>('.nav-group__toggle')
+  expect(toggle).not.toBeNull()
+  expect(toggle?.getAttribute('aria-expanded')).toBe('false')
+  const children = document.querySelector<HTMLElement>('.nav-group__items--repeat')
+  expect(children?.hidden).toBe(true)
+
+  await act(async () => toggle!.click())
+  expect(toggle?.getAttribute('aria-expanded')).toBe('true')
+  expect(children?.hidden).toBe(false)
+  expect(children?.textContent).toContain('每日重复')
+  expect(children?.textContent).toContain('每周重复')
+  expect(children?.textContent).toContain('每月重复')
+  expect(children?.textContent).toContain('每季度重复')
+  expect(children?.textContent).toContain('每年重复')
+})
