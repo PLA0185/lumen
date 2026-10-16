@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TaskCard } from './TaskCard'
 import type { Task } from '../lib/types'
+import { toUtcIso } from '../lib/datetime'
+
+afterEach(() => vi.useRealTimers())
 
 const task = {
   id: 'parent',
@@ -49,5 +52,23 @@ describe('任务卡片中的文本与子任务', () => {
     )
     expect(html).toContain('CA 关键词')
     expect(html).toContain('完成子任务「CA 关键词」')
+  })
+
+  it('计划在下周的周跨度任务显示「下周内」而不是「本周内」', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 16, 12, 0))
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={{
+          ...task,
+          plannedAt: toUtcIso(new Date(2026, 9, 19, 9, 0)),
+          periodType: 'week',
+        }}
+        onToggle={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    expect(html).toContain('下周内')
+    expect(html).not.toContain('本周内')
   })
 })
