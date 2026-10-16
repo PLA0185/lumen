@@ -4557,12 +4557,11 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 移除可折叠的五项重复导航组，“重复”主入口作为“周期任务”分组首项常驻显示；任一重复频率页都会高亮它。
 - 在重复页面顶栏下方增加横向常驻选项：每日、每周、每月、每季度、每年；点击即可切换，不需要展开或在侧栏长列表中寻找。
 - 从其他页面点击“重复”时默认进入每周重复；已经在重复页面时再次点主入口保留当前频率。
-- 应用版本号准备更新为 0.4.54；Release notes 记录 Windows 与 Android 同步发布。
+- 应用版本号已更新至 0.4.54，Windows 与 Android 安装包已同步发布。
 
 ### 没做到
 
 - 尚未在用户正在使用的 Lumen 窗口进行视觉验收；当前布局通过组件回归验证，待用户在新版本中确认。
-- v0.4.54 已正式发布，Android APK 与 Windows 安装包均已生成；用户尚未在自己的 Lumen 窗口验收新布局。
 - OnePlus Ace 2 / Android 16 的启动闪退仍未取得设备日志，不能确认已解决。
 
 ### 怎么验证的
@@ -4570,10 +4569,10 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 重复导航和横向频率栏定向回归测试 4 项通过，覆盖入口常驻、重复状态高亮、频率项始终可见和点击切换。
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、完整 `pnpm test`（410 项）、`pnpm build`、`pnpm lint` 均退出码为 0。
 - `cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 退出码为 0。
-- `cargo test --lib` 显示 604 项通过、4 项忽略、0 项失败；但 Windows Cargo 启动器在汇总后仍不退出，手动停止后退出码为 1，因此本机命令不记为完整通过，等待 GitHub CI 独立确认。
+- `cargo test --lib` 显示 604 项通过、4 项忽略、0 项失败；但 Windows Cargo 启动器在汇总后仍不退出，手动停止后退出码为 1，因此本机命令不记为完整通过。PR 和 main 上的 GitHub CI 已独立通过 Rust 检查。
 - `node tools/check-version.mjs` 显示三个应用版本一致为 0.4.54；`git diff --check` 无空白错误。
 - PR #27 的 GitHub CI run [38855072946](https://github.com/PLA0185/lumen/actions/runs/38855072946) 前端与 Rust 检查均成功；合并后的 main CI run [38855742159](https://github.com/PLA0185/lumen/actions/runs/38855742159) 也全部成功。
-- Release workflow [38855765745](https://github.com/PLA0185/lumen/actions/runs/38855765745) 的 Android APK 构建与上传、Windows 门禁、签名包构建及签名/篡改拒绝验证、APK 附加和 Release 发布步骤均成功；GitHub Release API 确认 v0.4.54 已正式发布，包含 Android APK、Windows 安装包、签名文件与 latest.json。
+- Release workflow [38855765745](https://github.com/PLA0185/lumen/actions/runs/38855765745) 的 Android APK 构建与上传、Windows 门禁、签名包构建及签名/篡改拒绝验证、APK 附加和 Release 发布步骤均成功；GitHub Release API 确认 v0.4.54 已正式发布，包含 Android APK、Windows 安装包、签名文件与 latest.json。记录时仅 GitHub Actions 的缓存清理步骤仍在运行。
 
 ### 相关文档
 
