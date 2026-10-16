@@ -4562,7 +4562,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 尚未在用户正在使用的 Lumen 窗口进行视觉验收；当前布局通过组件回归验证，待用户在新版本中确认。
-- v0.4.54 尚未合并、发布；Android APK 与 Windows 安装包尚未生成。
+- v0.4.54 已正式发布，Android APK 与 Windows 安装包均已生成；用户尚未在自己的 Lumen 窗口验收新布局。
 - OnePlus Ace 2 / Android 16 的启动闪退仍未取得设备日志，不能确认已解决。
 
 ### 怎么验证的
@@ -4572,7 +4572,8 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 退出码为 0。
 - `cargo test --lib` 显示 604 项通过、4 项忽略、0 项失败；但 Windows Cargo 启动器在汇总后仍不退出，手动停止后退出码为 1，因此本机命令不记为完整通过，等待 GitHub CI 独立确认。
 - `node tools/check-version.mjs` 显示三个应用版本一致为 0.4.54；`git diff --check` 无空白错误。
-- 合并后的 GitHub CI 与 v0.4.54 Release 状态待后续记录。
+- PR #27 的 GitHub CI run [38855072946](https://github.com/PLA0185/lumen/actions/runs/38855072946) 前端与 Rust 检查均成功；合并后的 main CI run [38855742159](https://github.com/PLA0185/lumen/actions/runs/38855742159) 也全部成功。
+- Release workflow [38855765745](https://github.com/PLA0185/lumen/actions/runs/38855765745) 的 Android APK 构建与上传、Windows 门禁、签名包构建及签名/篡改拒绝验证、APK 附加和 Release 发布步骤均成功；GitHub Release API 确认 v0.4.54 已正式发布，包含 Android APK、Windows 安装包、签名文件与 latest.json。
 
 ### 相关文档
 
