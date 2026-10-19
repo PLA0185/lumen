@@ -18,7 +18,7 @@ export function ChatGPTContentImportDialog({
   initialDocumentId?: string
   kindFilter: 'memo' | 'flow' | 'all'
   onClose: () => void
-  onSaved: (document: memo.MemoDocument) => void | Promise<void>
+  onSaved: (document: memo.MemoDocument | memo.MemoDocument[]) => void | Promise<void>
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const saving = useRef(false)
@@ -27,6 +27,8 @@ export function ChatGPTContentImportDialog({
   const [content, setContent] = useState('')
   const [proposal, setProposal] = useState<ChatGPTImportPreview | null>(null)
   const [original, setOriginal] = useState<memo.SaveMemoInput | null>(null)
+  const [archivePath, setArchivePath] = useState('')
+  const [archivePreview, setArchivePreview] = useState<memo.MemoArchivePreview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -74,6 +76,25 @@ export function ChatGPTContentImportDialog({
     } finally { setBusy(false) }
   }
 
+  const previewArchive = async (path: string) => {
+    if (busy) return
+    setBusy(true); setError(''); setNotice(''); setProposal(null); setOriginal(null)
+    try {
+      const result = await memo.memoArchivePreview(path)
+      setArchivePath(path); setArchivePreview(result); setTarget('new:auto')
+    } catch (e) {
+      setArchivePath(''); setArchivePreview(null); setError(`压缩包识别失败：${String(e)}`)
+    } finally { setBusy(false) }
+  }
+
+  const chooseArchive = async () => {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog')
+      const path = await open({ title: '选择 GPT 导出的压缩包', multiple: false, filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }] })
+      if (typeof path === 'string') await previewArchive(path)
+    } catch (e) { setError(`打开压缩包失败：${String(e)}`) }
+  }
+
   const confirm = async () => {
     if (!proposal || saving.current) return
     saving.current = true; setBusy(true); setError('')
@@ -84,6 +105,23 @@ export function ChatGPTContentImportDialog({
       onClose()
     } catch (e) {
       setError(`保存失败，内容仍保留在预览中：${String(e)}`)
+    } finally { saving.current = false; setBusy(false) }
+  }
+
+  const confirmArchive = async () => {
+    if (!archivePath || !archivePreview || saving.current) return
+    saving.current = true; setBusy(true); setError('')
+    try {
+      const saved = await memo.memoArchiveImport(archivePath, archivePreview.sha256)
+      setArchivePath('')
+      try {
+        await onSaved(saved)
+        onClose()
+      } catch (e) {
+        setError(`已导入 ${saved.length} 条记录，但刷新界面失败。请关闭窗口后重新打开备忘与流程：${String(e)}`)
+      }
+    } catch (e) {
+      setError(`批量导入失败，原有内容未更改：${String(e)}`)
     } finally { saving.current = false; setBusy(false) }
   }
 
@@ -130,7 +168,7 @@ export function ChatGPTContentImportDialog({
         <p><strong>当前通过复制粘贴导入。</strong> ChatGPT 的回答会先进入预览，只有你确认后才保存。此入口不需要 API Key，也不会把文本发送给 AI 服务。</p>
         <p>ChatGPT 直连写入还需要账号计划支持以及 Platform 隧道配置。<a className="chatgpt-import-dialog__official-link" href="https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt" target="_blank" rel="noreferrer">查看 ChatGPT 官方说明</a></p>
       </div>
-      <fieldset className="chatgpt-import-dialog__target" disabled={busy || !!proposal}>
+      <fieldset className="chatgpt-import-dialog__target" disabled={busy || !!proposal || !!archivePreview}>
         <legend>导入目标</legend>
         <div className="chatgpt-import-dialog__target-modes" role="group" aria-label="导入目标类型">
           <button type="button" className={`btn ${!isExistingTarget ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget} onClick={() => setTarget('new:auto')}>新建内容（GPT 判断类型）</button>
@@ -149,22 +187,45 @@ export function ChatGPTContentImportDialog({
         <p className="chatgpt-import-dialog__target-hint">新建时由 GPT 根据内容判断保存为备忘还是流程；更新已有记录时保留原类型，并先显示修改预览。</p>
       </fieldset>
 
-      {!proposal ? <>
+      {archivePreview ? <>
+        <div className="chatgpt-import-dialog__preview" aria-label="ZIP 批量导入预览">
+          <div className="chatgpt-import-dialog__change">
+            <span className="chip chip--muted">ZIP 批量导入</span>
+            <span className="chip chip--muted">{archivePreview.records.length} 条备忘与流程</span>
+            <span className="chip chip--muted">{archivePreview.imageCount} 张关联图片</span>
+          </div>
+          <p className="setgroup__hint">确认后会一次性新建全部记录；流程步骤和图片引用会按压缩包中的内容保留。关闭或返回不会写入任何内容。</p>
+          {archivePreview.records.map((record, index) => <article className="chatgpt-import-dialog__archive-record" key={`${record.kind}-${record.title}-${index}`}>
+            <h3><span className="chip chip--muted">{record.kind === 'flow' ? '流程' : '备忘'}</span> {record.title}</h3>
+            {record.category && <p className="setgroup__hint">分类：{record.category}</p>}
+            <p className="setgroup__hint">{record.kind === 'flow' ? `${record.steps.length} 个步骤` : '独立备忘'} · {record.imageCount} 张图片</p>
+            {record.bodyMd && <pre>{record.bodyMd}</pre>}
+            {record.steps.length > 0 && <ol>{record.steps.map((step, stepIndex) => <li key={`${step.id}-${stepIndex}`}><strong>{step.title}</strong>{step.detail && <pre>{step.detail}</pre>}</li>)}</ol>}
+          </article>)}
+        </div>
+        <div className="chatgpt-import-dialog__actions">
+          <button className="btn btn--ghost" disabled={busy} onClick={() => { setArchivePreview(null); setArchivePath(''); setError('') }}>返回粘贴导入</button>
+          <button className="btn btn--ghost" disabled={busy} onClick={() => void chooseArchive()}>换一个压缩包</button>
+          <button className="btn btn--primary" disabled={busy || !archivePath} onClick={() => void confirmArchive()}>{busy ? '正在批量导入…' : `确认导入 ${archivePreview.records.length} 条`}</button>
+        </div>
+      </> : !proposal ? <>
         <section className="chatgpt-import-dialog__format" aria-label="ChatGPT 返回格式说明">
           <div className="chatgpt-import-dialog__format-heading">
             <strong>通用返回格式</strong>
             <span>先复制下方指令给 GPT，再把材料一起发给它</span>
           </div>
           <p>只需复制这一份提示词。GPT 会按内容判断 <code>kind</code>：按顺序执行的操作用 <code>flow</code>，资料、规则和独立说明用 <code>memo</code>。备忘的 <code>steps</code> 留空；流程按步骤填写。</p>
+          <p>多条记录或带多张截图的 GPT 压缩包也可批量导入：ZIP 内放 JSON 数组或多份 JSON，并把图片放在 <code>images/</code>，正文和步骤用 Markdown 相对路径引用。</p>
           <pre><code>{'备忘：\n{\n  "kind": "memo",\n  "title": "备忘标题",\n  "category": "分类",\n  "bodyMd": "Markdown 正文",\n  "steps": []\n}\n\n流程：\n{\n  "kind": "flow",\n  "title": "流程标题",\n  "category": "分类",\n  "bodyMd": "背景说明",\n  "steps": [{ "title": "步骤", "owner": "负责人", "detail": "操作说明" }]\n}'}</code></pre>
         </section>
         <label className="chatgpt-import-dialog__content">
           粘贴 ChatGPT 的回答
-          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={isExistingTarget ? '粘贴与所选记录类型一致的 GPT JSON，也可粘贴 Markdown / 纯文本。' : '粘贴 GPT 返回的单条 JSON；kind 会自动决定保存为备忘或流程。'} onChange={event => { setContent(event.target.value); setError('') }} />
+          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={isExistingTarget ? '粘贴与所选记录类型一致的 GPT JSON，也可粘贴 Markdown / 纯文本。' : '粘贴 GPT 返回的单条 JSON；kind 会自动决定保存为备忘或流程。'} onArchiveDrop={path => { void previewArchive(path) }} onChange={event => { setContent(event.target.value); setError('') }} />
         </label>
         <div className="chatgpt-import-dialog__actions">
           <button className="btn btn--ghost" disabled={busy} onClick={() => { void writeText(prompt).then(() => setNotice('通用提示词已复制；把指令和材料一起发给 ChatGPT。')).catch(e => setError(`复制失败：${String(e)}`)) }}>复制通用提示词</button>
-          <span className="setgroup__hint">可粘贴图片或拖入文件。流程图片会保留，可在预览中分配到对应步骤。</span>
+          <button type="button" className="btn btn--ghost" disabled={busy} title="ZIP 会批量新建记录，不会覆盖已有备忘或流程" onClick={() => void chooseArchive()}>导入 GPT 压缩包</button>
+          <span className="setgroup__hint">可粘贴文本、拖入文件，或把 GPT 的 ZIP 拖到此窗口。ZIP 先预览，确认后批量导入并保留图片关联。</span>
           <button className="btn btn--primary" disabled={busy || !content.trim()} onClick={() => void makePreview()}>{busy ? '正在生成预览…' : '生成修改预览'}</button>
         </div>
       </> : <>

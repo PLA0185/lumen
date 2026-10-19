@@ -12,6 +12,7 @@ const root = process.cwd()
 describe('mutation architecture', () => {
   it('registers every backend mutation domain', () => {
     for (const cmd of [
+      'memo_archive_import',
       'task_create', 'task_update', 'task_toggle_done', 'task_soft_delete',
       'task_restore', 'task_purge', 'task_commit_purge_deleted', 'task_bulk',
       'task_duplicate', 'task_reorder', 'task_reschedule', 'recurring_create',

@@ -750,8 +750,10 @@ export function MemosView({
         </article>
       </div>
       {historyId && <CloudHistory id={historyId} onClose={() => setHistoryId('')} onRestored={doc => { setSelected(doc); setDraft(draftOf(doc)); setEditing(false); void reload() }} />}
-      {chatGPTImportOpen && <ChatGPTContentImportDialog initialDocumentId={selected?.id} kindFilter={kindFilter} onClose={() => setChatGPTImportOpen(false)} onSaved={async doc => {
-        setSelected(doc); setDraft(draftOf(doc)); setEditing(false); setAiDraft(false); setFlowView('canvas'); setCanvasSession(n => n + 1); setError(null); setNotice('ChatGPT 内容已确认并保存到本机');
+      {chatGPTImportOpen && <ChatGPTContentImportDialog initialDocumentId={selected?.id} kindFilter={kindFilter} onClose={() => setChatGPTImportOpen(false)} onSaved={async saved => {
+        const docs = Array.isArray(saved) ? saved : [saved]
+        const doc = docs[docs.length - 1]!
+        setSelected(doc); setDraft(draftOf(doc)); setEditing(false); setAiDraft(false); setFlowView(doc.kind === 'flow' ? 'canvas' : 'list'); setCanvasSession(n => n + 1); setError(null); setNotice(docs.length > 1 ? `已确认导入 ${docs.length} 条备忘与流程，配套图片已保留` : 'ChatGPT 内容已确认并保存到本机');
         await reload()
         if (kindFilter !== 'all' && doc.kind !== kindFilter) onImportKindChange?.(doc.kind)
       }} />}

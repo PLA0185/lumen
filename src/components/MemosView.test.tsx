@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { open } from '@tauri-apps/plugin-dialog'
 import * as memo from '../lib/memos-ipc'
 import * as ai from '../lib/ai-ipc'
 import * as assets from '../lib/content-assets'
@@ -12,6 +13,7 @@ import { publishDataChange } from '../lib/data-change'
 vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }))
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn().mockResolvedValue(null) }))
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 let root: Root | undefined
 afterEach(() => {
@@ -530,6 +532,31 @@ describe('独立备忘与业务流程', () => {
     expect(save).toHaveBeenCalledOnce()
     expect(save.mock.calls[0]![0]).toMatchObject({ title: '发票 SOP', kind: 'memo', bodyMd: '先核对订单，再联系仓库。' })
     expect(document.querySelector('[aria-label="从 ChatGPT 导入内容"]')).toBeNull()
+  })
+
+  it('GPT ZIP 先列出整包预览，确认后才批量导入', async () => {
+    const doc: memo.MemoDocument = {
+      id: 'archive-flow', title: '压缩包流程', category: '物流', kind: 'flow', revision: 1,
+      createdAt: '', updatedAt: '', deletedAt: null, bodyMd: '',
+      steps: [{ id: 'archive-step', title: '核对截图', owner: '', detail: '已保留图片 lumen-asset:abc' }],
+    }
+    vi.mocked(open).mockResolvedValueOnce('D:\\GPT导出.zip')
+    const preview = vi.spyOn(memo, 'memoArchivePreview').mockResolvedValue({
+      records: [{ title: doc.title, category: doc.category, kind: 'flow', bodyMd: '', steps: doc.steps, imageCount: 1 }],
+      imageCount: 1,
+      sha256: 'a'.repeat(64),
+    })
+    const importArchive = vi.spyOn(memo, 'memoArchiveImport').mockResolvedValue([doc])
+    await mount('', [])
+    await click('ChatGPT 导入')
+    await click('导入 GPT 压缩包')
+    await vi.waitFor(() => expect(preview).toHaveBeenCalledWith('D:\\GPT导出.zip'))
+    expect(document.body.textContent).toContain('压缩包流程')
+    expect(document.body.textContent).toContain('1 张关联图片')
+    expect(importArchive).not.toHaveBeenCalled()
+    await click('确认导入 1 条')
+    expect(importArchive).toHaveBeenCalledOnce()
+    expect(importArchive).toHaveBeenCalledWith('D:\\GPT导出.zip', 'a'.repeat(64))
   })
 
   it('ChatGPT 导入使用一份通用提示词，并允许 GPT 自动判断记录类型', async () => {

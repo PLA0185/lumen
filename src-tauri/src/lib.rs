@@ -43,6 +43,7 @@ pub mod focus;
 pub mod holiday_calendar;
 pub mod knowledge_base;
 pub mod memo_ai;
+pub mod memo_archive;
 pub mod memo_package;
 pub mod memos;
 pub mod models;
@@ -465,6 +466,8 @@ pub fn run() {
             memos::memo_set_deleted,
             memo_package::memo_package_export,
             memo_package::memo_package_import,
+            memo_archive::memo_archive_preview,
+            memo_archive::memo_archive_import,
             // ---- PDF 导出（§6 中文可读）----
             pdf::export_pdf,
             commands::task_report,

@@ -4,8 +4,8 @@ import { readImage, readText } from '@tauri-apps/plugin-clipboard-manager'
 import { assetImportFile, assetImportPath, assetExtract, assetMarkdown, contentImages, contentInsertionRange, contentAssetPattern, replaceImageReference, contentError, type ContentAsset } from '../lib/content-assets'
 import { ContentMarkdown } from './ContentMarkdown'
 
-type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void; extractFiles?: boolean }
-export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: Props) {
+type Props = ComponentProps<'textarea'> & { onBusyChange?: (busy: boolean) => void; extractFiles?: boolean; onArchiveDrop?: (path: string) => void }
+export function ContentEditor({ onBusyChange, extractFiles = false, onArchiveDrop, ...props }: Props) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const resize = useRef<{ pointer: number; y: number; height: number; scale: number; previous: string } | null>(null)
   const mounted = useRef(true)
@@ -20,6 +20,8 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
   }, [busy, onBusyChange])
   const latest = useRef(props)
   latest.current = props
+  const archiveDrop = useRef(onArchiveDrop)
+  archiveDrop.current = onArchiveDrop
   useLayoutEffect(() => {
     const field = ref.current
     if (!field || props.readOnly || resize.current) return
@@ -150,7 +152,15 @@ export function ContentEditor({ onBusyChange, extractFiles = false, ...props }: 
     void getCurrentWindow().onDragDropEvent(({ payload }) => {
       if (payload.type !== 'drop' || latest.current.disabled || latest.current.readOnly) return
       const target = document.elementFromPoint(payload.position.x / window.devicePixelRatio, payload.position.y / window.devicePixelRatio)
-      if (!target || !ref.current?.parentElement?.contains(target)) return
+      if (!target) return
+      const archives = payload.paths.filter((path) => /\.zip$/i.test(path))
+      if (archives.length && archiveDrop.current) {
+        if (!ref.current?.closest('.chatgpt-import-dialog')?.contains(target)) return
+        if (archives.length === 1 && payload.paths.length === 1) archiveDrop.current(archives[0]!)
+        else setError('一次只能拖入一个 ZIP 压缩包，不能与其他文件混在一起')
+        return
+      }
+      if (!ref.current?.parentElement?.contains(target)) return
       void current.current.insert(() => current.current.importMany(payload.paths.map((path) => () => assetImportPath(path))))
     }).then((stop) => { if (disposed) stop(); else off = stop })
       .catch((e) => { if (!disposed) setError(`文件拖入监听失败：${contentError(e)}`) })
