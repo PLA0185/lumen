@@ -4620,10 +4620,10 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 预览时为压缩包内容计算摘要；确认时会重新核对文件，若预览后 ZIP 被替换或修改则要求重新预览，避免保存内容与用户确认的预览不一致。
 - 拒绝越界路径、缺失图片、无效记录、超过 256 MiB 的 ZIP、超过 512 MiB 的解压内容、单图超过 20 MiB 或超过数量上限的压缩包；原有 `.lumen-record` 单条往返包入口不变。
 - 更新 ChatGPT 导入文档、README 文档索引、发布说明和版本至 0.4.56；Windows 与 Android ARM64 继续使用同版发布工作流。
+- PR #30 已合并；v0.4.56 已正式发布 Windows 安装包与 Android ARM64 APK。
 
 ### 没做到
 
-- 本轮尚未合并 PR 或发布 v0.4.56；远端 CI 与 Windows / Android 发布结果待工作流执行后补记。
 - 未在用户运行中的桌面窗口做真实鼠标拖放验收；测试覆盖了 ZIP 选择、整包预览 / 确认路径和后端导入，不等同于实机拖放操作验收。
 - 未在 OnePlus Ace 2 / Android 16 实机安装验证；本轮没有可用设备连接。
 - ZIP 批量入口只接受 `kind` 为 `memo` / `flow` 的 JSON 和 Markdown 相对图片引用，不是任意格式压缩包解包器；Lumen `.lumen-record` 文件仍走独立单条导入入口。
@@ -4633,8 +4633,10 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 对用户提供的 ZIP 做临时端到端验收：预览识别 8 条（3 条流程、5 条备忘）和 18 张图片；导入到临时数据库成功，18 张图片均入库，流程步骤中的图片引用保留。该一次性验收代码没有写入仓库。
 - ZIP 导入 Rust 定向用例 4 项通过（批量预览、事务导入及图片引用、越界路径和缺图拒绝、预览后文件摘要一致性）。`cargo fmt --check` 通过，`cargo clippy --all-targets --all-features -- -D warnings` 通过。
 - `pnpm install --frozen-lockfile`、`pnpm typecheck` 通过；ChatGPT 导入及 mutation invalidation 定向前端用例 34 项通过；全量 `pnpm test` 412 项通过；`pnpm build` 和 `pnpm lint` 通过。构建输出包含既有动态导入分块提示。
-- `cargo test --lib` 输出 608 项通过、0 失败、4 忽略；Windows Cargo 启动器在打印汇总后仍未退出，手动中断使命令退出码为 1，因此不记为完整命令成功。PR / main CI 将作为独立 Rust 门禁结果。
+- `cargo test --lib` 输出 608 项通过、0 失败、4 忽略；Windows Cargo 启动器在打印汇总后仍未退出，手动中断使命令退出码为 1，因此不记为完整命令成功。PR #30 和合并后 main CI 已独立通过 Rust 全量门禁。
 - `node tools/check-version.mjs` 确认应用版本为 0.4.56；`git diff --check` 无空白错误。
+- PR #30 的 CI run [39205204045](https://github.com/PLA0185/lumen/actions/runs/39205204045) 与合并后 main CI run [39205655985](https://github.com/PLA0185/lumen/actions/runs/39205655985) 的前端 / Rust 全量门禁均通过。
+- Release run [39206157466](https://github.com/PLA0185/lumen/actions/runs/39206157466) 成功构建并签名 Android ARM64 APK，构建 Windows 安装包并通过验签及篡改拒绝检查，上传 `latest.json` 和 APK 后正式发布。GitHub Release [v0.4.56](https://github.com/PLA0185/lumen/releases/tag/v0.4.56) 已确认包含 Android APK、Windows 安装包、签名文件和 `latest.json`。
 
 ### 相关文档
 
@@ -4642,3 +4644,5 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [ZIP 识别、预览与原子导入](../src-tauri/src/memo_archive.rs)
 - [ChatGPT 导入界面](../src/components/ChatGPTContentImportDialog.tsx)
 - [0.4.56 发布说明](../RELEASE_NOTES.md)
+- [PR #30](https://github.com/PLA0185/lumen/pull/30)
+- [v0.4.56 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.56)
