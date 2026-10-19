@@ -4646,3 +4646,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.56 发布说明](../RELEASE_NOTES.md)
 - [PR #30](https://github.com/PLA0185/lumen/pull/30)
 - [v0.4.56 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.56)
+
+## 第 110 轮 · 2026-10-19 · 让任务搜索匹配子任务标题
+
+### 做了
+
+- 顶栏任务搜索新增子任务标题匹配；搜索命中子任务时显示所属父任务，任务列表与总数继续共用同一筛选条件。
+- 搜索框提示已说明可搜索子任务，避免用户不知道搜索范围。
+
+### 没做到
+
+- 尚未在用户运行中的 Lumen 窗口实机确认“运费”搜索结果。
+- 本轮尚未生成 Windows 安装包与 Android APK。
+- 全量 Rust 测试汇总后 Windows 进程仍未退出；手动中止后命令退出码为 1，因此完整 Cargo 测试命令不记作通过，等待 GitHub CI 做最终确认。
+
+### 怎么验证的
+
+- `cargo test --lib commands_e2e::task_search_matches_subtask_titles`：1 项通过；父任务标题不含“运费”、子任务标题为“FBA运费更新”时，列表与计数均只返回该父任务。
+- 全量前端 412 项通过；`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`pnpm check:version` 均通过。构建只有既有动态导入分块提示。
+- 全量 `cargo test --lib` 汇总 609 项通过、4 项忽略、0 项失败；Windows 测试进程在汇总后未退出，手动中止后退出码为 1，不将它记为命令通过。
+- `cargo clippy --all-targets --all-features -- -D warnings` 通过。
+
+### 相关文档
+
+- [任务搜索筛选实现](../src-tauri/src/commands.rs)
+- [任务子任务搜索验证](../src-tauri/src/commands_e2e.rs)

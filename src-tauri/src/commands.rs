@@ -1251,7 +1251,7 @@ fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppRes
         b.push(" AND due_at <= ").push_bind(to);
     }
 
-    // 搜索：标题/描述/备注/链接（§4.1 要求可搜索项目与标签，此处额外用 EXISTS 覆盖）
+    // 搜索：标题/描述/备注/链接/子任务/项目/标签。
     if let Some(kw) = query
         .search
         .as_deref()
@@ -1271,6 +1271,11 @@ fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppRes
         b.push(" OR COALESCE(link_url, '') LIKE ")
             .push_bind(like.clone())
             .push(" ESCAPE '\\'");
+        b.push(
+            " OR EXISTS (SELECT 1 FROM subtasks st WHERE st.task_id = tasks.id AND st.title LIKE ",
+        )
+        .push_bind(like.clone())
+        .push(" ESCAPE '\\')");
         b.push(
             " OR EXISTS (SELECT 1 FROM projects p WHERE p.id = tasks.project_id AND p.name LIKE ",
         )

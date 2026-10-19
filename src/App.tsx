@@ -611,7 +611,7 @@ export default function App() {
                 className="search__input selectable"
                 type="search"
                 value={isHandbookView ? (view === 'flows' ? flowSearch : memoSearch) : search}
-                placeholder={view === 'flows' ? '搜索流程、步骤、负责人和分类' : view === 'memos' ? '搜索备忘和分类' : '搜索标题、描述、备注、项目、标签'}
+                placeholder={view === 'flows' ? '搜索流程、步骤、负责人和分类' : view === 'memos' ? '搜索备忘和分类' : '搜索任务内容、子任务、项目、标签'}
                 aria-label={view === 'flows' ? '搜索流程' : view === 'memos' ? '搜索备忘' : '搜索任务'}
                 onChange={(e) => view === 'flows' ? setFlowSearch(e.target.value) : view === 'memos' ? setMemoSearch(e.target.value) : setSearch(e.target.value)}
                 onKeyDown={(e) => {
