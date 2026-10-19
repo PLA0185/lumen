@@ -4671,3 +4671,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [任务搜索筛选实现](../src-tauri/src/commands.rs)
 - [任务子任务搜索验证](../src-tauri/src/commands_e2e.rs)
+
+## 第 111 轮 · 2026-10-19 · 发布任务搜索修复并核验双端安装包
+
+### 做了
+
+- PR #31 已合并到 main；任务搜索现在会匹配子任务标题，并返回所属父任务。“运费”可命中子任务“FBA运费更新”及其父任务。
+- v0.4.57 已正式发布，Release 已包含 Windows 安装包、签名文件、`latest.json` 和 Android ARM64 APK。
+
+### 没做到
+
+- 未在用户正在使用的 Lumen 窗口实际输入“运费”验收，因为没有连接用户设备；界面实际体验仍由用户安装后确认。
+- 未在 OnePlus Ace 2 / Android 16 实机安装验证本版 APK；设备当前无法连接。
+
+### 怎么验证的
+
+- 定向 Rust 用例 `commands_e2e::task_search_matches_subtask_titles` 通过，验证父任务名称、子任务标题搜索及结果计数。
+- PR #31 的 GitHub CI run [39215967292](https://github.com/PLA0185/lumen/actions/runs/39215967292) 全部通过；覆盖前端和 Rust 全量门禁。
+- 本地 `pnpm test` 412 项通过，`pnpm typecheck`、`pnpm build`、`pnpm lint`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 通过。全量本地 `cargo test --lib` 汇总 609 项通过、4 项忽略、0 项失败，但 Windows 进程在输出汇总后未退出，手动中断后退出码为 1；以 PR 的 GitHub CI 全量 Rust 门禁作为最终确认。
+- Release run [39216659913](https://github.com/PLA0185/lumen/actions/runs/39216659913) 已完成构建、验签及正式发布步骤；核对 [v0.4.57 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.57) 中的 Windows 和 Android 资产。记录时该工作流仍在运行清理步骤。
+
+### 相关文档
+
+- [任务搜索筛选实现](../src-tauri/src/commands.rs)
+- [任务子任务搜索验证](../src-tauri/src/commands_e2e.rs)
+- [PR #31](https://github.com/PLA0185/lumen/pull/31)
+- [v0.4.57 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.57)
