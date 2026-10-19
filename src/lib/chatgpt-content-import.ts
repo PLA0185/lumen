@@ -179,24 +179,31 @@ export function parseChatGPTContentImport(
   return next
 }
 
-export const CHATGPT_IMPORT_PROMPT = `请把我提供的内容整理成 Lumen 可导入的备忘。只返回一个 JSON 对象，不要代码围栏或额外解释。格式：
+export const CHATGPT_IMPORT_PROMPT = `请把我提供的内容整理成一条 Lumen 记录，并自行判断类型。只返回一个 JSON 对象，不要代码围栏或额外解释。
+
+判断规则：
+- 内容是可重复执行、存在先后顺序的操作步骤时，使用业务流程：kind 写 "flow"，按原顺序填写 steps；bodyMd 只放适用范围、背景或材料说明。
+- 内容是术语、规则、背景、资料、经验或独立注意事项，不需要按步骤执行时，使用备忘：kind 写 "memo"，正文写入 bodyMd，steps 使用空数组。
+- 不要为了凑流程把独立信息改写成步骤，也不要把多个无关业务合并到一个流程。
+
+根据判断结果，只选下面一种对象格式输出：
+备忘：
 {
   "kind": "memo",
-  "title": "标题",
-  "category": "分类，可留空",
+  "title": "备忘标题",
+  "category": "分类；未知或不适用时留空",
   "bodyMd": "Markdown 正文",
   "steps": []
 }
-不要编造原材料中没有的信息。`
-
-export const CHATGPT_FLOW_IMPORT_PROMPT = `请把我提供的材料整理成 Lumen 可导入的业务流程。只返回一个 JSON 对象，不要代码围栏或额外解释。严格使用以下字段格式：
+流程：
 {
   "kind": "flow",
   "title": "流程标题",
-  "category": "分类，可留空",
+  "category": "分类；未知或不适用时留空",
   "bodyMd": "适用范围、背景或材料说明；没有则留空",
   "steps": [
-    { "title": "步骤名称", "owner": "负责人或部门；未知则留空", "detail": "具体操作、完成标准和注意事项" }
+    { "title": "步骤名称", "owner": "负责人或部门；未知时留空", "detail": "具体操作、完成标准和注意事项" }
   ]
 }
-按原文顺序拆分步骤，只合并同一程序中的连续动作，不要将无关业务合并进来。不得编造原材料中没有的信息。`
+
+若 kind 是 "memo"，steps 必须是空数组；若 kind 是 "flow"，按原文顺序拆分步骤，只合并同一流程中的连续动作。不得编造原材料中没有的信息。`

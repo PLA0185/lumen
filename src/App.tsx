@@ -663,7 +663,7 @@ export default function App() {
         {isRepeatView(view) && <RepeatViewTabs current={view} onSelect={navigate} />}
 
         <main className="content">
-          {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
+          {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} onImportKindChange={kind => { if (kind === 'flow') { setFlowSearch(''); setView('flows') } else { setMemoSearch(''); setView('memos') } }} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
           {view === 'today' && <TodayDateSelector selectedDate={todayDate} onChange={setTodayDate} />}
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>

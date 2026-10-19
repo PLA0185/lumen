@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import * as memo from '../lib/memos-ipc'
-import { CHATGPT_FLOW_IMPORT_PROMPT, CHATGPT_IMPORT_PROMPT, parseChatGPTContentImport, type ChatGPTImportPreview } from '../lib/chatgpt-content-import'
+import { CHATGPT_IMPORT_PROMPT, parseChatGPTContentImport, type ChatGPTImportPreview } from '../lib/chatgpt-content-import'
 import { contentImages } from '../lib/content-assets'
 import { ContentEditor } from './ContentEditor'
 import { ContentMarkdown } from './ContentMarkdown'
 import { FlowImagePicker } from './FlowImagePicker'
 
-type Target = `new:${'memo' | 'flow'}` | `existing:${string}`
+type Target = 'new:auto' | `existing:${string}`
 
 export function ChatGPTContentImportDialog({
   initialDocumentId,
@@ -23,7 +23,7 @@ export function ChatGPTContentImportDialog({
   const dialog = useRef<HTMLDialogElement>(null)
   const saving = useRef(false)
   const [rows, setRows] = useState<memo.MemoSummary[]>([])
-  const [target, setTarget] = useState<Target>(initialDocumentId ? `existing:${initialDocumentId}` : kindFilter === 'flow' ? 'new:flow' : 'new:memo')
+  const [target, setTarget] = useState<Target>(initialDocumentId ? `existing:${initialDocumentId}` : 'new:auto')
   const [content, setContent] = useState('')
   const [proposal, setProposal] = useState<ChatGPTImportPreview | null>(null)
   const [original, setOriginal] = useState<memo.SaveMemoInput | null>(null)
@@ -42,7 +42,7 @@ export function ChatGPTContentImportDialog({
     void memo.memoList('', false).then(result => {
       if (!active) return
       setRows(result.filter(row => !row.deletedAt))
-      if (initialDocumentId && !result.some(row => row.id === initialDocumentId && !row.deletedAt)) setTarget(kindFilter === 'flow' ? 'new:flow' : 'new:memo')
+      if (initialDocumentId && !result.some(row => row.id === initialDocumentId && !row.deletedAt)) setTarget('new:auto')
     }).catch(e => { if (active) setError(`读取备忘与流程列表失败：${String(e)}`) })
     return () => { active = false }
   }, [initialDocumentId, kindFilter])
@@ -59,12 +59,14 @@ export function ChatGPTContentImportDialog({
         base = { id: document.id, expectedRevision: document.revision, title: document.title, category: document.category, kind: document.kind, bodyMd: document.bodyMd, steps: document.steps }
         isNew = false
       } else {
-        const kind = target.slice('new:'.length) as 'memo' | 'flow'
+        // Markdown without a JSON `kind` falls back to the section the user opened.
+        // The universal prompt always supplies `kind`, so new JSON can choose either type.
+        const kind = kindFilter === 'flow' ? 'flow' : 'memo'
         base = { id: null, expectedRevision: null, title: '', category: '', kind, bodyMd: '', steps: [] }
         isNew = true
       }
       const next = parseChatGPTContentImport(content, base, isNew)
-      if (next.kind !== base.kind) throw new Error('导入内容的类型与所选目标不一致，请调整 JSON 中的 kind，或先选择对应类型的目标')
+      if (!isNew && next.kind !== base.kind) throw new Error('更新已有记录时不能更改记录类型，请保持 JSON 中的 kind 与原记录一致')
       setOriginal(base)
       setProposal(next)
     } catch (e) {
@@ -88,10 +90,9 @@ export function ChatGPTContentImportDialog({
   const close = () => { if (!busy) onClose() }
   const selectedLabel = target.startsWith('existing:')
     ? rows.find(row => row.id === target.slice('existing:'.length))?.title ?? '现有记录'
-    : target === 'new:flow' ? '新建流程' : '新建备忘'
+    : 'GPT 判断类型后新建'
   const selectedDocument = target.startsWith('existing:') ? rows.find(row => row.id === target.slice('existing:'.length)) : undefined
   const isExistingTarget = target.startsWith('existing:')
-  const selectedKind = target === 'new:flow' || selectedDocument?.kind === 'flow' ? 'flow' : 'memo'
   const flowImageSource = proposal?.kind === 'flow' ? [proposal.bodyMd, ...proposal.steps.map(step => step.detail)].join('\n') : ''
   const flowImages = contentImages(flowImageSource)
   const assignedImageIds = new Set(proposal?.kind === 'flow' ? proposal.steps.flatMap(step => contentImages(step.detail).map(image => image.id)) : [])
@@ -111,8 +112,9 @@ export function ChatGPTContentImportDialog({
     }
   })
   const addStep = () => setProposal(current => current?.kind === 'flow' ? { ...current, steps: [...current.steps, { id: crypto.randomUUID(), title: '', owner: '', detail: '' }] } : current)
-  const isFlowTarget = target === 'new:flow' || (target.startsWith('existing:') && rows.find(row => row.id === target.slice('existing:'.length))?.kind === 'flow')
-  const prompt = isFlowTarget ? CHATGPT_FLOW_IMPORT_PROMPT : CHATGPT_IMPORT_PROMPT
+  const prompt = isExistingTarget && selectedDocument
+    ? `${CHATGPT_IMPORT_PROMPT}\n\n本次是更新现有${selectedDocument.kind === 'flow' ? '流程' : '备忘'}，请保持 kind 为 "${selectedDocument.kind}"，只整理这条记录的内容。`
+    : CHATGPT_IMPORT_PROMPT
 
   return <dialog ref={dialog} className="chatgpt-import-dialog" aria-label="从 ChatGPT 导入内容" onCancel={event => { event.preventDefault(); close() }}>
     <div className="chatgpt-import-dialog__inner">
@@ -131,8 +133,7 @@ export function ChatGPTContentImportDialog({
       <fieldset className="chatgpt-import-dialog__target" disabled={busy || !!proposal}>
         <legend>导入目标</legend>
         <div className="chatgpt-import-dialog__target-modes" role="group" aria-label="导入目标类型">
-          <button type="button" className={`btn ${!isExistingTarget && selectedKind === 'memo' ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget && selectedKind === 'memo'} onClick={() => setTarget('new:memo')}>新建备忘</button>
-          <button type="button" className={`btn ${!isExistingTarget && selectedKind === 'flow' ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget && selectedKind === 'flow'} onClick={() => setTarget('new:flow')}>新建流程</button>
+          <button type="button" className={`btn ${!isExistingTarget ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={!isExistingTarget} onClick={() => setTarget('new:auto')}>新建内容（GPT 判断类型）</button>
           <button type="button" className={`btn ${isExistingTarget ? 'btn--primary' : 'btn--ghost'}`} aria-pressed={isExistingTarget} disabled={!rows.length} onClick={() => {
             const current = selectedDocument
             const next = current ?? rows[0]
@@ -145,29 +146,24 @@ export function ChatGPTContentImportDialog({
             {rows.map(row => <option key={row.id} value={`existing:${row.id}`}>{row.kind === 'flow' ? '流程' : '备忘'} · {row.title}</option>)}
           </select>
         </label>}
-        <p className="chatgpt-import-dialog__target-hint">新建备忘用于记录说明和资料；新建流程用于按步骤整理操作。更新已有记录会先显示修改预览。</p>
+        <p className="chatgpt-import-dialog__target-hint">新建时由 GPT 根据内容判断保存为备忘还是流程；更新已有记录时保留原类型，并先显示修改预览。</p>
       </fieldset>
 
       {!proposal ? <>
         <section className="chatgpt-import-dialog__format" aria-label="ChatGPT 返回格式说明">
           <div className="chatgpt-import-dialog__format-heading">
-            <strong>{selectedKind === 'flow' ? '流程返回格式' : '备忘返回格式'}</strong>
+            <strong>通用返回格式</strong>
             <span>先复制下方指令给 GPT，再把材料一起发给它</span>
           </div>
-          {selectedKind === 'flow' ? <>
-            <p>流程推荐返回 JSON：每个步骤的标题、负责人和说明分别填写；也可以直接粘贴带 <code>#</code> 标题和 <code>##</code> 步骤标题的 Markdown。</p>
-            <pre><code>{'{\n  "kind": "flow",\n  "title": "出货流程",\n  "category": "物流",\n  "bodyMd": "适用范围或背景",\n  "steps": [\n    { "title": "核对订单", "owner": "运营", "detail": "核对型号和数量。" }\n  ]\n}'}</code></pre>
-          </> : <>
-            <p>备忘推荐返回 JSON，Lumen 会自动识别标题、分类和正文；也可直接返回以 <code># 标题</code> 开头的 Markdown。</p>
-            <pre><code>{'{\n  "kind": "memo",\n  "title": "备忘标题",\n  "category": "分类",\n  "bodyMd": "整理后的正文（支持 Markdown）"\n}'}</code></pre>
-          </>}
+          <p>只需复制这一份提示词。GPT 会按内容判断 <code>kind</code>：按顺序执行的操作用 <code>flow</code>，资料、规则和独立说明用 <code>memo</code>。备忘的 <code>steps</code> 留空；流程按步骤填写。</p>
+          <pre><code>{'备忘：\n{\n  "kind": "memo",\n  "title": "备忘标题",\n  "category": "分类",\n  "bodyMd": "Markdown 正文",\n  "steps": []\n}\n\n流程：\n{\n  "kind": "flow",\n  "title": "流程标题",\n  "category": "分类",\n  "bodyMd": "背景说明",\n  "steps": [{ "title": "步骤", "owner": "负责人", "detail": "操作说明" }]\n}'}</code></pre>
         </section>
         <label className="chatgpt-import-dialog__content">
           粘贴 ChatGPT 的回答
-          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={selectedKind === 'flow' ? '粘贴 GPT 按上方 JSON 格式整理的流程；也可粘贴 Markdown。' : '粘贴 GPT 返回的 JSON，或 Markdown / 纯文本。JSON 可填写标题、分类和正文。'} onChange={event => { setContent(event.target.value); setError('') }} />
+          <ContentEditor className="input selectable" aria-label="ChatGPT 导入内容" value={content} disabled={busy} maxLength={100000} rows={10} placeholder={isExistingTarget ? '粘贴与所选记录类型一致的 GPT JSON，也可粘贴 Markdown / 纯文本。' : '粘贴 GPT 返回的单条 JSON；kind 会自动决定保存为备忘或流程。'} onChange={event => { setContent(event.target.value); setError('') }} />
         </label>
         <div className="chatgpt-import-dialog__actions">
-          <button className="btn btn--ghost" disabled={busy} onClick={() => { void writeText(prompt).then(() => setNotice(`${selectedKind === 'flow' ? '流程' : '备忘'}提示词已复制；把指令和你的材料一起发给 ChatGPT。`)).catch(e => setError(`复制失败：${String(e)}`)) }}>复制{selectedKind === 'flow' ? '流程' : '备忘'}提示词</button>
+          <button className="btn btn--ghost" disabled={busy} onClick={() => { void writeText(prompt).then(() => setNotice('通用提示词已复制；把指令和材料一起发给 ChatGPT。')).catch(e => setError(`复制失败：${String(e)}`)) }}>复制通用提示词</button>
           <span className="setgroup__hint">可粘贴图片或拖入文件。流程图片会保留，可在预览中分配到对应步骤。</span>
           <button className="btn btn--primary" disabled={busy || !content.trim()} onClick={() => void makePreview()}>{busy ? '正在生成预览…' : '生成修改预览'}</button>
         </div>

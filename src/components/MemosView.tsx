@@ -39,12 +39,14 @@ export function MemosView({
   query = '',
   kindFilter = 'all',
   onDirtyChange,
+  onImportKindChange,
   initialFlowTarget,
   onFlowTargetHandled,
 }: {
   query?: string
   kindFilter?: 'memo' | 'flow' | 'all'
   onDirtyChange?: (dirty: boolean) => void
+  onImportKindChange?: (kind: 'memo' | 'flow') => void
   initialFlowTarget?: { flowId: string; stepId: string; requestId: string } | null
   onFlowTargetHandled?: () => void
 }) {
@@ -751,6 +753,7 @@ export function MemosView({
       {chatGPTImportOpen && <ChatGPTContentImportDialog initialDocumentId={selected?.id} kindFilter={kindFilter} onClose={() => setChatGPTImportOpen(false)} onSaved={async doc => {
         setSelected(doc); setDraft(draftOf(doc)); setEditing(false); setAiDraft(false); setFlowView('canvas'); setCanvasSession(n => n + 1); setError(null); setNotice('ChatGPT 内容已确认并保存到本机');
         await reload()
+        if (kindFilter !== 'all' && doc.kind !== kindFilter) onImportKindChange?.(doc.kind)
       }} />}
       {restructuring && <FlowRestructureDialog original={restructuring} onClose={() => setRestructuring(null)} onApply={applyRestructure} />}
       {aiOpen && <AiFlowDialog onClose={() => setAiOpen(false)} onGenerated={flow => { detailGate.invalidate(); setCanvasSession(n => n + 1); setFlowView('canvas'); setSelected(null); setDraft({ ...flow, id: null, expectedRevision: null }); setEditing(true); setAiDraft(true); setAiOpen(false); setError(null); setNotice('流程草稿已生成。请核对并修改，点击「确认保存流程」后才保存。') }} />}

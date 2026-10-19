@@ -12,6 +12,15 @@ describe('ChatGPT 内容导入预览解析', () => {
     expect(result.steps[0]).toMatchObject({ title: '核对订单', owner: '运营', detail: '确认型号和数量。' })
   })
 
+  it('新建时允许 GPT 根据 JSON kind 自动选择备忘或流程', () => {
+    const memoResult = parseChatGPTContentImport(JSON.stringify({ kind: 'memo', title: '物流术语', bodyMd: '追踪编号说明。', steps: [] }), { ...empty, kind: 'flow' }, true)
+    const flowResult = parseChatGPTContentImport(JSON.stringify({ kind: 'flow', title: '出货流程', steps: [{ title: '核对订单', detail: '核对数量。' }] }), empty, true)
+
+    expect(memoResult).toMatchObject({ kind: 'memo', title: '物流术语', bodyMd: '追踪编号说明。', steps: [] })
+    expect(flowResult).toMatchObject({ kind: 'flow', title: '出货流程' })
+    expect(flowResult.steps).toHaveLength(1)
+  })
+
   it('纯 Markdown 更新只替换正文，并沿用目标记录身份与标题', () => {
     const existing: SaveMemoInput = { id: 'memo-1', expectedRevision: 7, kind: 'memo', title: '术语表', category: '业务', bodyMd: '旧内容', steps: [] }
     const result = parseChatGPTContentImport('新整理后的内容\n\n- 第一项', existing, false)
