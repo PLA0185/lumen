@@ -182,6 +182,36 @@ async fn task_creation_saves_ordered_subtasks_and_rolls_back_on_child_failure() 
 }
 
 #[tokio::test]
+async fn task_search_matches_subtask_titles() {
+    let (state, dir) = setup("search-subtask-title").await;
+    let parent = create_task_with_subtasks_impl(
+        &state.db,
+        task("出运跟踪表更新"),
+        &["FBA运费更新".to_string()],
+        None,
+    )
+    .await
+    .unwrap();
+    let query = TaskQuery {
+        search: Some("运费".into()),
+        ..Default::default()
+    };
+
+    let matches = list_tasks_impl(&state.db, query.clone()).await.unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].id, parent.id);
+    assert_eq!(
+        crate::commands::count_tasks_impl(&state.db, &query)
+            .await
+            .unwrap(),
+        1
+    );
+
+    state.db.pool().close().await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn recurring_subtasks_have_persistent_template_schema() {
     let (state, dir) = setup("subtask-template-schema").await;
     let columns: Vec<String> =
