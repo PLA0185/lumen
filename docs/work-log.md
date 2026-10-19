@@ -4593,17 +4593,20 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 本机没有执行 Android 16 实机验收；用户此前说明当前不方便连接 USB 调试设备。
-- 本记录写入时，PR CI 与 v0.4.55 Release 尚未运行；签名 APK 由合并后创建版本 tag 时的 GitHub Release 工作流生成。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（411 项）、`pnpm build`、`pnpm lint` 均通过；新增的剪贴板定向验证确认点击一次复制包含 memo/flow 判断规则的提示词，MemosView 定向回归 30 项通过。
 - `cargo fmt --check` 通过；`cargo clippy --all-targets --all-features -- -D warnings` 通过。
-- `cargo test --lib --quiet` 输出 604 项通过、0 项失败、4 项忽略；Windows Cargo 启动器在测试结果后未自行退出，手动中断后命令退出码为 1，因此本机 Cargo 测试命令不记为完整通过，等待 PR CI 独立确认。
+- `cargo test --lib --quiet` 输出 604 项通过、0 项失败、4 项忽略；Windows Cargo 启动器在测试结果后未自行退出，手动中断后命令退出码为 1，因此本机 Cargo 测试命令不记为完整通过。PR 与 main CI 均独立通过 Rust 全量门禁。
 - `node tools/check-version.mjs` 确认版本号为 0.4.55；`git diff --check` 无空白错误。
+- PR #28 的 CI run [39198981851](https://github.com/PLA0185/lumen/actions/runs/39198981851) 前端与 Rust job 全部通过；合并后的 main CI run [39199471634](https://github.com/PLA0185/lumen/actions/runs/39199471634) 也全部通过。
+- Release run [39199958825](https://github.com/PLA0185/lumen/actions/runs/39199958825) 的 Android ARM64 签名 APK 构建、Windows 发布门禁、签名安装包构建、安装包验签与篡改拒绝检查、latest.json 直链校正、APK 上传及正式发布步骤均成功。GitHub Release API 确认 v0.4.55 已正式发布，包含 Android APK、Windows 安装包、签名文件和 latest.json；记录时 GitHub Actions 仍在执行最后的 Rust 缓存清理步骤。
 
 ### 相关文档
 
 - [ChatGPT 内容导入说明](chatgpt-content-import-2026-10-12.md)
 - [0.4.55 发布说明](../RELEASE_NOTES.md)
 - [Android 与 Windows 发布工作流](../.github/workflows/release.yml)
+- [PR #28](https://github.com/PLA0185/lumen/pull/28)
+- [v0.4.55 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.55)
