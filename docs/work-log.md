@@ -4581,3 +4581,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [重复频率定义](../src/lib/repeat-views.ts)
 - [0.4.54 发布说明](../RELEASE_NOTES.md)
 - [发布工作流](../.github/workflows/release.yml)
+
+## 第 108 轮 · 2026-10-19 · 合并 ChatGPT 备忘与流程导入
+
+### 做了
+
+- 新建导入统一使用一份提示词，要求 ChatGPT 自行判断内容是备忘还是按顺序执行的流程，并按判断结果返回相应 JSON；“复制通用提示词”一次复制完整规则与两种结构。
+- 预览展示 GPT 识别出的类型；从备忘或流程列表导入另一种类型并确认后，会自动切换到对应列表。更新已有记录仍须保持原类型，保存前仍需用户确认。
+- 更新 ChatGPT 导入说明、发布说明和版本号至 0.4.55；Android ARM64 APK 继续纳入 Windows 同版发布流程。
+
+### 没做到
+
+- 本机没有执行 Android 16 实机验收；用户此前说明当前不方便连接 USB 调试设备。
+- 本记录写入时，PR CI 与 v0.4.55 Release 尚未运行；签名 APK 由合并后创建版本 tag 时的 GitHub Release 工作流生成。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（411 项）、`pnpm build`、`pnpm lint` 均通过；新增的剪贴板定向验证确认点击一次复制包含 memo/flow 判断规则的提示词，MemosView 定向回归 30 项通过。
+- `cargo fmt --check` 通过；`cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- `cargo test --lib --quiet` 输出 604 项通过、0 项失败、4 项忽略；Windows Cargo 启动器在测试结果后未自行退出，手动中断后命令退出码为 1，因此本机 Cargo 测试命令不记为完整通过，等待 PR CI 独立确认。
+- `node tools/check-version.mjs` 确认版本号为 0.4.55；`git diff --check` 无空白错误。
+
+### 相关文档
+
+- [ChatGPT 内容导入说明](chatgpt-content-import-2026-10-12.md)
+- [0.4.55 发布说明](../RELEASE_NOTES.md)
+- [Android 与 Windows 发布工作流](../.github/workflows/release.yml)
