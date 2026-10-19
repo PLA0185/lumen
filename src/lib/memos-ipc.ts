@@ -33,6 +33,19 @@ export interface SaveMemoInput {
   bodyMd: string
   steps: FlowStep[]
 }
+export interface MemoArchivePreviewRecord {
+  title: string
+  category: string
+  kind: 'memo' | 'flow'
+  bodyMd: string
+  steps: FlowStep[]
+  imageCount: number
+}
+export interface MemoArchivePreview {
+  records: MemoArchivePreviewRecord[]
+  imageCount: number
+  sha256: string
+}
 // Object field order may change over IPC; array order remains meaningful.
 export function sameMemoDraft(a: SaveMemoInput, b: SaveMemoInput): boolean {
   const ordered = (_key: string, value: unknown) => value && typeof value === 'object' && !Array.isArray(value)
@@ -74,6 +87,10 @@ export const memoPackageExport = (id: string, path: string) =>
   call<number>('memo_package_export', { id, path })
 export const memoPackageImport = (path: string) =>
   call<MemoDocument>('memo_package_import', { path })
+export const memoArchivePreview = (path: string) =>
+  call<MemoArchivePreview>('memo_archive_preview', { path })
+export const memoArchiveImport = (path: string, expectedSha256: string) =>
+  call<MemoDocument[]>('memo_archive_import', { path, expectedSha256 })
 export const memoSetDeleted = (
   id: string,
   revision: number,

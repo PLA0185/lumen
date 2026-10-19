@@ -446,7 +446,7 @@ pnpm typecheck                # 类型检查
 
 | 文档 | 内容 |
 | --- | --- |
-| [ChatGPT 内容导入](docs/chatgpt-content-import-2026-10-12.md) | ChatGPT 网页与桌面端复制内容到备忘 / 流程，预览确认后保存；流程图片按步骤归属，列明 Plus 计划下原生 MCP 写入限制 |
+| [ChatGPT 内容导入](docs/chatgpt-content-import-2026-10-12.md) | ChatGPT 网页 / 桌面端复制导入或拖入 ZIP 批量导入备忘、流程和配套图片；预览确认后保存，列明原生 MCP 写入限制 |
 | [Android APK 发布签名](docs/android-release-signing.md) | 同一 Release 附 ARM64 APK 的自动构建、稳定签名和 Android / Windows 共用 GitHub 云同步配置 |
 | [跨平台 UI 重构设计](docs/superpowers/specs/2026-10-09-cross-platform-ui-redesign.md) | Apple、Android、Windows 官方原则映射、导航与视觉规则、可访问性和已知实机验收边界 |
 | [跨平台 UI 重构实施记录](docs/superpowers/plans/2026-10-09-cross-platform-ui-redesign.md) | 令牌、交互、Windows/Android 壳层、知识库回答样式、回归测试和发布验收 |
