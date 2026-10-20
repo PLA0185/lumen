@@ -3758,6 +3758,33 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.35 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
 
+## 第 117 轮 · 2026-10-20 · 修正新建任务表单字段对齐
+
+### 做了
+
+- 根据重新打开的实际预览定位到对齐失效的原因：通用 `.field` 样式在新建表单规则之后加载，把纵向字段的 `align-items: stretch` 覆盖成居中。
+- 为新建任务标题增加明确标签和有边界的输入框；日期/时间对齐为等宽字段，快捷日期按钮归为一组，优先级/周期/重复用等宽列展示。
+- 提高新建表单字段选择器优先级，使标签稳定贴齐控件左边；保留顶部和底部的添加/取消操作，紧凑浮窗隐藏额外标题行。
+- 源码版本更新为 0.4.62，Windows 安装包与 Android ARM64 APK 将按同一版本发布。
+
+### 没做到
+
+- 尚未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；当前预览不连接 Tauri 数据库。
+- v0.4.62 的 PR、CI 和 Windows/Android 发布仍在进行，产物链接将在后续记录中补齐。
+
+### 怎么验证的
+
+- 本地 Vite 页面实际打开新建任务表单，检查标题输入、日期/时间、快捷日期、属性、描述以及顶部/底部操作；字段标签与控件左边缘已对齐，日期时间和任务属性列宽一致。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.62）、`cargo check` 和 `cargo fmt --check` 已通过。构建仅有既存的动态导入分块提示。
+- `cargo test --lib` 输出 610 项通过、0 项失败、4 项忽略；测试汇总后 Windows 进程仍未退出，按既往相同行为中断后退出码为 1，因此本地命令没有正常退出。
+- `cargo check`、`cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 通过。当前浏览器不是 Tauri 桌面程序，未验证真实数据库内容和设备 WebView；提交安全扫描待提交前执行。
+
+### 相关文档
+
+- [0.4.61 实际窗口排版整改](design-system/v0.4.61/REAL-WINDOW-FIXES.md)
+- [0.4.62 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+
 
 ## 第 78 轮 · 2026-10-09 · 备忘/流程分栏与全界面可读性整改
 

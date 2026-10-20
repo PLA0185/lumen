@@ -251,12 +251,14 @@ export function QuickAdd({
           新建到：{context.label}
         </p>
       )}
+      <label className="quickadd__title-label" htmlFor="quickadd-title">任务标题</label>
       <div className="quickadd__row">
         {compact && (
           <span className="floating__draft-check" aria-hidden="true" />
         )}
         <input
           ref={inputRef}
+          id="quickadd-title"
           className="quickadd__input selectable"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -318,7 +320,7 @@ export function QuickAdd({
           <div className="quickadd__schedule-grid">
             {repeat === 'none' && (
               <label className="field field--quickadd">
-                计划日期
+                <span className="quickadd__field-label">计划日期</span>
                 <input
                   type="date"
                   value={dateStr}
@@ -333,7 +335,7 @@ export function QuickAdd({
             )}
             {repeat === 'none' && (
               <label className="field field--quickadd">
-                时间
+                <span className="quickadd__field-label">时间</span>
                 <input
                   type="time"
                   value={timeStr}
@@ -348,40 +350,42 @@ export function QuickAdd({
             )}
             {repeat === 'none' && (
               <div className="quickadd__date-presets" role="group" aria-label="计划日期快捷选择">
-                <span>快捷选择</span>
-                <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(new Date())}>
-                  今天
-                </button>
-                <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(addDays(new Date(), 1))}>
-                  明天
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--quiet btn--sm"
-                  title="设为下周一；之后可以在日期控件里改成下周其他日期"
-                  onClick={() => selectDatePreset(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }))}
-                >
-                  下周
-                </button>
-                {dateStr && (
+                <span className="quickadd__field-label">快捷选择</span>
+                <div className="quickadd__date-preset-actions">
+                  <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(new Date())}>
+                    今天
+                  </button>
+                  <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(addDays(new Date(), 1))}>
+                    明天
+                  </button>
                   <button
                     type="button"
-                    className="btn btn--quiet btn--sm quickadd__date-clear"
-                    onClick={() => {
-                      setDateStr('')
-                      setTimeStr('')
-                      setDateTouched(true)
-                    }}
+                    className="btn btn--quiet btn--sm"
+                    title="设为下周一；之后可以在日期控件里改成下周其他日期"
+                    onClick={() => selectDatePreset(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }))}
                   >
-                    清除日期
+                    下周
                   </button>
-                )}
+                  {dateStr && (
+                    <button
+                      type="button"
+                      className="btn btn--quiet btn--sm quickadd__date-clear"
+                      onClick={() => {
+                        setDateStr('')
+                        setTimeStr('')
+                        setDateTouched(true)
+                      }}
+                    >
+                      清除日期
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
           <div className="quickadd__attributes-grid">
             <label className="field field--quickadd">
-              优先级
+              <span className="quickadd__field-label">优先级</span>
               <select
                 value={priority}
                 aria-label="优先级"
@@ -399,7 +403,7 @@ export function QuickAdd({
               用户想同时指定日期也可以。 */}
             {
               <label className="field field--quickadd">
-                周期
+                <span className="quickadd__field-label">周期</span>
                 <select
                   value={periodType}
                   aria-label="周期跨度"
@@ -419,7 +423,7 @@ export function QuickAdd({
               </label>
             }
             <label className="field field--quickadd">
-              重复
+              <span className="quickadd__field-label">重复</span>
               <select
                 aria-label="任务重复"
                 value={repeat}
