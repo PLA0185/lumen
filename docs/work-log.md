@@ -4729,6 +4729,33 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [任务描述 Markdown 渲染](../src/components/TaskCard.tsx)
 - [0.4.58 发布说明](../RELEASE_NOTES.md)
 
+## 第 115 轮 · 2026-10-20 · 完成 0.4.60 Windows 与 Android 发布
+
+### 做了
+
+- PR [#36](https://github.com/PLA0185/lumen/pull/36) 已合并到 `main`，随后 `main` CI 全部通过。
+- 创建并推送 `v0.4.60` 标签，发布了 [Lumen 0.4.60 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.60)。同一 Release 包含 `Lumen_0.4.60_android_arm64.apk`（38,283,778 字节）、`Lumen_0.4.60_x64-setup.exe`（24,868,728 字节）、Windows 签名文件与 `latest.json`。
+- GitHub Release 工作流的 Android 构建、Windows 完整门禁、安装包签名验签、APK 上传和公开发布步骤均成功。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 或真实 Windows 安装环境中安装并操作 0.4.60；APK 和安装包已发布，但没有设备实测结论。
+- 桌面/手机布局截图仍是标注了示例数据的 HTML 设计预览，未用真实用户数据库验证页面读写和辅助技术组合。
+
+### 怎么验证的
+
+- PR CI [39372415843](https://github.com/PLA0185/lumen/actions/runs/39372415843) 的前端与 Rust jobs 均通过；合并后 main CI [39372860584](https://github.com/PLA0185/lumen/actions/runs/39372860584) 也全部通过。
+- Release workflow [39373376729](https://github.com/PLA0185/lumen/actions/runs/39373376729)：Android ARM64 构建和产物收集成功；Windows 发布门禁、密钥检查、安装包构建、签名验收、manifest 更新、APK 上传及 Release 发布成功。
+- 在公开 Release API 中核对 `draft=false`，并确认 Android APK、Windows x64 安装包、签名和 `latest.json` 四个资产及其大小。
+- 本地 `cargo test --lib` 汇总 610 项通过、4 项忽略，但本地进程不能在汇总后自然退出；本轮以两次 GitHub CI 和 Release workflow 中实际成功的 Rust 测试为最终门禁依据。
+
+### 相关文档
+
+- [0.4.60 工作区设计审计与原型证据](design-system/v0.4.60/DESIGN.md)
+- [0.4.60 Release 与 Android APK](https://github.com/PLA0185/lumen/releases/tag/v0.4.60)
+- [PR #36](https://github.com/PLA0185/lumen/pull/36)
+- [0.4.60 发布说明](../RELEASE_NOTES.md)
+
 ## 第 114 轮 · 2026-10-20 · 从配色改动推进到工作区结构重构
 
 ### 做了
