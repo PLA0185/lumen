@@ -442,16 +442,17 @@ pnpm typecheck                # 类型检查
 
 ## 文档索引
 
-当前源码版本 0.4.59。Windows 与 Android 共用一套重新设计的界面系统：桌面工具集中为单行，手机切换为分组触控布局；任务、日历、知识库、备忘与流程、设置、饮食和弹窗共享颜色、层级、间距与控件规则，保留深浅主题、字号调整及系统减少动态效果偏好。此前版本能力仍包括任务与子任务、周期安排、具体提醒时间、按日历日期新建、GitHub 加密同步、备忘和流程原图导入导出及知识库流程检索。Android ARM64 APK 与 Windows 安装包随同一版本发布；Android 16 实机仍需安装验证。界面重设计说明、交互预览与截图证据见下方文档索引，功能边界见各轮[工作记录](docs/work-log.md)。
+当前源码版本 0.4.60。在 0.4.59 的共享视觉系统上，这次重排了实际工作区结构：今天页并列任务清单和当天概览，本周按日期分组，日历把选中日安排放在月历旁；流程和备忘分成目录与正文，知识库先显示回答和来源，设置类别在桌面固定、手机横向吸顶。手机窄屏使用底部主导航和“更多”抽屉，避免把桌面侧栏压缩成一列。原有数据格式与任务、提醒、流程图片、云同步和知识库行为保持兼容。Android ARM64 APK 与 Windows 安装包按同一版本发布；OnePlus Ace 2 / Android 16 实机验收仍未完成。四尺寸设计原型、状态样例和真实应用验收边界见下方索引，功能完成情况见各轮[工作记录](docs/work-log.md)。
 
 | 文档 | 内容 |
 | --- | --- |
 | [ChatGPT 内容导入](docs/chatgpt-content-import-2026-10-12.md) | ChatGPT 网页 / 桌面端复制导入或拖入 ZIP 批量导入备忘、流程和配套图片；预览确认后保存，列明原生 MCP 写入限制 |
 | [Android APK 发布签名](docs/android-release-signing.md) | 同一 Release 附 ARM64 APK 的自动构建、稳定签名和 Android / Windows 共用 GitHub 云同步配置 |
-  | [Lumen 全局设计系统](docs/design-system/DESIGN.md) | Windows 与 Android 全界面视觉方向、颜色/排版/间距规则、覆盖范围和实测边界 |
-  | [设计交互预览](docs/design-system/design-preview.html) | 可切换主题、导航、搜索和演示任务的桌面/手机界面预览 |
-  | [界面状态检查页](docs/design-system/state-review.html) | 加载、空、错误、部分结果与成功状态的统一样式样例 |
-  | [重设计截图与检查记录](docs/design-system/evidence/report.json) | 真实渲染截图、视口、键盘焦点和响应式核对 |
+| [0.4.60 工作区重构设计合同](docs/design-system/v0.4.60/DESIGN.md) | 页面层级、设计参考、十维度审计、目标视口和未完成的实机边界 |
+| [0.4.60 交互式工作区预览](docs/design-system/v0.4.60/design-preview.html) | 可切换当天/周/日历/流程/备忘/知识库/设置与主题的示例界面，不连接用户数据 |
+| [0.4.60 内容状态预览](docs/design-system/v0.4.60/state-preview.html) | 加载、空、错误、部分、成功、权限六种交互反馈样例 |
+| [0.4.60 截图和证据记录](docs/design-system/v0.4.60/evidence/README.md) | 四个目标尺寸的原型截图、对比度计算及未验证设备边界 |
+| [0.4.59 全局视觉系统](docs/design-system/DESIGN.md) | Windows 与 Android 的色彩、排版、间距和控件样式基线 |
 | [跨平台 UI 重构设计](docs/superpowers/specs/2026-10-09-cross-platform-ui-redesign.md) | Apple、Android、Windows 官方原则映射、导航与视觉规则、可访问性和已知实机验收边界 |
 | [跨平台 UI 重构实施记录](docs/superpowers/plans/2026-10-09-cross-platform-ui-redesign.md) | 令牌、交互、Windows/Android 壳层、知识库回答样式、回归测试和发布验收 |
 | [全界面自查与可读性整改](docs/superpowers/specs/2026-10-09-ui-audit-remediation.md) | 备忘与流程分栏、全文阅读、空态与信息密度、跨视图验收标准和设备边界 |

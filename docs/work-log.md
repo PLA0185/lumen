@@ -4729,6 +4729,37 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [任务描述 Markdown 渲染](../src/components/TaskCard.tsx)
 - [0.4.58 发布说明](../RELEASE_NOTES.md)
 
+## 第 114 轮 · 2026-10-20 · 从配色改动推进到工作区结构重构
+
+### 做了
+
+- 针对上一轮“看起来只是换了配色”的反馈，按 `apple-design`、`design-system`、`frontend-design-direction`、`codebase-design` 和 `accessibility` 的要求重做核心工作区结构：今天页拆成执行清单和当日概览；本周页按真实计划日期分组并提供逐日新建；月历改为可选中日期并同时查看当天安排；流程/备忘采用目录与正文的主从层级；设置在桌面固定类别导航、手机使用横向吸顶导航；新建任务入口固定在侧栏。
+- 为结构变化调整共享样式及手机阅读顺序，修正 360px 日期条换行；保留现有数据接口与主题设置，不引入 UI 依赖。
+- 新增 0.4.60 设计方向合同、十维审计、设计令牌 JSON、桌面/手机交互预览、六类内容状态预览和逐视口截图，并把截图与真实应用验收清楚区分。更新 README、发布说明及 Windows/Android 同版版本号。
+
+### 没做到
+
+- **真实应用/设备验收未完成**：截图来自静态 HTML 原型，不是 Tauri 桌面窗口或 Android WebView；没有连接用户数据库做页面读写，也没有在 Windows 安装版、OnePlus Ace 2 / Android 16、屏幕阅读器、高对比度/减少动态系统组合上验证。本轮不声称这些已经通过。
+- `cargo test --lib` 两次都打印 `610 passed; 0 failed; 4 ignored`，但测试进程在汇总后没有自然退出；为继续门禁而中断后退出码为 1。因此不能把本地该命令记为完整成功，必须以推送后的 CI Rust 任务结果为准。
+- Windows 安装包和 Android APK 尚未发布；需要在合并后触发 v0.4.60 发布工作流并检查产物。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（421 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 和设计证据检查均通过；构建只出现既有的动态导入分块提示。
+- `cargo test --lib` 汇总为 610 项通过、4 项忽略、0 项失败，但命令进程未自行退出，具体限制见“没做到”。
+- 浏览器渲染并检查 1440×900、1280×800、390×844、360×800 视口的代表性页面和六类示例状态；检查深色知识库、键盘焦点示例及 WCAG AA 颜色对比计算。以上只证明预览页面的表现，不等于实际 Tauri/Android 验收。
+- `git diff --check` 无空白错误；已检查版本号一致性及已跟踪文件中的密钥、数据库、日志、安装包和构建目录。
+
+### 相关文档
+
+- [0.4.60 设计合同、页面结构和十维审计](design-system/v0.4.60/DESIGN.md)
+- [桌面与手机交互预览](design-system/v0.4.60/design-preview.html)
+- [加载、空、错误、部分、成功和权限状态预览](design-system/v0.4.60/state-preview.html)
+- [逐视口截图与证据边界](design-system/v0.4.60/evidence/README.md)
+- [机器可读设计令牌](design-system/v0.4.60/design-tokens.json)
+- [0.4.60 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+
 ## 第 113 轮 · 2026-10-20 · Windows 与 Android 全界面设计重构
 
 ### 做了

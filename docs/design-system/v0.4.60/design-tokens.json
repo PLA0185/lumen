@@ -1,0 +1,74 @@
+{
+  "name": "Lumen Workbench",
+  "version": "0.4.60",
+  "direction": "Calm, operational, date-aware workbench for recurring business work",
+  "color": {
+    "light": {
+      "canvas": "#f2f4f0",
+      "surface": "#fbfcf9",
+      "surfaceRaised": "#e9eeea",
+      "surfaceHover": "#e1e9e4",
+      "border": "#d3ddd7",
+      "borderStrong": "#aebfb5",
+      "text": "#1b2924",
+      "textSecondary": "#43584f",
+      "textTertiary": "#586c62",
+      "accent": "#167c68",
+      "accentText": "#ffffff",
+      "danger": "#a43d42",
+      "warning": "#8c5c08",
+      "success": "#217858",
+      "info": "#286d91"
+    },
+    "dark": {
+      "canvas": "#151a1e",
+      "surface": "#1d242a",
+      "surfaceRaised": "#252d34",
+      "surfaceHover": "#303a42",
+      "border": "#39444d",
+      "borderStrong": "#5b6973",
+      "text": "#f0f4f6",
+      "textSecondary": "#c5cfd4",
+      "textTertiary": "#aab6bc",
+      "accent": "#6ed2b4",
+      "accentText": "#102a23",
+      "danger": "#ff8987",
+      "warning": "#efbd68",
+      "success": "#6ed2a5",
+      "info": "#8bc6df"
+    }
+  },
+  "type": {
+    "family": "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    "pageTitle": { "size": "1.45–1.8rem", "weight": 720, "tracking": "-0.035em", "lineHeight": 1.12 },
+    "sectionTitle": { "size": "1.02–1.12rem", "weight": 700, "tracking": "-0.02em", "lineHeight": 1.3 },
+    "body": { "size": "1rem", "weight": 400, "lineHeight": 1.55 },
+    "metadata": { "size": "0.72–0.82rem", "weight": 500, "lineHeight": 1.45 }
+  },
+  "spacePx": [4, 8, 12, 18, 24, 32],
+  "radiusPx": { "small": 9, "control": 11, "surface": 14, "large": 18 },
+  "layout": {
+    "desktopSidebar": 232,
+    "todayInspectorMin": 250,
+    "todayInspectorMax": 294,
+    "calendarAgendaMin": 250,
+    "calendarAgendaMax": 306,
+    "settingsNavMin": 165,
+    "settingsNavMax": 205,
+    "mobileBreakpoint": 720,
+    "tabletBreakpoint": 980
+  },
+  "interaction": {
+    "quickFeedbackMs": 120,
+    "focusRing": "0 0 0 3px color-mix(in srgb, var(--c-accent) 28%, transparent)",
+    "desktopControlMinHeightPx": 40,
+    "mobileTouchTargetMinHeightPx": 48,
+    "reducedMotion": "Remove position transitions; preserve immediate state and focus feedback",
+    "reducedTransparency": "Use opaque structural surfaces and disable backdrop blur"
+  },
+  "surfacePolicy": {
+    "navigationAndToolbar": "Optional structural translucency",
+    "taskAndDocumentContent": "Opaque readable surfaces",
+    "nestedGlass": "Not used"
+  }
+}

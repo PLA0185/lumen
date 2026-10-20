@@ -1,0 +1,39 @@
+{
+  "contract": "../DESIGN.md — Lumen 0.4.60 contract for Windows workspaces and Android reading order. This evidence records HTML design prototypes separately from the live Tauri app.",
+  "targetViewports": ["1440x900", "1280x800", "390x844", "360x800"],
+  "accessibility": {
+    "status": "pass",
+    "evidence": "Prototype review confirmed visible keyboard focus in settings-focus-preview-511x608.jpg, named actions and heading/section structure in the accessibility tree. WCAG relative-luminance calculations from design-tokens.json: light text/surface ratios 13.66:1, 6.91:1, 5.08:1 and primary button 5.10:1; dark ratios 15.83:1, 11.06:1, 8.45:1 and primary button 8.38:1. Android calendar, settings categories, top actions, knowledge submit and memo actions use 48px minimum height in product CSS. Real device, screen-reader and OS accessibility combinations remain unverified."
+  },
+  "responsive": {
+    "status": "pass",
+    "evidence": "Inspected the interactive HTML prototype at all four target viewport overrides. Desktop today/weekly/calendar use distinct task, date and inspector layouts; mobile reorders the today overview, stacks calendar agenda after the month, makes settings categories sticky and horizontal, and opens secondary navigation as a drawer. The 360px date row was corrected to keep dates on one line. These observations apply to the design preview only; Windows/Tauri and Android WebView rendering remain unverified."
+  },
+  "contentStates": {
+    "loading": {"status": "pass", "evidence": "state-preview.html shows a stable work-area skeleton with aria-busy and a polite loading status; it is a visual contract example, not a live database request."},
+    "empty": {"status": "pass", "evidence": "state-preview.html distinguishes an empty day and date-aware create action; the demo action only reports that it would not write Lumen data."},
+    "error": {"status": "pass", "evidence": "state-preview.html presents a specific recoverable error and a retry affordance; the demo retry does not contact Tauri IPC."},
+    "partial": {"status": "pass", "evidence": "state-preview.html identifies loaded/total counts, exposes a labeled progress bar and a sample continue action; no real pagination is performed."},
+    "success": {"status": "pass", "evidence": "state-preview.html uses a text status and task summary to demonstrate saved feedback without claiming a database write."},
+    "permission": {"status": "pass", "evidence": "state-preview.html explains that web completion is not configured and shows the settings next step; the demo action does not navigate or change settings."}
+  },
+  "renderedEvidence": [
+    {"viewport": "1440x900", "artifact": "today-prototype-1440x900.jpg", "observation": "HTML design prototype: desktop daily execution list with a separate overview panel."},
+    {"viewport": "1440x900", "artifact": "week-prototype-1440x900.jpg", "observation": "HTML design prototype: weekly work grouped by plan date, with per-day creation actions."},
+    {"viewport": "1280x800", "artifact": "today-prototype-1280x800.jpg", "observation": "HTML design prototype: compact desktop daily work area remains two-column without toolbar overflow."},
+    {"viewport": "1280x800", "artifact": "calendar-prototype-1280x800.jpg", "observation": "HTML design prototype: month grid and selected-day agenda are visible side by side."},
+    {"viewport": "1280x800", "artifact": "flows-prototype-1280x800.jpg", "observation": "HTML design prototype: flow directory and procedure reading pane have separate hierarchy."},
+    {"viewport": "1280x800", "artifact": "memos-prototype-1280x800.jpg", "observation": "HTML design prototype: memo directory and full reading pane remain distinct."},
+    {"viewport": "1280x800", "artifact": "settings-prototype-1280x800.jpg", "observation": "HTML design prototype: fixed settings categories and selected content are side by side."},
+    {"viewport": "390x844", "artifact": "today-prototype-390x844.jpg", "observation": "HTML design prototype: mobile date strip and task list precede the overview."},
+    {"viewport": "390x844", "artifact": "calendar-prototype-390x844.jpg", "observation": "HTML design prototype: month grid flows into the selected-day agenda."},
+    {"viewport": "390x844", "artifact": "knowledge-prototype-390x844.jpg", "observation": "HTML design prototype: question, cited answer and source scope stack for mobile."},
+    {"viewport": "390x844", "artifact": "settings-prototype-390x844.jpg", "observation": "HTML design prototype: settings categories stay horizontally scrollable above content."},
+    {"viewport": "390x844", "artifact": "mobile-navigation-prototype-390x844.jpg", "observation": "HTML design prototype: secondary destinations appear in a labeled drawer."},
+    {"viewport": "390x844", "artifact": "knowledge-dark-prototype-390x844.jpg", "observation": "HTML design prototype: dark theme maintains readable question, answer and scope sections."},
+    {"viewport": "360x800", "artifact": "today-prototype-360x800.jpg", "observation": "HTML design prototype: narrow mobile dates remain on one line after a width-specific correction."},
+    {"viewport": "1280x1000", "artifact": "states-prototype-1280x1000.jpg", "observation": "HTML design prototype: all six loading, empty, error, partial, success and permission states are visible together."},
+    {"viewport": "375x812", "artifact": "states-prototype-390x844.jpg", "observation": "Browser viewport was requested at 390x844; the captured content area is 375x812 with the vertical scrollbar. State examples are labeled as design samples."},
+    {"viewport": "511x608", "artifact": "settings-focus-preview-511x608.jpg", "observation": "HTML design prototype: after Tab navigation the focused category shows a visible outline."}
+  ]
+}
