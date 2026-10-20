@@ -1,0 +1,29 @@
+{
+  "contract": "Lumen full visual-system redesign rendered in a local browser preview; screenshots show the actual shared CSS applied to representative task, navigation, toolbar, calendar and state surfaces.",
+  "targetViewports": ["1440x900", "390x844"],
+  "accessibility": {
+    "status": "pass",
+    "evidence": "At 390x844, keyboard Tab navigation visibly focused the Sync action with a two-pixel mint focus ring. Buttons retain names, selected navigation uses shape and text as well as color, and primary mobile targets are 48px high. Reduced-motion, reduced-transparency and high-contrast CSS preferences are present; Windows assistive-technology combinations were not device-tested."
+  },
+  "responsive": {
+    "status": "pass",
+    "evidence": "Rendered at 1440x900, 1024x768 and 390x844. The desktop toolbar stays in one row, the tablet groups controls, and the phone switches to a touch layout with bottom navigation; document width matched viewport width at all three sizes."
+  },
+  "contentStates": {
+    "loading": {"status": "pass", "evidence": "states-dark.png shows a readable loading skeleton with a heading and text rows."},
+    "empty": {"status": "pass", "evidence": "states-dark.png shows a titled empty state with an actionable create button."},
+    "error": {"status": "pass", "evidence": "states-dark.png shows an error explanation and a retry action without crushing the text."},
+    "partial": {"status": "pass", "evidence": "states-dark.png shows partial evidence as a distinct warning card while preserving readable content."},
+    "success": {"status": "pass", "evidence": "states-dark.png shows saved status and the resulting record together."},
+    "permission": {"status": "not-applicable", "reason": "The preview contains no browser permission flow. File selection is delegated to the operating system and no new runtime permission was added."}
+  },
+  "renderedEvidence": [
+    {"viewport": "1440x900", "artifact": "desktop-dark.png", "observation": "Dark desktop: title, single-row action toolbar, date strip, task cards and navigation hierarchy."},
+    {"viewport": "1440x900", "artifact": "desktop-light.png", "observation": "Light desktop: same hierarchy with paper-gray surfaces, readable text and mint emphasis."},
+    {"viewport": "1024x768", "artifact": "tablet-dark.png", "observation": "Tablet width: controls wrap as groups without horizontal overflow."},
+    {"viewport": "390x844", "artifact": "mobile-dark.png", "observation": "Dark phone layout with touch-sized actions, one-line dates and bottom navigation."},
+    {"viewport": "390x844", "artifact": "mobile-light.png", "observation": "Light phone layout with the same content hierarchy and touch navigation."},
+    {"viewport": "390x844", "artifact": "mobile-focus.png", "observation": "Phone keyboard navigation with a visible focus ring on the Sync action."},
+    {"viewport": "1440x900", "artifact": "states-dark.png", "observation": "Loading, empty, error, partial and success examples under the shared dark theme."}
+  ]
+}

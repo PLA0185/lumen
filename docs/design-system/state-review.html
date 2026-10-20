@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Lumen · 内容状态样式检查</title>
+    <link rel="stylesheet" href="../../src/styles.css" />
+    <link rel="stylesheet" href="../../src/nutrition.css" />
+    <link rel="stylesheet" href="../../src/platform.css" />
+    <link rel="stylesheet" href="../../src/design-system.css?v=3" />
+    <style>
+      body { min-width: 360px; }
+      .app--windows { display: block; min-height: 100vh; }
+      .state-review { max-width: 1240px; margin: 0 auto; }
+      .state-review__intro { margin: 0 0 18px; color: var(--c-text-2); }
+      .state-review__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      .state-review__card { min-width: 0; padding: 16px; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 14px; box-shadow: var(--shadow-sm); }
+      .state-review__card h2 { margin: 0 0 12px; font-size: 1rem; }
+      .state-review__card .state { min-height: 210px; padding: 18px; background: var(--c-surface-2); border-radius: 10px; }
+      .state-review__skeleton { display: grid; gap: 9px; }
+      .state-review__skeleton .skeleton { height: 14px; }
+      .state-review__skeleton .skeleton:first-child { width: 58%; height: 22px; }
+      .state-review__skeleton .skeleton:last-child { width: 76%; }
+      .state-review__partial { padding: 14px 16px; background: var(--c-surface-2); border-left: 3px solid var(--c-warn); border-radius: 10px; line-height: 1.65; }
+      .state-review__success { margin-top: 12px; }
+      .state-review__note { margin: 18px 0 0; color: var(--c-text-2); font-size: .85em; }
+      @media (max-width: 720px) { .state-review__grid { grid-template-columns: minmax(0, 1fr); } }
+    </style>
+  </head>
+  <body>
+    <div class="app app--windows">
+      <div class="main">
+        <header class="topbar">
+          <div class="topbar__heading">
+            <h1 class="topbar__title">内容状态检查</h1>
+            <p class="topbar__subtitle">空内容、加载、错误、部分结果和成功反馈保持同一套层级。</p>
+          </div>
+        </header>
+        <main class="content">
+          <div class="state-review">
+            <p class="state-review__intro">下面是静态样式展示，只用于检查状态组件；不连接数据，也不代表后台任务正在运行。</p>
+            <div class="state-review__grid">
+              <section class="state-review__card" aria-labelledby="loading-title">
+                <h2 id="loading-title">加载中</h2>
+                <div class="state-review__skeleton" role="status" aria-label="正在载入任务">
+                  <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+                </div>
+              </section>
+              <section class="state-review__card" aria-labelledby="empty-title">
+                <h2 id="empty-title">空内容</h2>
+                <div class="state">
+                  <div class="state__inner">
+                    <div class="state__icon" aria-hidden="true">＋</div>
+                    <div class="state__title">这里还没有记录</div>
+                    <p class="state__text">创建第一条备忘或业务流程，整理时可以保留来源图片。</p>
+                    <div class="state__actions"><button class="btn btn--primary" type="button">新建记录</button></div>
+                  </div>
+                </div>
+              </section>
+              <section class="state-review__card" aria-labelledby="error-title">
+                <h2 id="error-title">读取错误</h2>
+                <div class="alert alert--error" role="alert">
+                  <strong>暂时无法读取本机资料</strong>
+                  <p>现有内容没有被更改。请检查连接后重试。</p>
+                  <button class="btn btn--ghost btn--sm" type="button">重试</button>
+                </div>
+              </section>
+              <section class="state-review__card" aria-labelledby="partial-title">
+                <h2 id="partial-title">部分结果</h2>
+                <div class="state-review__partial">
+                  <strong>找到相关内容，但步骤还不完整</strong>
+                  <p>资料中提到“发货检查”，没有说明异常时的处理步骤。查看引用来源或补充资料后再确认。</p>
+                </div>
+              </section>
+              <section class="state-review__card" aria-labelledby="success-title">
+                <h2 id="success-title">操作成功</h2>
+                <div class="alert alert--ok" role="status">备忘已保存到本机。图片和附件仍保留在记录中。</div>
+                <div class="toast toast--success state-review__success" role="status">
+                  <span class="toast__icon" aria-hidden="true">✓</span>
+                  <span>已保存；可以继续编辑。</span>
+                </div>
+              </section>
+            </div>
+            <p class="state-review__note">当前设计没有需要用户授予的应用内权限流程。系统文件选择由用户主动点击打开，权限对话框由操作系统负责展示。</p>
+          </div>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

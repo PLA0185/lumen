@@ -4712,7 +4712,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 尚未在用户的 Windows 窗口实机确认日期格按钮的视觉效果。
 - 尚未在 OnePlus Ace 2 / Android 16 实机安装验证；本机没有连接用户手机。
 - 本地全量 `cargo test --lib` 汇总 610 项通过、4 项忽略、0 项失败，但 Windows 进程在汇总后没有退出，手动中断后退出码为 1；仍须以 PR GitHub CI 的完整结果作为最终确认。
-- GitHub CI、0.4.58 Windows 安装包与 Android APK 尚未生成。
+- PR #33 合并后 main CI run [39360741270](https://github.com/PLA0185/lumen/actions/runs/39360741270) 已通过。远端已有 v0.4.58 标签，但 GitHub Release 查询返回 404，因此该版本没有可确认的 Windows 安装包或 Android APK；本轮的 0.4.59 版本会包含这批日历改动。
 
 ### 怎么验证的
 
@@ -4720,6 +4720,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 通过。
 - Rust 定向用例 `commands_e2e::calendar_range_includes_period_tasks_in_their_active_window` 通过；全量 Rust 测试汇总及退出异常见「没做到」。
 - `git diff --check` 无空白错误。
+- 用 `git ls-remote` 确认 v0.4.58 标签指向 f9f8749；GitHub Release API 对该 tag 返回 404，未把 tag 误记成已发布安装包。
 
 ### 相关文档
 
@@ -4727,3 +4728,38 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [周期任务日历规则](../src/lib/calendar-task-buckets.ts)
 - [任务描述 Markdown 渲染](../src/components/TaskCard.tsx)
 - [0.4.58 发布说明](../RELEASE_NOTES.md)
+
+## 第 113 轮 · 2026-10-20 · Windows 与 Android 全界面设计重构
+
+### 做了
+
+- 按 `apple-design` 的减少杂乱、清晰层级和克制动效原则，结合设计系统、前端设计方向、无障碍和代码库设计技能，建立 `Quiet Signal` 全局视觉系统。
+- 重做共享颜色、文字层级、间距、圆角、阴影、输入/按钮状态与焦点规则；覆盖侧栏和底部导航、页面标题与工具栏、日期条、任务/子任务卡、日历和看板、设置、知识库、备忘/流程、饮食、表单、弹窗和消息反馈。桌面常用操作集中为单行工具栏，窄屏按组排布并切换触控布局。
+- 保留深浅主题、跟随系统、字号/缩放和业务功能；加入高对比度、减少透明度、减少动态效果规则，手机主要操作目标至少 48px。
+- 新增可交互桌面/手机预览、内容状态检查页和真实浏览器截图；README 文档索引和 v0.4.59 发布说明已更新。
+- 应用版本升至 0.4.59，准备 Windows 与 Android ARM64 同版发布。
+
+### 没做到
+
+- 未在 Windows 安装版和 OnePlus Ace 2 / Android 16 实机安装验收；手机目前无法连接。本轮浏览器截图验证的是共享样式及代表性页面，不是实机 WebView 或桌面系统辅助功能组合。
+- 设计预览的搜索、创建和完成操作修改的是页面演示数据，没有调用 Tauri 数据库；本轮没有验证真实任务写入或所有页面业务流程。
+- v0.4.59 的 PR、CI、Windows 安装包与 Android APK 尚未生成；发布结果将在后续工作记录核对。v0.4.58 标签存在但没有 GitHub Release，详见第 112 轮修订记录。
+
+### 怎么验证的
+
+- 浏览器实际渲染并检查 1440×900 桌面、1024×768 平板、390×844 手机；桌面工具栏、手机触控布局和底部导航均未出现横向溢出。查看了深色/浅色截图和手机键盘焦点环；手机日期保持单行，主要控件触控高度为 48px。
+- `pnpm build`、`pnpm lint`、`pnpm check:version`、设计证据 `check-evidence.js` 和 `git diff --check` 通过。构建有既存动态导入分块提示。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（421 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 和证据报告校验均通过。
+- `cargo test --lib` 输出 610 项通过、4 项忽略、0 项失败；Windows 进程在结果汇总后仍未退出，手动中断后退出码为 1，因此以 PR GitHub CI 的完整 Rust 门禁作为最终确认。
+- `git diff --check` 无空白错误。PR CI 仍是发布前必须通过的仓库门禁。
+- 视觉评分是源码和截图审阅，不是可用性用户研究。高对比度、减少透明度和减少动态效果规则已加入样式，但系统辅助功能实机组合未验证。
+
+### 相关文档
+
+- [全局设计系统与范围](design-system/DESIGN.md)
+- [可交互桌面/手机预览](design-system/design-preview.html)
+- [内容状态检查页](design-system/state-review.html)
+- [截图与响应式/无障碍核对](design-system/evidence/report.json)
+- [设计令牌](design-system/design-tokens.json)
+- [0.4.59 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
