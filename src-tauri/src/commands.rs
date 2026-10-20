@@ -1777,9 +1777,8 @@ pub async fn today_overview(
 /// 日历视图：查询落在指定时间范围内的任务。
 ///
 /// 与 `task_list` 的区别在于**归属判定规则**（§4.2 要求界面明确说明规则）：
-/// 日历把任务显示到"它所属的那一天"，因此用 COALESCE(planned_at, due_at)
-/// 作为落点；没有计划时间也没有截止时间的任务不会出现在日历中
-/// （它们只属于列表视图）。
+/// 有明确计划或截止时间的普通任务显示在对应日期。周/月/季度/年跨度任务
+/// 按锚点日期所属自然周期逐日显示；完成当天保留，从次日起隐藏。
 ///
 /// 前端按本地时区算出范围边界后传入 UTC，后端不做任何本地时区假设。
 const CALENDAR_MAX_ROWS: i64 = 1000;
@@ -1798,18 +1797,56 @@ pub async fn tasks_in_range(
     start_utc: String,
     end_utc: String,
 ) -> AppResult<CalendarPage> {
-    let db = &state.db;
-    let start = validate_time("范围起点", &start_utc)?;
-    let end = validate_time("范围终点", &end_utc)?;
+    tasks_in_range_impl(&state.db, &start_utc, &end_utc).await
+}
+
+pub async fn tasks_in_range_impl(
+    db: &Db,
+    start_utc: &str,
+    end_utc: &str,
+) -> AppResult<CalendarPage> {
+    let start = validate_time("范围起点", start_utc)?;
+    let end = validate_time("范围终点", end_utc)?;
     if end <= start {
         return Err(AppError::validation("时间范围的终点必须晚于起点"));
     }
 
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM tasks WHERE deleted_at IS NULL AND status <> 'archived'
-           AND COALESCE(planned_at, due_at) IS NOT NULL
-           AND COALESCE(planned_at, due_at) >= ?1
-           AND COALESCE(planned_at, due_at) < ?2",
+           AND (
+             (COALESCE(planned_at, due_at) IS NOT NULL
+              AND COALESCE(planned_at, due_at) >= ?1
+              AND COALESCE(planned_at, due_at) < ?2)
+             OR
+             (period_type = 'week'
+              AND date(COALESCE(planned_at, due_at, created_at),
+                       printf('-%d days', (CAST(strftime('%w', COALESCE(planned_at, due_at, created_at)) AS INTEGER) + 6) % 7)) < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at),
+                       printf('-%d days', (CAST(strftime('%w', COALESCE(planned_at, due_at, created_at)) AS INTEGER) + 6) % 7), '+7 days') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'month'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of month') < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of month', '+1 month') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'quarter'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year',
+                       printf('+%d months', ((CAST(strftime('%m', COALESCE(planned_at, due_at, created_at)) AS INTEGER) - 1) / 3) * 3)) < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year',
+                       printf('+%d months', ((CAST(strftime('%m', COALESCE(planned_at, due_at, created_at)) AS INTEGER) - 1) / 3) * 3), '+3 months') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'year'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year') < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year', '+1 year') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type IN ('week', 'month', 'quarter', 'year')
+              AND status = 'done'
+              AND COALESCE(completed_at, updated_at) >= ?1
+              AND COALESCE(completed_at, updated_at) < ?2)
+           )",
     )
     .bind(&start)
     .bind(&end)
@@ -1821,9 +1858,40 @@ pub async fn tasks_in_range(
         "SELECT * FROM tasks
          WHERE deleted_at IS NULL
            AND status <> 'archived'
-           AND COALESCE(planned_at, due_at) IS NOT NULL
-           AND COALESCE(planned_at, due_at) >= ?1
-           AND COALESCE(planned_at, due_at) < ?2
+           AND (
+             (COALESCE(planned_at, due_at) IS NOT NULL
+              AND COALESCE(planned_at, due_at) >= ?1
+              AND COALESCE(planned_at, due_at) < ?2)
+             OR
+             (period_type = 'week'
+              AND date(COALESCE(planned_at, due_at, created_at),
+                       printf('-%d days', (CAST(strftime('%w', COALESCE(planned_at, due_at, created_at)) AS INTEGER) + 6) % 7)) < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at),
+                       printf('-%d days', (CAST(strftime('%w', COALESCE(planned_at, due_at, created_at)) AS INTEGER) + 6) % 7), '+7 days') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'month'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of month') < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of month', '+1 month') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'quarter'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year',
+                       printf('+%d months', ((CAST(strftime('%m', COALESCE(planned_at, due_at, created_at)) AS INTEGER) - 1) / 3) * 3)) < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year',
+                       printf('+%d months', ((CAST(strftime('%m', COALESCE(planned_at, due_at, created_at)) AS INTEGER) - 1) / 3) * 3), '+3 months') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type = 'year'
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year') < date(?2, '+1 day')
+              AND date(COALESCE(planned_at, due_at, created_at), 'start of year', '+1 year') > date(?1, '-1 day')
+              AND (status <> 'done' OR COALESCE(completed_at, updated_at) >= ?1))
+             OR
+             (period_type IN ('week', 'month', 'quarter', 'year')
+              AND status = 'done'
+              AND COALESCE(completed_at, updated_at) >= ?1
+              AND COALESCE(completed_at, updated_at) < ?2)
+           )
          ORDER BY COALESCE(planned_at, due_at) ASC, priority DESC, created_at ASC
          LIMIT ?3",
     )

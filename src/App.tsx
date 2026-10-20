@@ -776,6 +776,11 @@ export default function App() {
             onNew={() => setShowQuickAdd(true)}
             onNewTask={(context) => { setCreationContext(context); setShowQuickAdd(true) }}
             onCalendarDate={setCalendarDate}
+            onCreateCalendarTask={(date) => {
+              setCreationContext(undefined)
+              setCalendarDate(date)
+              setShowQuickAdd(true)
+            }}
             onGoSettings={() => setView('settings')}
             totalCount={totalCount}
             hasMore={hasMore}
@@ -925,6 +930,7 @@ interface TaskAreaProps {
   onNew: () => void
   onNewTask: (context: TaskCreationContext) => void
   onCalendarDate: (date: string) => void
+  onCreateCalendarTask: (date: string) => void
   onGoSettings: () => void
   /** 当前条件下的总条数（后端 count），用于回答"还有多少没加载" */
   totalCount: number
@@ -957,6 +963,7 @@ function TaskArea({
   onNew,
   onNewTask,
   onCalendarDate,
+  onCreateCalendarTask,
   onGoSettings,
   totalCount,
   hasMore,
@@ -980,7 +987,7 @@ function TaskArea({
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）
   if (view === 'calendar') {
-    return <CalendarView onDateChange={onCalendarDate} />
+    return <CalendarView onDateChange={onCalendarDate} onCreateTask={onCreateCalendarTask} />
   }
 
   // 看板视图（按状态分列 + 拖拽改状态）

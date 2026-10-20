@@ -4697,3 +4697,33 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [任务子任务搜索验证](../src-tauri/src/commands_e2e.rs)
 - [PR #31](https://github.com/PLA0185/lumen/pull/31)
 - [v0.4.57 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.57)
+
+## 第 112 轮 · 2026-10-20 · 日历按日新建、周期任务逐日显示与描述格式
+
+### 做了
+
+- 日历日、周、月视图的每个日期格新增「+」按钮，可在指定日期直接新建任务；打开快速添加时会带入所选日期。
+- 周、月、季度、年跨度任务按计划日期、截止日期或创建日期所属的自然周期逐日显示。完成当天仍显示已完成状态，之后隐藏；普通指定日期任务仍只显示在其日期。
+- 折叠任务卡片的描述改为 Markdown 渲染，标题、加粗和列表不再显示原始标记；更新了表单和日历说明。
+- 版本更新为 0.4.58，注明 Windows 与 Android ARM64 APK 同版发布。
+
+### 没做到
+
+- 尚未在用户的 Windows 窗口实机确认日期格按钮的视觉效果。
+- 尚未在 OnePlus Ace 2 / Android 16 实机安装验证；本机没有连接用户手机。
+- 本地全量 `cargo test --lib` 汇总 610 项通过、4 项忽略、0 项失败，但 Windows 进程在汇总后没有退出，手动中断后退出码为 1；仍须以 PR GitHub CI 的完整结果作为最终确认。
+- GitHub CI、0.4.58 Windows 安装包与 Android APK 尚未生成。
+
+### 怎么验证的
+
+- 前端全量 421 项通过；定向用例覆盖逐日新建、周/月/季度/年边界、创建日、完成日及 Markdown 标题与加粗。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- Rust 定向用例 `commands_e2e::calendar_range_includes_period_tasks_in_their_active_window` 通过；全量 Rust 测试汇总及退出异常见「没做到」。
+- `git diff --check` 无空白错误。
+
+### 相关文档
+
+- [日历视图与周期任务分桶](../src/components/CalendarView.tsx)
+- [周期任务日历规则](../src/lib/calendar-task-buckets.ts)
+- [任务描述 Markdown 渲染](../src/components/TaskCard.tsx)
+- [0.4.58 发布说明](../RELEASE_NOTES.md)

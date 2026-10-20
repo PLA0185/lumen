@@ -17,8 +17,8 @@
 
 use crate::commands::{
     create_task_impl, create_task_with_subtasks_impl, duplicate_task_impl, list_tasks_impl,
-    reorder_task_impl, save_task_impl, task_toggle_done_impl, update_task_impl, AppState,
-    ReorderInput,
+    reorder_task_impl, save_task_impl, task_toggle_done_impl, tasks_in_range_impl,
+    update_task_impl, AppState, ReorderInput,
 };
 use crate::db::Db;
 use crate::models::{CreateTaskInput, TaskQuery, UpdateTaskInput};
@@ -543,6 +543,88 @@ fn task(title: &str) -> CreateTaskInput {
         period_type: None,
         tag_ids: vec![],
     }
+}
+
+#[tokio::test]
+async fn calendar_range_includes_period_tasks_in_their_active_window() {
+    let (state, dir) = setup("calendar-period-tasks").await;
+    let db = &state.db;
+
+    let open = create_task_impl(
+        db,
+        CreateTaskInput {
+            period_type: Some("week".into()),
+            ..task("未完成周任务")
+        },
+    )
+    .await
+    .unwrap();
+    let completed = create_task_impl(
+        db,
+        CreateTaskInput {
+            period_type: Some("month".into()),
+            ..task("本月已完成任务")
+        },
+    )
+    .await
+    .unwrap();
+    let completed_before_range = create_task_impl(
+        db,
+        CreateTaskInput {
+            period_type: Some("year".into()),
+            ..task("较早完成任务")
+        },
+    )
+    .await
+    .unwrap();
+    let scheduled = create_task_impl(
+        db,
+        CreateTaskInput {
+            planned_at: Some("2026-10-21T09:00:00.000Z".into()),
+            period_type: Some("year".into()),
+            ..task("有明确日期的年任务")
+        },
+    )
+    .await
+    .unwrap();
+
+    for id in [&open.id, &completed.id, &completed_before_range.id] {
+        sqlx::query("UPDATE tasks SET created_at='2026-10-19T00:00:00.000Z', updated_at='2026-10-19T00:00:00.000Z' WHERE id=?1")
+            .bind(id)
+            .execute(db.pool())
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE tasks SET created_at='2026-10-01T00:00:00.000Z' WHERE id=?1")
+        .bind(&completed_before_range.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET status='done', completed_at='2026-10-21T12:00:00.000Z', updated_at='2026-10-21T12:00:00.000Z' WHERE id=?1")
+        .bind(&completed.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET status='done', completed_at='2026-10-18T12:00:00.000Z', updated_at='2026-10-18T12:00:00.000Z' WHERE id=?1")
+        .bind(&completed_before_range.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let page = tasks_in_range_impl(db, "2026-10-19T00:00:00.000Z", "2026-10-23T00:00:00.000Z")
+        .await
+        .unwrap();
+    let ids: std::collections::HashSet<&str> =
+        page.rows.iter().map(|row| row.id.as_str()).collect();
+
+    assert_eq!(page.total, 3);
+    assert!(ids.contains(open.id.as_str()));
+    assert!(ids.contains(completed.id.as_str()));
+    assert!(ids.contains(scheduled.id.as_str()));
+    assert!(!ids.contains(completed_before_range.id.as_str()));
+
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// 直接插一个组织项（项目 / 分类 / 标签），返回 id

@@ -855,6 +855,39 @@ select {
   overflow: hidden;
 }
 
+.task__desc.mdpreview {
+  display: block;
+  max-height: 3em;
+  padding: 0;
+  margin-top: 4px;
+  overflow: hidden;
+  line-height: 1.4;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.task__desc.mdpreview > :first-child,
+.task__desc.mdpreview > :last-child {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.task__desc.mdpreview h1,
+.task__desc.mdpreview h2,
+.task__desc.mdpreview h3 {
+  margin: 0;
+  font-size: 1em;
+  line-height: inherit;
+}
+
+.task__desc.mdpreview p,
+.task__desc.mdpreview ul,
+.task__desc.mdpreview ol,
+.task__desc.mdpreview blockquote {
+  margin: 0;
+}
+
 .task__actions {
   display: flex;
   flex: none;
@@ -2357,6 +2390,29 @@ input[type='number'].input--compact {
   margin-bottom: 4px;
 }
 
+.calcell__add {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  margin-left: auto;
+  color: var(--c-text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.calcell__add:hover,
+.calcell__add:focus-visible {
+  color: var(--c-accent-text);
+  background: var(--c-accent-soft);
+  border-color: var(--c-accent);
+}
+
 .calcell__day {
   font-size: 0.9em;
   font-weight: 650;
@@ -2373,7 +2429,7 @@ input[type='number'].input--compact {
 }
 
 .calcell__count {
-  margin-left: auto;
+  margin-left: 0;
   padding: 0 5px;
   font-size: 0.72em;
   color: var(--c-text-3);
