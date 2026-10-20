@@ -258,14 +258,19 @@ export function KnowledgeBase({ onOpenFlow }: { onOpenFlow: (flowId: string, ste
 
   return <section className="knowledge-base" aria-label="知识库">
     <div className="knowledge-base__intro">
+      <div className="knowledge-base__intro-copy">
+        <span>本机资料</span>
+        <strong>文件与已保存流程都可检索</strong>
+        <small>流程会自动纳入问答，不需要重复导入。</small>
+      </div>
       <button type="button" className="btn btn--primary" disabled={importing} onClick={() => fileInput.current?.click()}><Icon name="plus" size={15} /> 添加资料</button>
       <input ref={fileInput} type="file" multiple disabled={importing} onChange={event => void importSelected(event.currentTarget.files)} aria-label="选择知识库资料" />
     </div>
     <details className="knowledge-base__privacy"><summary>云同步与 AI 隐私说明</summary><p>资料原件和解析正文先保存在本机；连接云同步并选择“全部业务数据”后，二者会加密同步到其他电脑，检索索引由各电脑本机重建。已保存流程按“备忘与流程”范围同步并自动纳入检索。提问时，当前问题、最近必要对话和少量相关摘录会发送给设置中的 AI 服务商；本机文件和流程没有匹配内容，或回答判断本机来源没有覆盖问题要点时，只有配置了联网搜索才会把问题和检索词发送给 DeepSeek 或 Tavily，网页摘录会作为单独标注的来源展示。导入图片或扫描页时，也会逐张发送给已配置的多模态 AI 识别，失败后改用本机 PaddleOCR，不会上传整份文件。</p></details>
     <div className="knowledge-base__grid">
-      <section className="knowledge-panel" aria-label="资料库">
-        <header><h3>已加入的文件资料</h3><span>{sources.length} 项</span></header>
-        <p className="knowledge-panel__scope-note">问答范围还包含已保存的业务流程，无需在这里重复导入；仅下面的文件数量不统计流程。</p>
+      <section className="knowledge-panel knowledge-panel--library" aria-label="资料库">
+        <header><div><span className="knowledge-panel__eyebrow">资料目录</span><h3>已加入的文件资料</h3></div><span className="knowledge-panel__count">{sources.length} 项</span></header>
+        <p className="knowledge-panel__scope-note">这里管理导入文件；回答还会检索已保存的业务流程。流程不计入下方文件数量。</p>
         {loading && <p role="status">正在读取资料列表…</p>}
         {listError && <div className="alert alert--error" role="alert">{listError}<button type="button" className="btn btn--ghost btn--sm" onClick={() => void reload()}>重试</button></div>}
         {!loading && !listError && sources.length === 0 && <p className="knowledge-empty">当前没有导入文件。可添加 PDF、DOCX、XLSX/XLS、PNG/JPEG/WEBP/GIF、Markdown、CSV、JSON、HTML、XML、log 或文本文件；已保存的业务流程仍可直接检索。</p>}
