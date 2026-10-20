@@ -475,78 +475,50 @@ export function MemosView({
   return (
     <section className={`memos${fullCanvas ? ' memos--canvas' : ''}`}>
       <FitToolbar>
+        <div className="memos__toolbar-group memos__toolbar-group--primary" role="group" aria-label="新建资料">
+          {kindFilter !== 'flow' && <button className="btn btn--primary" disabled={busy || trash} onClick={() => create('memo')}><Icon name="plus" size={15} /> 新建备忘</button>}
+          {kindFilter !== 'memo' && <button className="btn btn--primary" disabled={busy || trash} onClick={() => create('flow')}><Icon name="plus" size={15} /> 新建流程</button>}
+          {kindFilter !== 'memo' && <button className="btn btn--ghost" disabled={busy || autoSaving || trash} onClick={() => {
+            if (!canLeave()) return
+            if (dirty) {
+              setDraft(selected ? draftOf(selected) : null)
+              setEditing(false)
+              setAiDraft(false)
+              setError(null)
+              setNotice(null)
+            }
+            setAiOpen(true)
+          }}>AI 生成流程</button>}
+        </div>
         {documentActions}
         {draft?.kind === 'flow' && flowView === 'canvas' && <button className="btn btn--ghost" aria-pressed={showList} onClick={() => setShowList(!showList)}>{showList ? '收起记录列表' : '显示记录列表'}</button>}
-        <button className="btn btn--ghost" disabled={busy || autoSaving || trash} onClick={() => {
-          if (!canLeave()) return
-          if (dirty) {
-            setDraft(selected ? draftOf(selected) : null)
-            setEditing(false)
-            setAiDraft(false)
-          }
-          setChatGPTImportOpen(true)
-        }}>ChatGPT 导入</button>
-        <button className="btn btn--ghost" title="导入会新建一条记录，不会覆盖现有备忘或流程" disabled={busy || autoSaving || trash} onClick={() => void importRecordPackage()}>导入记录包</button>
-        {kindFilter !== 'flow' && <button
-          className="btn btn--primary"
-          disabled={busy || trash}
-          onClick={() => create('memo')}
-        >
-          <Icon name="plus" size={15} />
-          新建备忘
-        </button>}
-        {kindFilter !== 'memo' && <button
-          className="btn btn--primary"
-          disabled={busy || trash}
-          onClick={() => create('flow')}
-        >
-          <Icon name="plus" size={15} />
-          新建流程
-        </button>}
-        {kindFilter !== 'memo' && <button className="btn btn--primary" disabled={busy || autoSaving || trash} onClick={() => {
-          if (!canLeave()) return
-          if (dirty) {
-            setDraft(selected ? draftOf(selected) : null)
-            setEditing(false)
-            setAiDraft(false)
-            setError(null)
-            setNotice(null)
-          }
-          setAiOpen(true)
-        }}>AI 生成流程</button>}
-        {categories.length > 0 && <select
-          className="input input--compact"
-          aria-label={`${kindLabel}分类筛选`}
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-        >
-          <option value="">全部分类</option>
-          {categories.map((c) => (
-            <option key={c}>{c}</option>
-          ))}
-        </select>}
-        <button
-          className="btn btn--ghost"
-          aria-pressed={trash}
-          disabled={busy}
-          onClick={() => {
+        <div className="memos__toolbar-group" role="group" aria-label="导入资料">
+          <button className="btn btn--ghost" disabled={busy || autoSaving || trash} onClick={() => {
+            if (!canLeave()) return
+            if (dirty) {
+              setDraft(selected ? draftOf(selected) : null)
+              setEditing(false)
+              setAiDraft(false)
+            }
+            setChatGPTImportOpen(true)
+          }}>ChatGPT 导入</button>
+          <button className="btn btn--ghost" title="导入会新建一条记录，不会覆盖现有备忘或流程" disabled={busy || autoSaving || trash} onClick={() => void importRecordPackage()}>导入记录包</button>
+        </div>
+        <div className="memos__toolbar-group" role="group" aria-label="资料筛选与管理">
+          {categories.length > 0 && <select className="input input--compact" aria-label={`${kindLabel}分类筛选`} value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="">全部分类</option>
+            {categories.map((c) => <option key={c}>{c}</option>)}
+          </select>}
+          <button className="btn btn--ghost" aria-pressed={trash} disabled={busy} onClick={() => {
             if (!canLeave()) return
             setTrash(!trash)
             setCategory('')
             setSelected(null)
             setDraft(null)
             setEditing(false)
-          }}
-        >
-          {trash ? `返回${kindLabel}` : `${kindLabel}回收站`}
-        </button>
-        <button
-          className="btn btn--ghost"
-          disabled={busy}
-          onClick={() => void reload()}
-        >
-          刷新列表
-        </button>
+          }}>{trash ? `返回${kindLabel}` : `${kindLabel}回收站`}</button>
+          <button className="btn btn--ghost" disabled={busy} onClick={() => void reload()}>刷新列表</button>
+        </div>
       </FitToolbar>
       {(error || listError) && (
         <p className="alert alert--error selectable" role="alert">
@@ -560,8 +532,12 @@ export function MemosView({
       )}
       <div className={`memos__workspace${draft?.kind === 'flow' && flowView === 'canvas' && !showList ? ' memos__workspace--canvas' : ''}`}>
         <aside className={`memos__list memos__list--${kindFilter}`} aria-label={`${kindLabel}列表`}>
-          <div className="memos__count">
-            {trash ? `${kindLabel}回收站` : `全部${kindLabel}`} · {visible.length} 条
+          <div className="memos__library-head">
+            <div>
+              <span>资料目录</span>
+              <h2>{trash ? `${kindLabel}回收站` : `${kindLabel}库`}</h2>
+            </div>
+            <strong aria-label={`${visible.length} 条记录`}>{visible.length}</strong>
           </div>
           {loading && <p className="setgroup__hint">读取中…</p>}
           {!loading && visible.length === 0 && (

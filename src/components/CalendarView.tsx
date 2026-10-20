@@ -84,7 +84,8 @@ export function CalendarView({ onDateChange, onCreateTask }: {
   const gate = useMemo(createRequestGate, [])
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()))
-  useEffect(() => { onDateChange?.(dayKey(anchor)) }, [anchor, onDateChange])
+  const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()))
+  useEffect(() => { onDateChange?.(dayKey(mode === 'month' ? selectedDate : anchor)) }, [anchor, mode, selectedDate, onDateChange])
   const [tasks, setTasks] = useState<Task[]>([])
   const [calendarTotal, setCalendarTotal] = useState(0)
   const [truncated, setTruncated] = useState(false)
@@ -136,16 +137,24 @@ export function CalendarView({ onDateChange, onCreateTask }: {
 
   /** 按本地日期分桶 */
   const buckets = useMemo(() => calendarTaskBuckets(tasks, days), [tasks, days])
+  const selectedTasks = buckets.get(dayKey(selectedDate)) ?? []
 
   const todayKey = dayKey(new Date())
 
   /** 导航：上一页 / 下一页 */
   const shift = (dir: -1 | 1) => {
-    setAnchor((a) => {
-      if (mode === 'day') return new Date(a.getFullYear(), a.getMonth(), a.getDate() + dir)
-      if (mode === 'week') return new Date(a.getFullYear(), a.getMonth(), a.getDate() + dir * 7)
-      return new Date(a.getFullYear(), a.getMonth() + dir, 1)
-    })
+    if (mode === 'day') {
+      setAnchor((current) => new Date(current.getFullYear(), current.getMonth(), current.getDate() + dir))
+      return
+    }
+    if (mode === 'week') {
+      setAnchor((current) => new Date(current.getFullYear(), current.getMonth(), current.getDate() + dir * 7))
+      return
+    }
+    const next = new Date(anchor.getFullYear(), anchor.getMonth() + dir, 1)
+    const nextMonthDays = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
+    setAnchor(next)
+    setSelectedDate(new Date(next.getFullYear(), next.getMonth(), Math.min(selectedDate.getDate(), nextMonthDays)))
   }
 
   const headerLabel = useMemo(() => {
@@ -242,8 +251,11 @@ export function CalendarView({ onDateChange, onCreateTask }: {
     const key = dayKey(d)
     const list = buckets.get(key) ?? []
     const isToday = key === todayKey
+    const isSelected = mode === 'month' && key === dayKey(selectedDate)
     const isDragTarget = dragOver === key
-    const inCurrentMonth = mode !== 'month' || d.getMonth() === anchor.getMonth()
+    const inCurrentMonth = mode !== 'month' || (
+      d.getMonth() === anchor.getMonth() && d.getFullYear() === anchor.getFullYear()
+    )
 
     return (
       <div
@@ -252,6 +264,7 @@ export function CalendarView({ onDateChange, onCreateTask }: {
           'calcell',
           opts.compact ? 'calcell--compact' : 'calcell--tall',
           isToday ? 'calcell--today' : '',
+          isSelected ? 'calcell--selected' : '',
           !inCurrentMonth ? 'calcell--muted' : '',
           isDragTarget ? 'calcell--drop' : '',
         ]
@@ -271,13 +284,23 @@ export function CalendarView({ onDateChange, onCreateTask }: {
           void dropOn(d, e.dataTransfer.getData('text/plain'))
         }}
         onClick={() => {
-          // 点空白处切换到该日视图，方便聚焦某一天
           if (mode === 'month') {
-            setAnchor(d)
-            setMode('day')
+            setSelectedDate(startOfLocalDay(d))
+            if (d.getMonth() !== anchor.getMonth() || d.getFullYear() !== anchor.getFullYear()) {
+              setAnchor(new Date(d.getFullYear(), d.getMonth(), 1))
+            }
           }
         }}
+        onKeyDown={(e) => {
+          if (mode === 'month' && (e.key === 'Enter' || e.key === ' ')) {
+            e.preventDefault()
+            setSelectedDate(startOfLocalDay(d))
+            if (d.getMonth() !== anchor.getMonth() || d.getFullYear() !== anchor.getFullYear()) setAnchor(new Date(d.getFullYear(), d.getMonth(), 1))
+          }
+        }}
+        tabIndex={mode === 'month' ? 0 : undefined}
         role={mode === 'month' ? 'gridcell' : undefined}
+        aria-selected={mode === 'month' ? isSelected : undefined}
         aria-label={`${d.getMonth() + 1} 月 ${d.getDate()} 日，${list.length} 项任务`}
       >
         <div className="calcell__head">
@@ -331,7 +354,11 @@ export function CalendarView({ onDateChange, onCreateTask }: {
               role="radio"
               aria-checked={mode === v}
               className={`segmented__item${mode === v ? ' segmented__item--on' : ''}`}
-              onClick={() => setMode(v)}
+              onClick={() => {
+                if (mode === 'month' && v !== 'month') setAnchor(startOfLocalDay(selectedDate))
+                if (v === 'month') setSelectedDate(startOfLocalDay(anchor))
+                setMode(v)
+              }}
             >
               {label}
             </button>
@@ -361,7 +388,11 @@ export function CalendarView({ onDateChange, onCreateTask }: {
         <button
           type="button"
           className="btn btn--ghost btn--sm"
-          onClick={() => setAnchor(startOfLocalDay(new Date()))}
+          onClick={() => {
+            const today = startOfLocalDay(new Date())
+            setAnchor(today)
+            setSelectedDate(today)
+          }}
         >
           回到今天
         </button>
@@ -392,16 +423,37 @@ export function CalendarView({ onDateChange, onCreateTask }: {
       {loading ? (
         <div className="skeleton" style={{ height: 320 }} />
       ) : mode === 'month' ? (
-        <>
-          <div className="calweekhead" aria-hidden="true">
-            {WEEKDAY_NAMES.map((w) => (
-              <div key={w}>周{w}</div>
-            ))}
+        <div className="calendar-month-workspace">
+          <div className="calendar-month-workspace__grid">
+            <div className="calweekhead" aria-hidden="true">
+              {WEEKDAY_NAMES.map((w) => (
+                <div key={w}>周{w}</div>
+              ))}
+            </div>
+            <div className="calgrid calgrid--month" role="grid" aria-label="月历">
+              {days.map((d) => renderCell(d, { compact: true }))}
+            </div>
           </div>
-          <div className="calgrid calgrid--month" role="grid" aria-label="月历">
-            {days.map((d) => renderCell(d, { compact: true }))}
-          </div>
-        </>
+          <aside className="calendar-day-agenda" aria-label={`${selectedDate.getMonth() + 1} 月 ${selectedDate.getDate()} 日安排`}>
+            <header className="calendar-day-agenda__header">
+              <div>
+                <span>选中日期</span>
+                <h2>{selectedDate.getMonth() + 1} 月 {selectedDate.getDate()} 日</h2>
+                <p>共 {selectedTasks.length} 项任务</p>
+              </div>
+              <button type="button" className="btn btn--primary btn--sm" onClick={() => onCreateTask?.(dayKey(selectedDate))}>
+                <Icon name="plus" size={14} /> 新建
+              </button>
+            </header>
+            {selectedTasks.length ? <div className="calendar-day-agenda__items">{selectedTasks.map(renderChip)}</div> : (
+              <div className="calendar-day-agenda__empty">
+                <span><Icon name="calendar" size={17} /></span>
+                <strong>这一天还没有安排</strong>
+                <p>可从这个面板直接新建任务。</p>
+              </div>
+            )}
+          </aside>
+        </div>
       ) : mode === 'week' ? (
         <div className="calgrid calgrid--week">
           {days.map((d) => renderCell(d, { compact: false }))}
