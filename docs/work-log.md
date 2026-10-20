@@ -4821,3 +4821,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [设计令牌](design-system/design-tokens.json)
 - [0.4.59 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
+
+## 第 116 轮 · 2026-10-20 · 修复真实窗口排版并重排新建任务表单
+
+### 做了
+
+- 固定应用外壳高度，让页面内容区内部滚动；按可用宽度排列顶部操作栏、搜索栏和 PDF 按钮。
+- 月历格子最多预览两项任务并显示剩余数量，选中日期面板继续列出全天任务；窄窗时面板移到月历下方。
+- 备忘/流程工具栏恢复原字号并允许换行；流程画布将工具栏和搜索控件移出节点区域。
+- 新建任务表单将日期/时间、快捷选择、优先级/周期/重复分组；字段标签统一在控件上方，窄窗口下按表单容器宽度纵向排布，顶部和底部都保留添加/取消按钮。
+- 源码版本升至 0.4.61，并更新发布说明、README 与实际窗口整改报告，按项目的持续要求准备 Windows 与 Android ARM64 同版发布。
+
+### 没做到
+
+- 第四张截图里的 Excel `#DIV/0!` 没有原工作簿和公式，无法判断哪些公式应如何修复；本轮没有修改该表格。
+- 浏览器运行的是 Vite 页面而非 Tauri 桌面程序，任务和资料读取显示预期的原生环境提示；没有真实用户数据库、安装版 Windows 或 OnePlus Ace 2 / Android 16 实机验收结论。
+- `cargo test --lib` 汇总为 610 项通过、0 项失败、4 项忽略，但 Windows 测试进程在结果输出后持续占用 CPU 未退出；为继续门禁而中断，命令退出码为 1，需以 PR GitHub CI 的完整结果为准。
+- PR、合并后的 main CI、Windows 安装包和 Android APK 尚未完成；发布状态将在本轮记录的后续修订中补齐。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.61）、`cargo check`、在 `src-tauri` 目录运行的 `cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过。前端构建有既存的动态导入分块提示。
+- 本地浏览器视口为 940×720，检查今天页、新建任务表单、月历、备忘和流程页面；新建表单分组与字段对齐已渲染确认。当前浏览器的 HTML 缩放为 75%，页面布局宽度约为 1253 CSS px。
+- `git diff --check` 通过；跟踪文件自查未发现密钥、数据库、日志、安装包或构建目录。密钥说明扫描仅命中 `AGENTS.md`、`docs/remediation-report.md` 和本工作记录中的说明文字，无密钥内容。PR 和 Release workflow 结果待发布后补记。
+
+### 相关文档
+
+- [0.4.61 实际窗口排版整改](design-system/v0.4.61/REAL-WINDOW-FIXES.md)
+- [0.4.61 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)

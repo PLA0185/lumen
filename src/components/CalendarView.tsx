@@ -250,6 +250,7 @@ export function CalendarView({ onDateChange, onCreateTask }: {
   const renderCell = (d: Date, opts: { compact: boolean }) => {
     const key = dayKey(d)
     const list = buckets.get(key) ?? []
+    const visibleList = opts.compact ? list.slice(0, 2) : list
     const isToday = key === todayKey
     const isSelected = mode === 'month' && key === dayKey(selectedDate)
     const isDragTarget = dragOver === key
@@ -332,7 +333,12 @@ export function CalendarView({ onDateChange, onCreateTask }: {
           </div>
         )}
 
-        <div className="calcell__body">{list.map(renderChip)}</div>
+        <div className="calcell__body">
+          {visibleList.map(renderChip)}
+          {opts.compact && list.length > visibleList.length && (
+            <span className="calcell__more">另有 {list.length - visibleList.length} 项</span>
+          )}
+        </div>
       </div>
     )
   }

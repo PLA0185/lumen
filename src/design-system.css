@@ -2300,3 +2300,239 @@ dialog::backdrop,
     min-height: 48px;
   }
 }
+
+/* Responsive layout follows the space left after the desktop sidebar. */
+.main {
+  container: main-shell / inline-size;
+}
+
+.content {
+  container: main-content / inline-size;
+  min-width: 0;
+}
+
+@container main-shell (inline-size <= 1200px) {
+  .topbar,
+  .app--windows .topbar,
+  .app--android .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .topbar__heading,
+  .app--windows .topbar__heading,
+  .app--android .topbar__heading {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    max-width: none;
+  }
+
+  .app--windows .topbar__actions,
+  .app--android .topbar__actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  .topbar__controls,
+  .app--windows .topbar__controls {
+    display: flex;
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .topbar__end,
+  .app--windows .topbar__end,
+  .app--android .topbar__end {
+    display: contents;
+  }
+
+  .topbar__end .search,
+  .app--windows .topbar__end .search {
+    grid-column: 1;
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .topbar__end > button,
+  .app--windows .topbar__end > button {
+    grid-column: 2;
+  }
+}
+
+@container main-content (inline-size <= 960px) {
+  .today-workspace,
+  .calendar-month-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .today-inspector {
+    position: static;
+  }
+
+  .calendar-day-agenda {
+    max-height: none;
+  }
+
+  .calendar-day-agenda__items {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+  }
+
+  .memos__workspace:not(.memos__workspace--canvas) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .memos__workspace:not(.memos__workspace--canvas) .memos__list {
+    position: static;
+    max-height: min(34vh, 280px);
+  }
+}
+
+/* Toolbars wrap at readable size; the previous fit-to-width transform made
+   actions tiny and clipped them on narrow desktop windows. */
+.memos > .memos__toolbar {
+  height: auto !important;
+  overflow: visible;
+}
+
+.memos__toolbar-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  transform: none !important;
+}
+
+.memos__toolbar-group,
+.memos__document-actions {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.memos__toolbar-group--primary {
+  margin-right: auto;
+}
+
+@container main-content (inline-size <= 760px) {
+  .memos__toolbar-group--primary {
+    margin-right: 0;
+  }
+
+  .memos__toolbar-group,
+  .memos__document-actions {
+    flex: 1 1 100%;
+  }
+}
+
+/* Give the graph its own drawing area. Canvas controls used to float over
+   nodes, obscuring their content on the compact Windows layout. */
+.memos--canvas .flow-canvas {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 14px 14px;
+  margin: 0;
+}
+
+.memos--canvas .flow-canvas__head {
+  position: relative;
+  inset: auto;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+}
+
+.memos--canvas .flow-canvas__switcher {
+  flex: 0 1 300px;
+  width: min(420px, 100%);
+  min-width: 0;
+}
+
+.memos--canvas .flow-canvas__nav {
+  position: relative;
+  inset: auto;
+  flex: 0 1 auto;
+  max-width: 100%;
+  margin: 0 auto;
+  transform: none;
+}
+
+.memos--canvas .flow-canvas__toolbar {
+  position: relative;
+  inset: auto;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.memos--canvas .flow-canvas__toolbar > input {
+  flex: 1 1 180px;
+  min-width: min(150px, 100%);
+  max-width: 280px;
+}
+
+.memos--canvas .flow-canvas__zoom {
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.memos--canvas .flow-canvas__hint {
+  position: relative;
+  inset: auto;
+  z-index: 3;
+  margin: 0 2px;
+  pointer-events: auto;
+}
+
+.memos--canvas .flow-canvas__viewport {
+  position: relative;
+  inset: auto;
+  grid-row: 4;
+  width: 100%;
+  height: auto;
+  min-height: clamp(180px, 30vh, 280px);
+  border-radius: 12px;
+}
+
+.memos--canvas .flow-canvas__inspector {
+  top: 72px;
+  right: 14px;
+  bottom: 14px;
+  width: min(340px, calc(100% - 28px));
+}
+
+.calcell--compact .calcell__body {
+  overflow: hidden;
+}
+
+.calcell__more {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  color: var(--c-text-2);
+  font-size: 0.72em;
+  line-height: 1.25;
+}
