@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Lumen Quiet Signal · 交互预览</title>
+    <link rel="stylesheet" href="../../src/styles.css" />
+    <link rel="stylesheet" href="../../src/nutrition.css" />
+    <link rel="stylesheet" href="../../src/platform.css" />
+    <link rel="stylesheet" href="../../src/design-system.css?v=3" />
+    <style>
+      body { min-width: 360px; }
+      .preview-tools { position: fixed; z-index: 20; right: 18px; bottom: 18px; display: flex; gap: 8px; padding: 8px; background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 14px; box-shadow: var(--shadow); }
+      .preview-tagline { margin: 0 0 18px; color: var(--c-text-2); }
+      .preview-date { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+      .preview-date strong { margin-right: auto; }
+      .preview-extra { max-width: 1240px; margin: 18px auto 0; padding: 16px; color: var(--c-text-2); background: var(--c-surface-2); border-radius: var(--radius); }
+      .preview-extra strong { color: var(--c-text); }
+      .preview-extra code { padding: 2px 5px; color: var(--c-accent); background: var(--c-accent-soft); border-radius: 5px; }
+      .preview-hidden { display: none !important; }
+      .app--windows .mobile-nav { display: none; }
+      .app--android .mobile-nav { display: grid; }
+      @media (max-width: 720px) {
+        .app--windows { display: flex; flex-direction: column; }
+        .app--windows .sidebar { display: none; }
+        .app--windows .mobile-nav { display: grid; }
+        .app--windows .topbar { grid-template-columns: minmax(0, 1fr); }
+        .app--windows .topbar__actions { grid-template-columns: minmax(0, 1fr) auto; }
+        .app--windows .topbar__controls { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+        .app--windows .topbar__controls > * { width: 100%; min-width: 0; max-width: none; }
+        .app--windows .topbar__actions select { width: 100%; min-width: 0; max-width: none; }
+        .app--windows .topbar__end { display: contents; }
+        .app--windows .content { padding-bottom: calc(82px + env(safe-area-inset-bottom)); }
+        .app--windows .task__check { width: 48px; height: 48px; min-width: 48px; min-height: 48px; flex-basis: 48px; border: 0; border-radius: 50%; }
+      }
+      @media (max-width: 720px) { .preview-tools, .preview-extra { display: none; } }
+    </style>
+  </head>
+  <body>
+    <div class="app app--windows" id="app">
+      <aside class="sidebar">
+        <div class="sidebar__brand">
+          <span class="sidebar__logo" aria-hidden="true">✳</span>
+          <span class="sidebar__title">Lumen</span>
+          <span class="sidebar__version">设计预览</span>
+        </div>
+        <nav class="sidebar__nav" aria-label="主导航">
+          <div class="nav-group">
+            <div class="nav-group__label">任务</div>
+            <div class="nav-group__items">
+              <button class="nav-item" aria-current="page"><span class="nav-item__icon">◷</span><span class="nav-item__label">今天</span><span class="nav-item__count nav-item__count--alert">3</span></button>
+              <button class="nav-item"><span class="nav-item__icon">◷</span><span class="nav-item__label">明天</span></button>
+              <button class="nav-item"><span class="nav-item__icon">▦</span><span class="nav-item__label">本周安排</span></button>
+              <button class="nav-item"><span class="nav-item__icon">▦</span><span class="nav-item__label">日历</span></button>
+              <button class="nav-item"><span class="nav-item__icon">▤</span><span class="nav-item__label">看板</span></button>
+              <button class="nav-item"><span class="nav-item__icon">≡</span><span class="nav-item__label">收件箱</span></button>
+            </div>
+          </div>
+          <div class="nav-group">
+            <div class="nav-group__label">资料</div>
+            <div class="nav-group__items">
+              <button class="nav-item"><span class="nav-item__icon">✎</span><span class="nav-item__label">备忘</span></button>
+              <button class="nav-item"><span class="nav-item__icon">⌘</span><span class="nav-item__label">流程</span></button>
+              <button class="nav-item"><span class="nav-item__icon">♡</span><span class="nav-item__label">知识库问答</span></button>
+            </div>
+          </div>
+        </nav>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="topbar__heading">
+            <h1 class="topbar__title">今天</h1>
+            <div class="topbar__subtitle">先看眼前，再安排后面的事</div>
+          </div>
+          <div class="topbar__actions">
+            <div class="topbar__controls">
+              <button class="btn btn--ghost btn--sm">AI 助手</button>
+              <button class="btn btn--ghost btn--sm">同步</button>
+              <button class="btn btn--ghost btn--sm">悬浮窗</button>
+              <button class="btn btn--ghost btn--sm">逾期</button>
+              <select aria-label="排序方式"><option>手动排序</option><option>按计划时间</option></select>
+              <button class="btn btn--primary btn--sm" id="newTask">＋ 新建</button>
+            </div>
+            <div class="topbar__end">
+              <label class="search">
+                <span class="search__icon" aria-hidden="true">⌕</span>
+                <input class="search__input" id="search" type="search" placeholder="搜索任务内容、子任务、项目、标签" aria-label="搜索任务" />
+              </label>
+              <button class="btn btn--ghost btn--sm">↓ PDF</button>
+            </div>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="today-date-strip" aria-label="按日期查看任务">
+            <div class="today-date-strip__week">
+              <button aria-label="上一周">‹</button>
+              <button><span>周一</span><strong>10-19</strong></button>
+              <button class="is-selected" aria-pressed="true"><span>周二</span><strong>10-20</strong></button>
+              <button><span>周三</span><strong>10-21</strong></button>
+              <button><span>周四</span><strong>10-22</strong></button>
+              <button><span>周五</span><strong>10-23</strong></button>
+              <button><span>周六</span><strong>10-24</strong></button>
+              <button><span>周日</span><strong>10-25</strong></button>
+              <button aria-label="下一周">›</button>
+            </div>
+            <div class="today-date-strip__summary">今天 · 3 项待完成</div>
+          </section>
+
+          <form class="quickadd preview-hidden" id="quickAddForm">
+            <div class="quickadd__row">
+              <input class="quickadd__input" id="taskTitle" placeholder="接下来要做什么？" aria-label="任务标题" required />
+              <div class="quickadd__actions"><button class="btn btn--primary" type="submit">添加任务</button><button class="btn btn--ghost" type="button" id="cancelAdd">取消</button></div>
+            </div>
+          </form>
+
+          <ul class="tasklist" id="tasklist">
+            <li class="task">
+              <div class="task__main"><button class="task__check" aria-label="完成：确认今天的优先事项" aria-pressed="false">○</button>
+                <div class="task__body"><div class="task__title">确认今天的优先事项</div><div class="task__meta"><span class="badge badge--today">今天</span><span>10:00 前</span><span class="badge badge--project">运营</span></div><div class="task__desc">先处理需要他人配合的事项，再安排独立工作。</div></div>
+                <div class="task__actions"><button class="icon-btn" aria-label="编辑任务">✎</button></div>
+              </div>
+            </li>
+            <li class="task">
+              <div class="task__main"><button class="task__check" aria-label="完成：检查发货追踪编号" aria-pressed="false">○</button>
+                <div class="task__body"><div class="task__title">检查发货追踪编号</div><div class="task__meta"><span class="badge badge--planned">计划 14:30</span><span class="badge badge--recurring">每周</span></div></div>
+                <div class="task__actions"><button class="icon-btn" aria-label="编辑任务">✎</button></div>
+              </div>
+            </li>
+            <li class="task task--pinned">
+              <div class="task__main"><button class="task__check" aria-label="完成：把新流程整理到知识库" aria-pressed="false">○</button>
+                <div class="task__body"><div class="task__title">把新流程整理到知识库</div><div class="task__meta"><span class="badge badge--planned">今天</span><span class="badge badge--project">资料整理</span></div><div class="task__desc">保留来源和对应图片，完成后复核步骤顺序。</div></div>
+                <div class="task__actions"><button class="icon-btn" aria-label="编辑任务">✎</button></div>
+              </div>
+            </li>
+          </ul>
+
+          <section class="preview-extra" aria-label="设计原则说明">
+            <strong>Quiet Signal</strong> · 选中状态用薄荷色提示，内容面保持克制；桌面工具保持同一行，空间不足时按组换行。此页仅用于检查外观与控件反馈。
+          </section>
+        </main>
+      </div>
+      <nav class="mobile-nav" aria-label="主要导航">
+        <button class="mobile-nav__item is-active"><span>◷</span><span>今天</span></button>
+        <button class="mobile-nav__item"><span>≡</span><span>全部</span></button>
+        <button class="mobile-nav__item"><span>⌘</span><span>流程</span></button>
+        <button class="mobile-nav__item"><span>♡</span><span>饮食</span></button>
+        <button class="mobile-nav__item"><span>•••</span><span>更多</span></button>
+      </nav>
+    </div>
+
+    <div class="preview-tools" aria-label="预览控制">
+      <button class="btn btn--ghost btn--sm" id="themeToggle" type="button">切换浅色</button>
+    </div>
+    <script>
+      const root = document.documentElement
+      const app = document.querySelector('#app')
+      const form = document.querySelector('#quickAddForm')
+      const input = document.querySelector('#taskTitle')
+      const themeToggle = document.querySelector('#themeToggle')
+      const syncPlatformPreview = () => {
+        const mobile = matchMedia('(max-width: 720px)').matches
+        app.classList.toggle('app--android', mobile)
+        app.classList.toggle('app--windows', !mobile)
+      }
+      syncPlatformPreview()
+      addEventListener('resize', syncPlatformPreview, { passive: true })
+      let dark = matchMedia('(prefers-color-scheme: dark)').matches
+      root.dataset.theme = dark ? 'dark' : 'light'
+      themeToggle.textContent = dark ? '切换浅色' : '切换深色'
+      themeToggle.addEventListener('click', () => {
+        dark = !dark
+        root.dataset.theme = dark ? 'dark' : 'light'
+        themeToggle.textContent = dark ? '切换浅色' : '切换深色'
+      })
+      document.querySelector('#newTask').addEventListener('click', () => {
+        form.classList.remove('preview-hidden')
+        input.focus()
+      })
+      document.querySelector('#cancelAdd').addEventListener('click', () => form.classList.add('preview-hidden'))
+      form.addEventListener('submit', (event) => {
+        event.preventDefault()
+        const title = input.value.trim()
+        if (!title) return
+        const item = document.createElement('li')
+        item.className = 'task'
+        item.innerHTML = '<div class="task__main"><button class="task__check" aria-pressed="false">○</button><div class="task__body"><div class="task__title"></div><div class="task__meta"><span class="badge badge--today">今天</span><span>刚刚添加</span></div></div></div>'
+        item.querySelector('.task__title').textContent = title
+        item.querySelector('.task__check').addEventListener('click', toggleDone)
+        document.querySelector('#tasklist').prepend(item)
+        input.value = ''
+        form.classList.add('preview-hidden')
+      })
+      document.querySelectorAll('.task__check').forEach(button => button.addEventListener('click', toggleDone))
+      function toggleDone(event) {
+        const button = event.currentTarget
+        const done = button.getAttribute('aria-pressed') !== 'true'
+        button.setAttribute('aria-pressed', String(done))
+        button.textContent = done ? '✓' : '○'
+        button.setAttribute('aria-label', `${done ? '撤销完成' : '完成'}：${button.parentElement.querySelector('.task__title').textContent}`)
+        button.closest('.task').classList.toggle('task--done', done)
+      }
+      document.querySelector('#search').addEventListener('input', event => {
+        const query = event.target.value.trim().toLocaleLowerCase()
+        document.querySelectorAll('#tasklist .task').forEach(task => {
+          task.classList.toggle('preview-hidden', !task.textContent.toLocaleLowerCase().includes(query))
+        })
+      })
+      document.querySelectorAll('.sidebar .nav-item').forEach(button => button.addEventListener('click', () => {
+        document.querySelector('.sidebar .nav-item[aria-current="page"]')?.removeAttribute('aria-current')
+        button.setAttribute('aria-current', 'page')
+        document.querySelector('.topbar__title').textContent = button.querySelector('.nav-item__label').textContent
+      }))
+    </script>
+  </body>
+</html>

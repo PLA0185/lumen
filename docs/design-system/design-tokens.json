@@ -1,0 +1,52 @@
+{
+  "name": "Lumen Quiet Signal",
+  "version": 1,
+  "direction": "A calm, scannable workbench for repeated daily planning.",
+  "color": {
+    "light": {
+      "background": "#f2f4f0",
+      "surface": "#fbfcf9",
+      "surfaceRaised": "#e9eeea",
+      "surfaceHover": "#e1e9e4",
+      "text": "#1b2924",
+      "textSecondary": "#43584f",
+      "textMuted": "#586c62",
+      "accent": "#167c68",
+      "accentHover": "#0f6858",
+      "border": "#d3ddd7",
+      "borderStrong": "#aebfb5"
+    },
+    "dark": {
+      "background": "#151a1e",
+      "surface": "#1d242a",
+      "surfaceRaised": "#252d34",
+      "surfaceHover": "#303a42",
+      "text": "#f0f4f6",
+      "textSecondary": "#c5cfd4",
+      "textMuted": "#aab6bc",
+      "accent": "#6ed2b4",
+      "accentHover": "#8de2c7",
+      "border": "#39444d",
+      "borderStrong": "#5b6973"
+    },
+    "semantic": {
+      "danger": "#a43d42",
+      "warning": "#8c5c08",
+      "success": "#217858",
+      "info": "#286d91"
+    }
+  },
+  "typography": {
+    "family": "system-ui, -apple-system, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif",
+    "bodyLineHeight": 1.55,
+    "headingTracking": "-0.035em",
+    "bodyTracking": "0"
+  },
+  "spacingPx": [4, 8, 12, 18, 24, 32],
+  "radiusPx": { "small": 9, "control": 11, "card": 14, "sheet": 18 },
+  "controlHeightPx": { "compact": 36, "standard": 42, "touch": 48 },
+  "material": {
+    "navigation": "translucent blur, with a solid fallback for reduced transparency",
+    "content": "opaque surfaces with restrained borders and shallow shadows"
+  }
+}

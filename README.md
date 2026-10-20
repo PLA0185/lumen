@@ -442,12 +442,16 @@ pnpm typecheck                # 类型检查
 
 ## 文档索引
 
-当前源码版本 0.4.52（完成父任务时自动勾选全部子任务；旧 GitHub 同步空间无法解密时，一次确认即可清理所选目录并从本机数据重建，不需要找旧电脑；当前云端文件会移除，Git 历史仍保留加密版本，本机数据库不删除）。备忘与流程支持连同图片和附件导出、校验后导入为新记录；知识问答会扩展易混写法，并在本机资料只覆盖部分问题时使用已配置的 DeepSeek 或 Tavily 联网补全，网页证据单独标注。GitHub 同步等待提示区分服务器限流与本机请求预算，并按重试时间自动续传。Windows 与 Android 使用同一 GitHub 加密同步协议；Android ARM64 APK 会和 Windows 安装包一起发布，首次发布前要配置稳定的 Actions 签名密钥，详见[Android APK 发布签名](docs/android-release-signing.md)。其它重复任务、提醒和云同步功能边界见下方文档索引与各轮[工作记录](docs/work-log.md)。
+当前源码版本 0.4.59。Windows 与 Android 共用一套重新设计的界面系统：桌面工具集中为单行，手机切换为分组触控布局；任务、日历、知识库、备忘与流程、设置、饮食和弹窗共享颜色、层级、间距与控件规则，保留深浅主题、字号调整及系统减少动态效果偏好。此前版本能力仍包括任务与子任务、周期安排、具体提醒时间、按日历日期新建、GitHub 加密同步、备忘和流程原图导入导出及知识库流程检索。Android ARM64 APK 与 Windows 安装包随同一版本发布；Android 16 实机仍需安装验证。界面重设计说明、交互预览与截图证据见下方文档索引，功能边界见各轮[工作记录](docs/work-log.md)。
 
 | 文档 | 内容 |
 | --- | --- |
 | [ChatGPT 内容导入](docs/chatgpt-content-import-2026-10-12.md) | ChatGPT 网页 / 桌面端复制导入或拖入 ZIP 批量导入备忘、流程和配套图片；预览确认后保存，列明原生 MCP 写入限制 |
 | [Android APK 发布签名](docs/android-release-signing.md) | 同一 Release 附 ARM64 APK 的自动构建、稳定签名和 Android / Windows 共用 GitHub 云同步配置 |
+  | [Lumen 全局设计系统](docs/design-system/DESIGN.md) | Windows 与 Android 全界面视觉方向、颜色/排版/间距规则、覆盖范围和实测边界 |
+  | [设计交互预览](docs/design-system/design-preview.html) | 可切换主题、导航、搜索和演示任务的桌面/手机界面预览 |
+  | [界面状态检查页](docs/design-system/state-review.html) | 加载、空、错误、部分结果与成功状态的统一样式样例 |
+  | [重设计截图与检查记录](docs/design-system/evidence/report.json) | 真实渲染截图、视口、键盘焦点和响应式核对 |
 | [跨平台 UI 重构设计](docs/superpowers/specs/2026-10-09-cross-platform-ui-redesign.md) | Apple、Android、Windows 官方原则映射、导航与视觉规则、可访问性和已知实机验收边界 |
 | [跨平台 UI 重构实施记录](docs/superpowers/plans/2026-10-09-cross-platform-ui-redesign.md) | 令牌、交互、Windows/Android 壳层、知识库回答样式、回归测试和发布验收 |
 | [全界面自查与可读性整改](docs/superpowers/specs/2026-10-09-ui-audit-remediation.md) | 备忘与流程分栏、全文阅读、空态与信息密度、跨视图验收标准和设备边界 |
