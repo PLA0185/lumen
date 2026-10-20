@@ -4743,7 +4743,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 未在 Windows 安装版和 OnePlus Ace 2 / Android 16 实机安装验收；手机目前无法连接。本轮浏览器截图验证的是共享样式及代表性页面，不是实机 WebView 或桌面系统辅助功能组合。
 - 设计预览的搜索、创建和完成操作修改的是页面演示数据，没有调用 Tauri 数据库；本轮没有验证真实任务写入或所有页面业务流程。
-- v0.4.59 的 PR、CI、Windows 安装包与 Android APK 尚未生成；发布结果将在后续工作记录核对。v0.4.58 标签存在但没有 GitHub Release，详见第 112 轮修订记录。
+- 本条记录写入时，v0.4.59 的 PR、CI、Windows 安装包与 Android APK 尚未生成；发布结果在第 114 轮核对。v0.4.58 标签存在但没有 GitHub Release，详见第 112 轮修订记录。
 
 ### 怎么验证的
 
@@ -4763,3 +4763,30 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [设计令牌](design-system/design-tokens.json)
 - [0.4.59 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
+
+## 第 114 轮 · 2026-10-20 · 合并并发布 0.4.59 Windows 与 Android 双端安装包
+
+### 做了
+
+- PR #34「全面重构跨平台界面」已合并到 main，0.4.59 正式 Release 已发布。
+- 同一个 Release 同时提供 Android ARM64 APK、Windows x64 安装包、Windows 更新签名文件及 `latest.json`。
+- 修订第 112 轮记录：0.4.58 标签确实存在于远端，但没有对应 GitHub Release；日历功能随本轮 0.4.59 一起交付。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 实机安装 0.4.59，用户手机当前无法连接；APK 已在 GitHub Actions 成功签名构建，但不把构建成功说成设备启动验收。
+- 未在用户实际 Windows 设备上安装新包验证视觉与真实业务数据；Windows 安装包的签名和篡改拒绝检查在 Release workflow 中通过。
+
+### 怎么验证的
+
+- PR #34 CI run [39363775369](https://github.com/PLA0185/lumen/actions/runs/39363775369) 的 frontend 和 rust jobs 均通过；合并后 main CI run [39364282771](https://github.com/PLA0185/lumen/actions/runs/39364282771) 也通过。
+- Release run [39364320030](https://github.com/PLA0185/lumen/actions/runs/39364320030) 成功构建签名 Android APK；Windows 发布前全量门禁、安装包签名验证与篡改拒绝验证通过，随后将 Android APK 上传到同一 Release 并正式发布。
+- 核对 [v0.4.59 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.59)：`Lumen_0.4.59_android_arm64.apk`、`Lumen_0.4.59_x64-setup.exe`、`Lumen_0.4.59_x64-setup.exe.sig` 与 `latest.json` 均存在。
+
+### 相关文档
+
+- [PR #34](https://github.com/PLA0185/lumen/pull/34)
+- [v0.4.59 正式 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.59)
+- [0.4.59 发布说明](../RELEASE_NOTES.md)
+- [全局设计系统](design-system/DESIGN.md)
+- [Android APK 发布签名](android-release-signing.md)
