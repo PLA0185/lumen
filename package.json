@@ -1,7 +1,7 @@
 {
   "name": "lumen",
   "private": true,
-  "version": "0.4.61",
+  "version": "0.4.62",
   "type": "module",
   "description": "Lumen —— 本地优先的智能任务管理（本地优先，可选 AI 辅助）",
   "license": "MIT",
