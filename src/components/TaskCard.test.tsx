@@ -54,6 +54,19 @@ describe('任务卡片中的文本与子任务', () => {
     expect(html).toContain('完成子任务「CA 关键词」')
   })
 
+  it('折叠卡片的描述会渲染 Markdown 标题和加粗', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard
+        task={{ ...task, description: '## 月复盘\n\n优先处理**今天**的任务。' }}
+        onToggle={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    expect(html).toMatch(/<h2>.*月复盘.*<\/h2>/)
+    expect(html).toContain('<strong>今天</strong>')
+    expect(html).not.toContain('## 月复盘')
+  })
+
   it('计划在下周的周跨度任务显示「下周内」而不是「本周内」', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 9, 16, 12, 0))

@@ -279,7 +279,7 @@ export function TaskCard({
           <div className="task__title selectable">{task.title}</div>
 
           {task.description && (
-            <div className="task__desc selectable">{task.description}</div>
+            <div className="task__desc mdpreview selectable"><ContentMarkdown>{task.description}</ContentMarkdown></div>
           )}
 
           <div className="task__meta">
@@ -301,7 +301,7 @@ export function TaskCard({
             {task.periodType && task.periodType !== 'none' && (
               <span
                 className="badge badge--period"
-                title={`周期任务：${periodLabel}完成即可，不绑定到具体某一天`}
+                title={`周期范围：${periodLabel}完成即可；日历按周期逐日显示`}
               >
                 {periodLabel}
               </span>
