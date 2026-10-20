@@ -25,8 +25,9 @@ export type Priority = 0 | 1 | 2 | 3
  * | `plannedAt`  | 我打算这一天的这个时刻做 | 刚性，决定日历位置 |
  * | `dueAt`      | 我必须在此之前交 | 硬约束，决定是否逾期 |
  *
- * 关键规则：period 型任务若没有 `plannedAt`，**不会出现在「今天」视图**。
- * 否则"这周做完就行"的任务会每天弹出提示，反而比不定时间更烦人。
+ * 日历规则：周 / 月 / 季度 / 年跨度任务在锚点日期所属自然周期内逐日显示；
+ * 锚点优先取 `plannedAt`、其次 `dueAt`，两者都为空时取 `createdAt`。
+ * 完成当天保留为已完成，下一天起隐藏；这只影响日历展示，不生成提醒。
  */
 export type PeriodType = 'none' | 'day' | 'week' | 'month' | 'quarter' | 'year'
 

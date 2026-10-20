@@ -3,9 +3,8 @@
  *
  * ## 归属规则（界面必须明确说明，§4.2）
  *
- * 任务落在 `COALESCE(计划时间, 截止时间)` 所属的那一天。
- * 两者都没有的任务不会出现在日历里——它们只属于列表视图。
- * 这条规则显示在视图顶部，避免用户疑惑"为什么这个任务不在日历上"。
+ * 普通任务落在 `COALESCE(计划时间, 截止时间)` 所属的那一天。
+ * 周、月、季度、年跨度任务则在锚点日期所属的自然周期里逐日显示。
  *
  * ## 拖拽改期
  *
@@ -25,6 +24,7 @@ import { onDataChanged } from '../lib/data-change'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
 import * as recurrence from '../lib/recurrence-ipc'
 import type { Task } from '../lib/types'
+import { calendarTaskBuckets } from '../lib/calendar-task-buckets'
 import { Icon } from './Icons'
 
 function errText(e: unknown): string {
@@ -77,7 +77,10 @@ function weekDays(anchor: Date): Date[] {
   )
 }
 
-export function CalendarView({ onDateChange }: { onDateChange?: (date: string) => void } = {}) {
+export function CalendarView({ onDateChange, onCreateTask }: {
+  onDateChange?: (date: string) => void
+  onCreateTask?: (date: string) => void
+} = {}) {
   const gate = useMemo(createRequestGate, [])
   const [mode, setMode] = useState<Mode>('month')
   const [anchor, setAnchor] = useState(() => startOfLocalDay(new Date()))
@@ -132,18 +135,7 @@ export function CalendarView({ onDateChange }: { onDateChange?: (date: string) =
   useEffect(() => () => gate.dispose(), [gate])
 
   /** 按本地日期分桶 */
-  const buckets = useMemo(() => {
-    const m = new Map<string, Task[]>()
-    for (const t of tasks) {
-      const at = fromUtcIso(t.plannedAt) ?? fromUtcIso(t.dueAt)
-      if (!at) continue
-      const key = dayKey(at)
-      const arr = m.get(key)
-      if (arr) arr.push(t)
-      else m.set(key, [t])
-    }
-    return m
-  }, [tasks])
+  const buckets = useMemo(() => calendarTaskBuckets(tasks, days), [tasks, days])
 
   const todayKey = dayKey(new Date())
 
@@ -294,6 +286,20 @@ export function CalendarView({ onDateChange }: { onDateChange?: (date: string) =
             <span className="calcell__wd">周{WEEKDAY_NAMES[(d.getDay() + 6) % 7]}</span>
           )}
           {list.length > 0 && <span className="calcell__count">{list.length}</span>}
+          {onCreateTask && (
+            <button
+              type="button"
+              className="calcell__add"
+              aria-label={`在 ${d.getMonth() + 1} 月 ${d.getDate()} 日新建任务`}
+              title={`在 ${d.getMonth() + 1} 月 ${d.getDate()} 日新建任务`}
+              onClick={(e) => {
+                e.stopPropagation()
+                onCreateTask(key)
+              }}
+            >
+              <Icon name="plus" size={13} />
+            </button>
+          )}
         </div>
 
         {/* 拖拽提示：明确告知会落到哪一天（§4.3「拖拽改期前展示目标日期」） */}
@@ -362,8 +368,8 @@ export function CalendarView({ onDateChange }: { onDateChange?: (date: string) =
       </div>
 
       <p className="calhint">
-        任务显示在「计划时间」所属的日期；未填计划时间的显示在「截止时间」那天。
-        两者都没填的任务不会出现在日历里。拖动任务到另一天即可改期——
+        普通任务显示在计划日期（没有计划日期时显示在截止日期）；周、月、季度、年跨度任务会在锚点日期所属周期的每天显示。
+        任务完成当天仍显示，从次日起隐藏。每个日期格右侧的「+」可直接在该天新建任务。拖动任务到另一天即可改期——
         <strong>只改计划时间，不影响截止时间</strong>，原有的具体时刻会被保留。
         {busy && ' 正在保存…'}
       </p>
