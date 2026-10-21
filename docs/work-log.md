@@ -4933,3 +4933,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.63 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
 - [第 118 轮 0.4.62 发布资产记录](#第-118-轮--2026-10-20--完成-0462-桌面与安卓版发布)
+
+## 第 120 轮 · 2026-10-21 · 修复流程画布宽度被压缩
+
+### 做了
+
+- 修复流程画布工作区被意外分成两列的问题。流程页隐藏了左侧列表，但新版设计样式又把网格重设为“列表 + 正文”两列；唯一剩下的画布落在第一列，宽度只有约 286px，右侧留下大片空白。为画布模式单独保留单列规则，让正文和画布铺满可用区域。
+- 更新 0.4.63 发布说明与 README 文档索引摘要。
+
+### 没做到
+
+- 尚未在 Windows 安装版或 Android 设备上验收；本次确认使用本地 Chromium 浏览器中的实际 CSS 计算尺寸，不代表安装版或手机实机检查。
+- Windows 安装包与 Android ARM64 APK 尚未发布；等待本轮 PR 合并及发布工作流。
+
+### 怎么验证的
+
+- 在本地 Chromium 中按用户截图布局建立画布页并检查浏览器计算尺寸：修复后工作区、正文、画布分别为 510px、510px、487px；模拟旧两列规则后正文与画布缩至 215px、192px，右侧空白复现；移除模拟规则后尺寸恢复。浏览器视口为 929px，应用缩放会影响屏幕像素与 CSS 像素的对应关系。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建提示为已有动态导入分块告警。
+- `cargo test --lib` 输出 610 项通过、4 项忽略、0 项失败，但 Windows 测试进程在汇总后持续不退出；等待 30 秒后手动中断，退出码为 1，因此不记作命令完整成功。GitHub CI 将作为最终 Rust 测试门禁。
+- `git diff --check` 无空白错误；没有把当前浏览器检查描述为 Windows/Android 实机验收。
+
+### 相关文档
+
+- [0.4.63 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+- [流程画布窄宽度修复 PR](https://github.com/PLA0185/lumen/pull/42)
