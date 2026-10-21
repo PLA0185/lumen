@@ -4944,7 +4944,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 尚未在 Windows 安装版或 Android 设备上验收；本次确认使用本地 Chromium 浏览器中的实际 CSS 计算尺寸，不代表安装版或手机实机检查。
-- Windows 安装包与 Android ARM64 APK 尚未发布；等待本轮 PR 合并及发布工作流。
+- 本节记录代码 PR 合并时的状态：当时安装包与 APK 尚未发布；发布完成情况见第 121 轮。
 
 ### 怎么验证的
 
@@ -4959,3 +4959,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.63 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
 - [流程画布窄宽度修复 PR](https://github.com/PLA0185/lumen/pull/42)
+
+## 第 121 轮 · 2026-10-21 · 发布 0.4.63 Windows 与 Android 安装包
+
+### 做了
+
+- 将流程画布单列修复与第 119 轮任务排版修复合并发布为 `v0.4.63`。GitHub Release 已公开 Windows x64 安装包和 Android ARM64 APK；两者来自同一个标签和发布工作流。
+- Windows 安装包的签名验证及篡改拒绝验证成功；Android APK 构建与签名成功。
+
+### 没做到
+
+- OnePlus Ace 2 / Android 16 设备目前无法连接，本轮仍未在手机上安装或验证之前报告的“打开立即闪退”问题；本次发布不能证明该启动问题已经解决。
+- Windows 安装包尚未在用户电脑上完成安装后交互验收。
+
+### 怎么验证的
+
+- Release workflow run 52（run `39527609475`）中 Android、Windows 构建和验签、篡改拒绝、Assets 上传及 Release 发布步骤均成功；GitHub Release 页面为公开状态。
+- Android ARM64 APK：38,284,546 字节，SHA-256 `1b667ab6366239ea9090ce320541beebdc93877f2118e1ca8459ab1d50c0084a`。
+- Windows x64 安装包：24,860,249 字节，SHA-256 `ef3a5b5ccf65970b667d8520738466142216431e620d316726117573444afba3`；随附 updater 签名文件。
+- 本地 Windows `cargo test --lib` 的测试汇总通过，但测试进程在汇总后不退出；完整测试结论以已经成功的 GitHub CI PR run 211、主分支 run 212 及发布门禁为准。
+
+### 相关文档
+
+- [GitHub Release v0.4.63](https://github.com/PLA0185/lumen/releases/tag/v0.4.63)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.63/Lumen_0.4.63_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.63/Lumen_0.4.63_x64-setup.exe)
+- [第 120 轮：流程画布宽度修复](#第-120-轮--2026-10-21--修复流程画布宽度被压缩)
