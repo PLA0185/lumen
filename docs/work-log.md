@@ -4951,6 +4951,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - 在本地 Chromium 中按用户截图布局建立画布页并检查浏览器计算尺寸：修复后工作区、正文、画布分别为 510px、510px、487px；模拟旧两列规则后正文与画布缩至 215px、192px，右侧空白复现；移除模拟规则后尺寸恢复。浏览器视口为 929px，应用缩放会影响屏幕像素与 CSS 像素的对应关系。
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo fmt --check` 与 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建提示为已有动态导入分块告警。
 - `cargo test --lib` 输出 610 项通过、4 项忽略、0 项失败，但 Windows 测试进程在汇总后持续不退出；等待 30 秒后手动中断，退出码为 1，因此不记作命令完整成功。GitHub CI 将作为最终 Rust 测试门禁。
+- GitHub PR #42 CI（run 210）前端与 Rust 两个 job 均成功；Rust CI 单元与集成测试、无豁免 Clippy 均通过。
 - `git diff --check` 无空白错误；没有把当前浏览器检查描述为 Windows/Android 实机验收。
 
 ### 相关文档
