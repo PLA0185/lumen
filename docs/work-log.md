@@ -4992,22 +4992,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 按用户澄清，将回退范围从单个流程画布改为整轮 UI 重构：前端 `src/` 恢复到 v0.4.58（0.4.59 整体视觉重构之前）的实现，撤销 v0.4.59 / v0.4.60 页面重构和后续排版补丁；未改数据库、同步内容或 Rust 业务模块。
 - 保留该基线中已有的日历、任务、备忘、流程、知识库、压缩包导入等能力；恢复之前，任务表单、日历、备忘和流程页面等前端实现均以 v0.4.58 文件为准。
-- 版本更新为 0.4.64，并更新发布说明和 README；准备按用户长期要求同步发布 Windows 与 Android ARM64。
+- 版本更新为 0.4.64，并更新发布说明和 README；按用户长期要求，Windows x64 与 Android ARM64 已同版发布。
 
 ### 没做到
 
-- Windows 安装包与 Android ARM64 APK 尚未构建或发布；需等待本轮 PR、主分支 CI 和发布工作流。
-- 未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收。浏览器预览不具备 Tauri 原生桥接，因此任务数据与重复任务维护仍提示需从桌面应用打开。
+- 未在用户的 Windows 电脑上安装验收，也未在 OnePlus Ace 2 / Android 16 实机验收；之前报告的 Android 启动即闪退问题因此仍未确认是否解决。
+- 浏览器预览不具备 Tauri 原生桥接，因此任务数据与重复任务维护仍提示需从桌面应用打开。
 - 本地 `cargo test --lib` 显示 610 项通过、4 项忽略、0 项失败，但 Windows 进程在汇总后未退出；手动中断后退出码为 1，不记为命令完整成功，完整 Rust 结果以 GitHub CI 为准。
 
 ### 怎么验证的
 
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（57 个文件、421 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.64）、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均完成且退出码为 0。前端构建仍有既存动态导入分块告警。
 - 本地 Vite 预览成功加载恢复后的侧栏与页面导航；浏览器环境不能读取桌面任务数据库，也不作为 Windows / Android 实机验收。
+- PR #44 已合并；PR CI run 215（`39534817522`）和 main CI run 216（`39535470813`）通过。Release workflow run 53（`39536025172`）的 Android 构建、Windows 构建、安装包签名校验、篡改拒绝校验、APK 上传和公开发布步骤均成功。
+- Android ARM64 APK：38,277,378 字节，SHA-256 `c9a9843a5c5a140e6e22fbf2e8ebe55b05100a4b7e086e472757287f93d4839f`。Windows x64 安装包：24,860,002 字节，SHA-256 `b913937ec5495a67307fb6b3b884e60492f568113264a764de75a087183e1094`；附带 updater 签名文件。
 - `git diff --check` 通过；前端恢复操作仅涉及 `src/`，未改用户数据或数据库迁移。
 
 ### 相关文档
 
 - [0.4.64 发布说明](../RELEASE_NOTES.md)
+- [GitHub Release v0.4.64](https://github.com/PLA0185/lumen/releases/tag/v0.4.64)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.64/Lumen_0.4.64_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.64/Lumen_0.4.64_x64-setup.exe)
+- [PR #44：回退跨平台界面重构](https://github.com/PLA0185/lumen/pull/44)
 - [README 文档索引](../README.md#文档索引)
 - [重构前界面基线 v0.4.58](https://github.com/PLA0185/lumen/tree/v0.4.58)
