@@ -4905,3 +4905,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.62/Lumen_0.4.62_android_arm64.apk)
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.62/Lumen_0.4.62_x64-setup.exe)
 - [PR #39：修正新建任务表单字段对齐](https://github.com/PLA0185/lumen/pull/39)
+
+## 第 119 轮 · 2026-10-20 · 修正侧栏新建任务入口换行
+
+### 做了
+
+- 修复侧栏“新建任务”按钮的加号和文字上下错位。样式文件在按钮基础规则前混入了字面量 `\n`，导致浏览器将 `.sidebar__create` 布局规则误解析成无效选择器；清除后网格规则正常生效，入口恢复为图标、名称、快捷键同一行。
+- 应用版本升至 0.4.63；更新发布说明和 README，并准备 Windows x64 与 Android ARM64 同版发布。
+
+### 没做到
+
+- 尚未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；设备无法连接。本轮界面验证使用本地 Vite 预览，不代表桌面安装版或手机 WebView 已实机验证。
+- 本地 `cargo test --lib` 汇总为 610 项通过、4 项忽略、0 项失败，但进程在汇总后没有退出；为继续门禁而手动中断，退出码为 1，因此本地该命令不记为完整成功。
+- 本轮 PR CI、签名安装包与 Android APK 尚未完成；待发布流程核对后补记。
+
+### 怎么验证的
+
+- 在 511×616 浏览器预览中复现用户截图里的上下错位；修正 CSS 后刷新确认按钮边框、图标、文字和快捷键恢复单行横向排列。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo check --all-targets`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建提示为现存的动态导入分块告警。
+- `cargo test --lib` 的本地汇总和进程退出限制见“没做到”；Release workflow 会再次运行发布前完整门禁，最终以 GitHub CI 为准。
+- `git diff --check` 无空白错误。跟踪文件扫描未发现密钥、数据库、日志、安装包或构建目录；密钥模式仅命中 AGENTS.md、docs/remediation-report.md 与此说明文档中的模式描述，未发现密钥数据。
+
+### 相关文档
+
+- [0.4.63 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+- [第 118 轮 0.4.62 发布资产记录](#第-118-轮--2026-10-20--完成-0462-桌面与安卓版发布)
