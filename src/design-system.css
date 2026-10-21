@@ -1484,7 +1484,7 @@ dialog::backdrop,
     grid-template-columns: minmax(0, 1fr);
   }
 }
-\n/* ── Lumen Workbench: page composition and task-flow hierarchy ────────── */
+/* ── Lumen Workbench: page composition and task-flow hierarchy ────────── */
 .sidebar__create {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;

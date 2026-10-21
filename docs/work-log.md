@@ -4877,3 +4877,59 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.61 实际窗口排版整改](design-system/v0.4.61/REAL-WINDOW-FIXES.md)
 - [0.4.61 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
+
+## 第 118 轮 · 2026-10-20 · 完成 0.4.62 桌面与安卓版发布
+
+### 做了
+
+- 完成第 117 轮新建任务表单对齐修复的 0.4.62 版本发布；Windows x64 安装包与 Android ARM64 APK 已作为同一个 GitHub Release 的资产公开，保留既有用户数据与更新签名链。
+- Windows 安装包已通过发布流程中的签名验证与篡改拒绝检查；安卓版使用本轮 release workflow 构建的签名 APK。
+- 补充记录正式发布资产的 SHA-256，便于核对下载文件。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 实机上安装本次 APK；设备当前无法连接，本轮只能确认 APK 已构建、签名并上传，不能声称实机启动问题已验证解决。
+- 未在 Windows 用户设备上进行安装后交互验收；本轮的 UI 排版检查来自本地浏览器预览，Windows 安装包验签与构建门禁通过不等于完整实机体验验收。
+
+### 怎么验证的
+
+- GitHub Release workflow `39388439256` 的 Android job 成功；Windows job 完成发布前完整门禁、NSIS 安装包签名和篡改拒绝验证，并将 APK 上传至同一 Release。Release 页面显示 `v0.4.62` 已公开。
+- Release 资产核对：`Lumen_0.4.62_android_arm64.apk` 为 36.5 MB，SHA-256 `a4f8e677f794ea8d32a989cc8579c419bc146f87d22a42544b8e9c32f25c2d4c`；`Lumen_0.4.62_x64-setup.exe` 为 23.7 MB，SHA-256 `25cf8141fda49944360c46084b3d6319d3debb596ccf4cd8826ce7c81854abeb`。两者均来自 `v0.4.62` Release Assets。
+- 第 117 轮代码 PR #39 已合并；PR CI 和合并后的 main CI 的前端与 Rust job 均成功。第 117 轮中本地 `cargo test --lib` 的进程退出异常已如实记录，完整 Rust 测试结果以 GitHub CI 为准。
+- 本轮只做发布资产读取和文档补记；未重复运行本地测试套件。`git diff --check` 在提交前检查。
+
+### 相关文档
+
+- [0.4.62 发布说明](../RELEASE_NOTES.md)
+- [GitHub Release v0.4.62](https://github.com/PLA0185/lumen/releases/tag/v0.4.62)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.62/Lumen_0.4.62_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.62/Lumen_0.4.62_x64-setup.exe)
+- [PR #39：修正新建任务表单字段对齐](https://github.com/PLA0185/lumen/pull/39)
+
+## 第 119 轮 · 2026-10-21 · 修正新建入口与任务列表对齐
+
+### 做了
+
+- 修复侧栏“新建任务”按钮的加号和文字上下错位。样式文件在按钮基础规则前混入了字面量 `\n`，导致浏览器将 `.sidebar__create` 布局规则误解析成无效选择器；清除后网格规则正常生效，入口恢复为图标、名称、快捷键同一行。
+- 根据后续截图修复任务列表与标题左边缘错开的问题：浏览器默认给 `<ul>` 留出 40px 左缩进，而 `.tasklist` 只清除了圆点、没有清除内边距。为 `.tasklist` 明确设置 `padding: 0`，任务勾选框和文字回到列表标题左侧，不再空出一大块区域。
+- 应用版本升至 0.4.63；更新发布说明和 README，并准备 Windows x64 与 Android ARM64 同版发布。
+
+### 没做到
+
+- 尚未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；设备无法连接。本轮界面验证使用本地 Vite 预览，不代表桌面安装版或手机 WebView 已实机验证。
+- 本地 `cargo test --lib` 汇总为 610 项通过、4 项忽略、0 项失败，但进程在汇总后没有退出；为继续门禁而手动中断，退出码为 1，因此本地该命令不记为完整成功。
+- Windows 签名安装包与 Android APK 尚未发布；本轮 CI 已通过，但还没有运行发布工作流。
+
+### 怎么验证的
+
+- 在 511×616 浏览器预览中复现用户截图里的上下错位；修正 CSS 后刷新确认按钮边框、图标、文字和快捷键恢复单行横向排列。
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo check --all-targets`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建提示为现存的动态导入分块告警。
+- `cargo test --lib` 的本地汇总和进程退出限制见“没做到”；Release workflow 会再次运行发布前完整门禁，最终以 GitHub CI 为准。
+- GitHub PR #41 CI（run 207）前端与 Rust job 均成功，包含前端类型检查、422 项前端测试、构建、lint、Rust 格式检查、编译、单元/集成测试与无豁免 Clippy。
+- `git diff --check` 无空白错误。跟踪文件扫描未发现密钥、数据库、日志、安装包或构建目录；密钥模式仅命中 AGENTS.md、docs/remediation-report.md 与此说明文档中的模式描述，未发现密钥数据。
+
+### 相关文档
+
+- [0.4.63 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+- [第 118 轮 0.4.62 发布资产记录](#第-118-轮--2026-10-20--完成-0462-桌面与安卓版发布)
