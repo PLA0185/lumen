@@ -4906,7 +4906,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.62/Lumen_0.4.62_x64-setup.exe)
 - [PR #39：修正新建任务表单字段对齐](https://github.com/PLA0185/lumen/pull/39)
 
-## 第 119 轮 · 2026-10-20 · 修正侧栏新建任务入口换行
+## 第 119 轮 · 2026-10-21 · 修正新建入口与任务列表对齐
 
 ### 做了
 
@@ -4918,13 +4918,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 尚未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；设备无法连接。本轮界面验证使用本地 Vite 预览，不代表桌面安装版或手机 WebView 已实机验证。
 - 本地 `cargo test --lib` 汇总为 610 项通过、4 项忽略、0 项失败，但进程在汇总后没有退出；为继续门禁而手动中断，退出码为 1，因此本地该命令不记为完整成功。
-- 本轮 PR CI、签名安装包与 Android APK 尚未完成；待发布流程核对后补记。
+- Windows 签名安装包与 Android APK 尚未发布；本轮 CI 已通过，但还没有运行发布工作流。
 
 ### 怎么验证的
 
 - 在 511×616 浏览器预览中复现用户截图里的上下错位；修正 CSS 后刷新确认按钮边框、图标、文字和快捷键恢复单行横向排列。
 - `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（422 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`、`cargo check --all-targets`、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建提示为现存的动态导入分块告警。
 - `cargo test --lib` 的本地汇总和进程退出限制见“没做到”；Release workflow 会再次运行发布前完整门禁，最终以 GitHub CI 为准。
+- GitHub PR #41 CI（run 207）前端与 Rust job 均成功，包含前端类型检查、422 项前端测试、构建、lint、Rust 格式检查、编译、单元/集成测试与无豁免 Clippy。
 - `git diff --check` 无空白错误。跟踪文件扫描未发现密钥、数据库、日志、安装包或构建目录；密钥模式仅命中 AGENTS.md、docs/remediation-report.md 与此说明文档中的模式描述，未发现密钥数据。
 
 ### 相关文档
