@@ -1906,6 +1906,9 @@ dialog::backdrop,
   grid-template-columns: minmax(238px, 286px) minmax(0, 1fr);
   gap: 16px;
 }
+.memos__workspace--canvas {
+  grid-template-columns: minmax(0, 1fr);
+}
 .memos__list {
   position: sticky;
   top: 8px;
