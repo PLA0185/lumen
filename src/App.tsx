@@ -1,6 +1,5 @@
 import { WeeklyRecurringView } from './components/WeeklyRecurringView'
 import { TodayDateSelector } from './components/TodayDateSelector'
-import { TodayOverview } from './components/TodayOverview'
 /**
  * 应用外壳：侧边栏 + 顶栏 + 内容区。
  *
@@ -513,15 +512,7 @@ export default function App() {
   return (
     <>
     <div className={`app${isAndroid ? ' app--android' : ' app--windows'}`}>
-      <Sidebar
-        current={view}
-        onSelect={navigate}
-        counts={counts}
-        version={appInfo?.version}
-        mobileOpen={isAndroid && mobileMenuOpen}
-        onNew={() => { setCreationContext(undefined); setShowQuickAdd((value) => !value) }}
-        canCreate={IMPLEMENTED_VIEWS.has(view) && !ORGANIZE_VIEWS.has(view) && !['trash', 'completed', 'settings', 'stats', 'assistant', 'knowledge', 'nutrition', 'memos', 'flows'].includes(view)}
-      />
+      <Sidebar current={view} onSelect={navigate} counts={counts} version={appInfo?.version} mobileOpen={isAndroid && mobileMenuOpen} />
       {isAndroid && mobileMenuOpen && <button type="button" className="mobile-sidebar-backdrop" aria-label="关闭导航菜单" onClick={() => setMobileMenuOpen(false)} />}
 
       <div className="main">
@@ -602,7 +593,6 @@ export default function App() {
             <button
               type="button"
               className="btn btn--primary btn--sm"
-              hidden={!isAndroid}
               onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
               disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant'}
               title="新建任务（Ctrl+N）"
@@ -1090,7 +1080,7 @@ function TaskArea({
               ? `没有找到包含「${search.trim()}」的任务。可以换个关键词，或清空搜索查看全部。`
               : view === 'trash'
                 ? '删除的任务会先进入回收站，可随时恢复。'
-                : '按 Ctrl+N 或点击左侧「新建任务」开始添加。也可以直接写「明天 10:00 开会」。'}
+                : '按 Ctrl+N 或点击右上角「新建」开始添加。也可以直接写「明天 10:00 开会」。'}
           </div>
           {!isSearch && view !== 'trash' && view !== 'completed' && (
             <div className="state__actions">
@@ -1104,8 +1094,11 @@ function TaskArea({
     )
   }
 
-  const renderTask = (t: Task) => (
-    <TaskCard
+  return (
+    <>
+      <ul className="tasklist">
+        {tasks.map((t) => (
+          <TaskCard
             key={t.id}
             task={t}
             mode={view === 'trash' ? 'trash' : 'normal'}
@@ -1125,10 +1118,14 @@ function TaskArea({
               if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
             }}
           />
-  )
-  const renderTaskList = (items: Task[]) => <ul className="tasklist">{items.map(renderTask)}</ul>
-  const loadMore = (
-    <LoadMore
+        ))}
+      </ul>
+
+      {/*
+        分页的可见出口（整改任务书 §4.2：不得静默只展示前 N 条）。
+        只要还有没加载完的任务，这里就必须明确写出来，并给一个能继续加载的入口。
+      */}
+      <LoadMore
         loaded={tasks.length}
         total={totalCount}
         hasMore={hasMore}
@@ -1136,68 +1133,8 @@ function TaskArea({
         onLoadMore={onLoadMore}
         onReload={onRetry}
       />
+    </>
   )
-
-  if (view === 'today') {
-    return (
-      <section className="today-workspace" aria-label="当天工作区">
-        <div className="today-workspace__list">
-          <header className="workspace-section-heading">
-            <div>
-              <span>执行清单</span>
-              <h2>待处理任务</h2>
-              <p>已加载 {tasks.length} 项，共 {totalCount} 项</p>
-            </div>
-            <button type="button" className="btn btn--primary" onClick={onNew}>
-              <Icon name="plus" size={15} /> 新建任务
-            </button>
-          </header>
-          {renderTaskList(tasks)}
-          {loadMore}
-        </div>
-        <TodayOverview tasks={tasks} totalCount={totalCount} onOpenTask={onEdit} />
-      </section>
-    )
-  }
-
-  if (view === 'week') {
-    const grouped = new Map<string, Task[]>()
-    for (const task of tasks) {
-      const value = task.plannedAt ?? task.dueAt
-      const key = value ? format(new Date(value), 'yyyy-MM-dd') : 'unscheduled'
-      grouped.set(key, [...(grouped.get(key) ?? []), task])
-    }
-    const groups = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b))
-    return (
-      <div className="week-agenda" aria-label="本周任务安排">
-        {groups.map(([key, items]) => {
-          const date = key === 'unscheduled' ? null : new Date(`${key}T12:00:00`)
-          const weekday = date ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()] : ''
-          const todayKey = format(new Date(), 'yyyy-MM-dd')
-          const label = key === 'unscheduled' ? '未指定日期' : key === todayKey ? '今天' : weekday
-          return (
-            <section className="week-agenda__day" key={key}>
-              <header className="week-agenda__heading">
-                <div className="week-agenda__date">
-                  <strong>{date ? format(date, 'd') : '—'}</strong>
-                  <span>{label}</span>
-                  {date && <small>{format(date, 'M 月')}</small>}
-                </div>
-                <button type="button" className="btn btn--ghost btn--sm" disabled={!date} onClick={() => date && onCreateCalendarTask(format(date, 'yyyy-MM-dd'))}>
-                  <Icon name="plus" size={14} /> 添加到这天
-                </button>
-              </header>
-              {renderTaskList(items)}
-            </section>
-          )
-        })}
-        {groups.length === 0 && <p className="week-agenda__empty">本周还没有安排。可从任意一天添加任务。</p>}
-        {loadMore}
-      </div>
-    )
-  }
-
-  return <>{renderTaskList(tasks)}{loadMore}</>
 }
 
 /**

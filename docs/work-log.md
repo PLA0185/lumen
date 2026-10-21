@@ -4985,3 +4985,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.63/Lumen_0.4.63_android_arm64.apk)
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.63/Lumen_0.4.63_x64-setup.exe)
 - [第 120 轮：流程画布宽度修复](#第-120-轮--2026-10-21--修复流程画布宽度被压缩)
+
+## 第 122 轮 · 2026-10-21 · 回退整轮 UI 重构
+
+### 做了
+
+- 按用户澄清，将回退范围从单个流程画布改为整轮 UI 重构：前端 `src/` 恢复到 v0.4.58（0.4.59 整体视觉重构之前）的实现，撤销 v0.4.59 / v0.4.60 页面重构和后续排版补丁；未改数据库、同步内容或 Rust 业务模块。
+- 保留该基线中已有的日历、任务、备忘、流程、知识库、压缩包导入等能力；恢复之前，任务表单、日历、备忘和流程页面等前端实现均以 v0.4.58 文件为准。
+- 版本更新为 0.4.64，并更新发布说明和 README；准备按用户长期要求同步发布 Windows 与 Android ARM64。
+
+### 没做到
+
+- Windows 安装包与 Android ARM64 APK 尚未构建或发布；需等待本轮 PR、主分支 CI 和发布工作流。
+- 未在 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收。浏览器预览不具备 Tauri 原生桥接，因此任务数据与重复任务维护仍提示需从桌面应用打开。
+- 本地 `cargo test --lib` 显示 610 项通过、4 项忽略、0 项失败，但 Windows 进程在汇总后未退出；手动中断后退出码为 1，不记为命令完整成功，完整 Rust 结果以 GitHub CI 为准。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（57 个文件、421 项）、`pnpm build`、`pnpm lint`、`pnpm check:version`（0.4.64）、`cargo fmt --check` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均完成且退出码为 0。前端构建仍有既存动态导入分块告警。
+- 本地 Vite 预览成功加载恢复后的侧栏与页面导航；浏览器环境不能读取桌面任务数据库，也不作为 Windows / Android 实机验收。
+- `git diff --check` 通过；前端恢复操作仅涉及 `src/`，未改用户数据或数据库迁移。
+
+### 相关文档
+
+- [0.4.64 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)
+- [重构前界面基线 v0.4.58](https://github.com/PLA0185/lumen/tree/v0.4.58)

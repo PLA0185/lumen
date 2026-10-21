@@ -320,25 +320,23 @@ export function SettingsView({ isAndroid = false }: { isAndroid?: boolean }) {
 
   return (
     <div className="settings">
-      <div className="settings-layout">
-      <nav className="settings__nav" aria-label="设置分类">
+      <div className="tabs" role="tablist" aria-label="设置分类">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
-            aria-current={tab === t.id ? 'page' : undefined}
-            className="settings__nav-item"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`tab${tab === t.id ? ' tab--active' : ''}`}
             onClick={() => {
               setTab(t.id)
               setError(null)
             }}
           >
             {t.label}
-            <span aria-hidden="true">›</span>
           </button>
         ))}
-      </nav>
-      <div className="settings__content">
+      </div>
 
       {error && (
         <div className="alert alert--error" role="alert" style={{ marginTop: 12 }}>
@@ -950,8 +948,6 @@ export function SettingsView({ isAndroid = false }: { isAndroid?: boolean }) {
 
       {/* ---------------------------- 软件更新（§9） ---------------------------- */}
       {tab === 'about' && !isAndroid && <UpdatePanel currentVersion={appInfo?.version} />}
-      </div>
-      </div>
     </div>
   )
 }
