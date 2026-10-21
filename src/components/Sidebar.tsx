@@ -124,11 +124,9 @@ interface SidebarProps {
   counts: Partial<Record<ViewId, number>>
   version?: string
   mobileOpen?: boolean
-  onNew?: () => void
-  canCreate?: boolean
 }
 
-export function Sidebar({ current, onSelect, counts, version, mobileOpen = false, onNew, canCreate = true }: SidebarProps) {
+export function Sidebar({ current, onSelect, counts, version, mobileOpen = false }: SidebarProps) {
   return (
     <aside className={`sidebar${mobileOpen ? ' sidebar--mobile-open' : ''}`}>
       <div className="sidebar__brand">
@@ -140,14 +138,6 @@ export function Sidebar({ current, onSelect, counts, version, mobileOpen = false
         <span className="sidebar__title">Lumen</span>
         {version && <span className="sidebar__version">v{version}</span>}
       </div>
-
-      {onNew && (
-        <button type="button" className="sidebar__create" onClick={onNew} disabled={!canCreate} title="新建任务（Ctrl+N）">
-          <span className="sidebar__create-icon"><Icon name="plus" size={16} /></span>
-          <span>新建任务</span>
-          <kbd>Ctrl N</kbd>
-        </button>
-      )}
 
       <nav className="sidebar__nav" aria-label="主导航">
         {NAV_GROUPS.map((g) => (

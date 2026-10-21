@@ -251,14 +251,12 @@ export function QuickAdd({
           新建到：{context.label}
         </p>
       )}
-      <label className="quickadd__title-label" htmlFor="quickadd-title">任务标题</label>
       <div className="quickadd__row">
         {compact && (
           <span className="floating__draft-check" aria-hidden="true" />
         )}
         <input
           ref={inputRef}
-          id="quickadd-title"
           className="quickadd__input selectable"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -317,141 +315,135 @@ export function QuickAdd({
 
       {optionsOpen && (
         <div className="quickadd__row quickadd__row--meta">
-          <div className="quickadd__schedule-grid">
-            {repeat === 'none' && (
-              <label className="field field--quickadd">
-                <span className="quickadd__field-label">计划日期</span>
-                <input
-                  type="date"
-                  value={dateStr}
-                  aria-label="计划执行日期"
-                  title="选择任务安排的具体日期"
-                  onChange={(e) => {
-                    setDateStr(e.target.value)
-                    setDateTouched(true)
-                  }}
-                />
-              </label>
-            )}
-            {repeat === 'none' && (
-              <label className="field field--quickadd">
-                <span className="quickadd__field-label">时间</span>
-                <input
-                  type="time"
-                  value={timeStr}
-                  aria-label="计划执行时间（留空表示仅日期）"
-                  title="选择具体执行时间；留空表示仅安排日期"
-                  onChange={(e) => {
-                    setTimeStr(e.target.value)
-                    setDateTouched(true)
-                  }}
-                />
-              </label>
-            )}
-            {repeat === 'none' && (
-              <div className="quickadd__date-presets" role="group" aria-label="计划日期快捷选择">
-                <span className="quickadd__field-label">快捷选择</span>
-                <div className="quickadd__date-preset-actions">
-                  <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(new Date())}>
-                    今天
-                  </button>
-                  <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(addDays(new Date(), 1))}>
-                    明天
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--quiet btn--sm"
-                    title="设为下周一；之后可以在日期控件里改成下周其他日期"
-                    onClick={() => selectDatePreset(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }))}
-                  >
-                    下周
-                  </button>
-                  {dateStr && (
-                    <button
-                      type="button"
-                      className="btn btn--quiet btn--sm quickadd__date-clear"
-                      onClick={() => {
-                        setDateStr('')
-                        setTimeStr('')
-                        setDateTouched(true)
-                      }}
-                    >
-                      清除日期
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="quickadd__attributes-grid">
-            <label className="field field--quickadd">
-              <span className="quickadd__field-label">优先级</span>
-              <select
-                value={priority}
-                aria-label="优先级"
-                onChange={(e) => setPriority(Number(e.target.value))}
-              >
-                <option value={0}>无</option>
-                <option value={1}>低</option>
-                <option value={2}>中</option>
-                <option value={3}>高</option>
-              </select>
-            </label>
-
-            {/* 周期跨度：用于"这周/这个月做完就行"的任务。
-              选中后**不需要**填具体日期，因此这里不做联动清空，
-              用户想同时指定日期也可以。 */}
-            {
-              <label className="field field--quickadd">
-                <span className="quickadd__field-label">周期</span>
-                <select
-                  value={periodType}
-                  aria-label="周期跨度"
-                  title="标记为某个周期内完成即可，不必绑定到具体某一天"
-                  onChange={(e) => {
-                    setPeriodTouched(true)
-                    setPeriodType(e.target.value as PeriodType)
-                  }}
-                >
-                  <option value="none">不限</option>
-                  <option value="day">今日内</option>
-                  <option value="week">本周内</option>
-                  <option value="month">本月内</option>
-                  <option value="quarter">本季度内</option>
-                  <option value="year">今年内</option>
-                </select>
-              </label>
-            }
-            <label className="field field--quickadd">
-              <span className="quickadd__field-label">重复</span>
-              <select
-                aria-label="任务重复"
-                value={repeat}
+          {repeat === 'none' && (
+            <label className="field">
+              计划日期
+              <input
+                type="date"
+                value={dateStr}
+                aria-label="计划执行日期"
+                title="选择任务安排的具体日期"
                 onChange={(e) => {
-                  const next = e.target.value
-                  setRepeat(next)
-                  if (next !== 'none')
-                    setRule({
-                      rrule: repeatRrule(next, rule.rrule),
-                      dtstartLocal:
-                        rule.dtstartLocal ||
-                        `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
-                      hasStartTime: rule.dtstartLocal
-                        ? rule.hasStartTime
-                        : Boolean(timeStr),
-                    })
+                  setDateStr(e.target.value)
+                  setDateTouched(true)
+                }}
+              />
+            </label>
+          )}
+          {repeat === 'none' && (
+            <label className="field">
+              时间
+              <input
+                type="time"
+                value={timeStr}
+                aria-label="计划执行时间（留空表示仅日期）"
+                title="选择具体执行时间；留空表示仅安排日期"
+                onChange={(e) => {
+                  setTimeStr(e.target.value)
+                  setDateTouched(true)
+                }}
+              />
+            </label>
+          )}
+          {repeat === 'none' && (
+            <div className="quickadd__date-presets" role="group" aria-label="计划日期快捷选择">
+              <span>快捷选择</span>
+              <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(new Date())}>
+                今天
+              </button>
+              <button type="button" className="btn btn--quiet btn--sm" onClick={() => selectDatePreset(addDays(new Date(), 1))}>
+                明天
+              </button>
+              <button
+                type="button"
+                className="btn btn--quiet btn--sm"
+                title="设为下周一；之后可以在日期控件里改成下周其他日期"
+                onClick={() => selectDatePreset(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }))}
+              >
+                下周
+              </button>
+            </div>
+          )}
+          <label className="field">
+            优先级
+            <select
+              value={priority}
+              aria-label="优先级"
+              onChange={(e) => setPriority(Number(e.target.value))}
+            >
+              <option value={0}>无</option>
+              <option value={1}>低</option>
+              <option value={2}>中</option>
+              <option value={3}>高</option>
+            </select>
+          </label>
+
+          {/* 周期跨度：用于"这周/这个月做完就行"的任务。
+            选中后**不需要**填具体日期，因此这里不做联动清空，
+            用户想同时指定日期也可以。 */}
+          {
+            <label className="field">
+              周期
+              <select
+                value={periodType}
+                aria-label="周期跨度"
+                title="标记为某个周期内完成即可，不必绑定到具体某一天"
+                onChange={(e) => {
+                  setPeriodTouched(true)
+                  setPeriodType(e.target.value as PeriodType)
                 }}
               >
-                <option value="none">不重复</option>
-                <option value="daily">每天</option>
-                <option value="weekly">每周</option>
-                <option value="monthly">每月</option>
-                <option value="quarterly">每季度</option>
-                <option value="yearly">每年</option>
-                <option value="custom">自定义规则</option>
+                <option value="none">不限</option>
+                <option value="day">今日内</option>
+                <option value="week">本周内</option>
+                <option value="month">本月内</option>
+                <option value="quarter">本季度内</option>
+                <option value="year">今年内</option>
               </select>
             </label>
-          </div>
+          }
+          <label className="field">
+            重复
+            <select
+              aria-label="任务重复"
+              value={repeat}
+              onChange={(e) => {
+                const next = e.target.value
+                setRepeat(next)
+                if (next !== 'none')
+                  setRule({
+                    rrule: repeatRrule(next, rule.rrule),
+                    dtstartLocal:
+                      rule.dtstartLocal ||
+                      `${dateStr || format(new Date(), 'yyyy-MM-dd')}T${timeStr || '00:00'}:00`,
+                    hasStartTime: rule.dtstartLocal
+                      ? rule.hasStartTime
+                      : Boolean(timeStr),
+                  })
+              }}
+            >
+              <option value="none">不重复</option>
+              <option value="daily">每天</option>
+              <option value="weekly">每周</option>
+              <option value="monthly">每月</option>
+              <option value="quarterly">每季度</option>
+              <option value="yearly">每年</option>
+              <option value="custom">自定义规则</option>
+            </select>
+          </label>
+          {repeat === 'none' && dateStr && (
+            <button
+              type="button"
+              className="btn btn--quiet btn--sm"
+              onClick={() => {
+                setDateStr('')
+                setTimeStr('')
+                setDateTouched(true)
+              }}
+            >
+              清除日期
+            </button>
+          )}
         </div>
       )}
 
@@ -491,7 +483,7 @@ export function QuickAdd({
               placeholder={'例如：\n准备资料\n完成核对\n提交结果'}
             />
           </label>
-          <label className="field field--quickadd quickadd__subtask-mode">
+          <label className="field">
             子任务完成方式
             <select
               value={subtaskCompletionMode}

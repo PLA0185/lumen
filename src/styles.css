@@ -190,9 +190,7 @@
 html,
 body,
 #root {
-  height: 100vh;
-  height: 100dvh;
-  min-height: 0;
+  height: 100%;
   margin: 0;
 }
 
@@ -296,10 +294,8 @@ select {
 /* ----------------------------- 布局骨架 ----------------------------- */
 .app {
   display: grid;
-  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) 1fr;
   height: 100%;
-  min-height: 0;
   overflow: hidden;
 }
 
@@ -652,7 +648,6 @@ select {
   gap: 6px;
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0;
   list-style: none;
 }
 
@@ -1049,7 +1044,6 @@ select {
 
 /* ----------------------------- 快速添加表单 ----------------------------- */
 .quickadd {
-  container: quickadd / inline-size;
   padding: 12px 13px;
   background: var(--c-surface);
   border: 1px solid var(--c-accent);
@@ -1061,16 +1055,6 @@ select {
   display: flex;
   gap: 8px;
   align-items: center;
-}
-
-.quickadd__title-label {
-  display: block;
-  margin: 4px 0 6px;
-  color: var(--c-text-2);
-  font-size: 0.82em;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: left;
 }
 
 .quickadd__actions {
@@ -1087,137 +1071,30 @@ select {
 
 .quickadd__input {
   flex: 1;
-  min-width: 0;
-  box-sizing: border-box;
-  height: 40px;
-  padding: 0 12px;
-  color: var(--c-text);
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
+  height: 34px;
+  padding: 0 10px;
+  background: transparent;
+  border: none;
 }
 
 .quickadd__input:focus {
-  border-color: var(--c-accent);
-  outline: 2px solid color-mix(in srgb, var(--c-accent) 24%, transparent);
-  outline-offset: 1px;
+  outline: none;
 }
 
 .quickadd__row--meta {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 14px;
-  margin-top: 14px;
-  padding-top: 14px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--c-border);
 }
 
-.quickadd__schedule-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 10px 12px;
-  min-width: 0;
-}
-
-.quickadd__attributes-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: end;
-  gap: 10px 12px;
-  min-width: 0;
-}
-
-.field--quickadd {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  min-width: 0;
-  font-size: 0.8em;
-  line-height: 1.3;
-  text-align: left;
-}
-
-.quickadd__field-label {
-  display: block;
-  color: var(--c-text-2);
-  font-size: 0.95em;
-  font-weight: 600;
-  line-height: 1.35;
-  text-align: left;
-}
-
-.field--quickadd input[type='date'],
-.field--quickadd input[type='time'],
-.field--quickadd select {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 36px;
-  padding: 0 9px;
-}
-
-.quickadd__subtask-mode {
-  width: min(100%, 260px);
-}
-
 .quickadd__date-presets {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 7px;
-  align-items: start;
-  min-width: 0;
-  text-align: left;
-}
-
-.quickadd__date-preset-actions {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 4px;
   align-items: center;
-  min-width: 0;
-}
-
-.quickadd__date-clear {
-  margin-left: 0;
-}
-
-.quickadd--compact .quickadd__title-label { display: none; }
-
-@container quickadd (inline-size <= 1000px) {
-  .quickadd__row--meta { grid-template-columns: minmax(0, 1fr); }
-}
-
-@container quickadd (inline-size <= 480px) {
-  .quickadd__attributes-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .quickadd__attributes-grid .field:last-child {
-    grid-column: 1 / -1;
-  }
-}
-
-@container quickadd (inline-size <= 360px) {
-  .quickadd__schedule-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .quickadd__date-presets {
-    grid-column: 1 / -1;
-  }
-}
-
-.quickadd .formrow,
-.quickadd .formlabel {
-  text-align: left;
-}
-
-.quickadd__row--meta + .formrow {
-  margin-top: 12px;
+  color: var(--c-text-3);
+  font-size: 0.85em;
 }
 
 .field {
@@ -1226,17 +1103,6 @@ select {
   align-items: center;
   font-size: 0.85em;
   color: var(--c-text-3);
-}
-
-/* Keep QuickAdd's vertical fields from inheriting the later generic .field centering. */
-.quickadd .field--quickadd {
-  align-items: stretch;
-  text-align: left;
-}
-
-.quickadd .field--quickadd > .quickadd__field-label {
-  width: 100%;
-  text-align: left;
 }
 
 .field input[type='date'],
