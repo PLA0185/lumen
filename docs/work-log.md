@@ -5046,3 +5046,33 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [迁移 0017：场景便签](../src-tauri/migrations/0017_scene_notes.sql)
 - [0.4.65 发布说明](../RELEASE_NOTES.md)
 - [README 文档索引](../README.md#文档索引)
+
+## 第 124 轮 · 2026-10-22 · 修复 Android 发布编译并完成 0.4.66 双端发布
+
+### 做了
+
+- 0.4.65 的 Android ARM64 发布构建发现关联备忘/流程跳转调用了 Android Tauri 窗口不支持的 `unminimize`；发布工作流在上传前失败，因此没有发布 0.4.65 安装包，也没有移动或重写该版本标签。
+- 在 0.4.66 中将最小化状态检查和恢复限定在桌面平台；Windows 仍可恢复已最小化的主窗口，Android 使用平台可用的窗口跳转方式。修复通过 PR #47 合并。
+- 重新执行签名发布，0.4.66 Windows x64 安装包和 Android ARM64 APK 均上传至同一公开 Release；Windows 安装包签名及篡改拒绝校验通过。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 实机安装并回归场景便签及既有 Android 功能；本轮只确认 Android ARM64 签名 APK 能在发布流水线成功构建并上传。
+- 未在真实 FNSKU 目标应用、多显示器和不同 DPI 环境验收场景匹配；此前限制仍适用。
+
+### 怎么验证的
+
+- 本地 `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.66）、`pnpm typecheck`、`pnpm test`（57 个文件、421 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo check --lib` 和 `cargo clippy --all-targets --all-features -- -D warnings` 均退出码为 0。
+- PR #47 的前端与 Rust CI（run 222）通过；Rust CI 包含完整测试与无豁免 Clippy。合并后的 main CI（run 223）通过。Release run 55 中 Android ARM64 构建、Windows 完整发版门禁、签名包构建、签名/篡改校验、APK 上传和 Release 发布步骤均成功。
+- Android ARM64 APK：38,512,706 字节，SHA-256 `cfff087f79a7d84bd8d6a83146831d6a17eb6f5e577412e804fe618e2ba20da9`。Windows x64 安装包：24,972,146 字节，SHA-256 `0efdda6df7201857e034e64e9042a31779a9bdaba52393092da84f42c68fb33b`；签名文件随包发布。
+- 测试使用临时数据库；未修改用户生产数据。`git diff --check` 通过。
+
+### 相关文档
+
+- [PR #47：修复 Android ARM64 发布编译](https://github.com/PLA0185/lumen/pull/47)
+- [GitHub Release v0.4.66](https://github.com/PLA0185/lumen/releases/tag/v0.4.66)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.66/Lumen_0.4.66_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.66/Lumen_0.4.66_x64-setup.exe)
+- [0.4.66 发布说明](../RELEASE_NOTES.md)
+- [智能场景便签说明](scene-notes.md)
+- [README 文档索引](../README.md#文档索引)
