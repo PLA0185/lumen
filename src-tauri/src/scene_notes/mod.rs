@@ -422,9 +422,15 @@ pub async fn scene_note_open_flow(
     window
         .show()
         .map_err(|error| AppError::internal(format!("打开 Lumen 主窗口失败：{error}")))?;
-    window
-        .unminimize()
-        .map_err(|error| AppError::internal(format!("恢复 Lumen 主窗口失败：{error}")))?;
+    #[cfg(not(target_os = "android"))]
+    if window
+        .is_minimized()
+        .map_err(|error| AppError::internal(format!("检查 Lumen 主窗口状态失败：{error}")))?
+    {
+        window
+            .unminimize()
+            .map_err(|error| AppError::internal(format!("恢复 Lumen 主窗口失败：{error}")))?;
+    }
     window
         .set_focus()
         .map_err(|error| AppError::internal(format!("聚焦 Lumen 主窗口失败：{error}")))?;
