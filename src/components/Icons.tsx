@@ -33,6 +33,7 @@ export type IconName =
   | 'board'
   | 'inbox'
   | 'list'
+  | 'scene'
   | 'period-week'
   | 'period-month'
   | 'period-quarter'
@@ -127,6 +128,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M8.5 6.2h12M8.5 12h12M8.5 17.8h12" />
       <path d="M3.6 6.2h.01M3.6 12h.01M3.6 17.8h.01" />
+    </>
+  ),
+  scene: (
+    <>
+      <circle cx="11" cy="12" r="7.7" />
+      <circle cx="11" cy="12" r="3.2" />
+      <path d="m16.8 5.2 1 2.2 2.2 1-2.2 1-1 2.2-1-2.2-2.2-1 2.2-1 1-2.2Z" />
     </>
   ),
   // 周期任务：同一个外框 + 由"粗到细"的内部刻度，

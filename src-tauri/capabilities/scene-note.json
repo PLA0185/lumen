@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "scene-note-window",
+  "description": "场景便签置顶窗口仅能监听应用事件并隐藏自身。",
+  "windows": ["scene-note"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-hide"
+  ]
+}

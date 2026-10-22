@@ -59,6 +59,7 @@ pub mod recurrence_subtasks;
 #[cfg(test)]
 mod remediation2_e2e;
 pub mod reminders;
+pub mod scene_notes;
 #[cfg(desktop)]
 pub mod shortcuts;
 pub mod stats;
@@ -207,6 +208,7 @@ pub fn run() {
             log::info!("数据库就绪：{}", db.db_path().display());
 
             app.manage(AppState::new(db));
+            app.manage(scene_notes::SceneRuntime::default());
 
             let handle = app.handle().clone();
 
@@ -273,6 +275,8 @@ pub fn run() {
                 // 6) 提醒调度（§4.3）
                 reminders::spawn(handle.clone());
                 cloud_sync::spawn(handle.clone());
+                #[cfg(desktop)]
+                scene_notes::spawn_monitor(handle.clone());
 
                 // 7) 统计今日未完成数并刷新菜单文字
                 #[cfg(desktop)]
@@ -464,6 +468,22 @@ pub fn run() {
             memos::memo_get,
             memos::memo_save,
             memos::memo_set_deleted,
+            scene_notes::repository::scene_rules_list,
+            scene_notes::repository::scene_rule_get,
+            scene_notes::repository::scene_rule_save,
+            scene_notes::repository::scene_rule_delete,
+            scene_notes::repository::scene_rule_set_enabled,
+            scene_notes::repository::scene_monitor_status,
+            scene_notes::repository::scene_monitor_set_enabled,
+            scene_notes::repository::scene_monitor_set_paused,
+            scene_notes::repository::scene_events_list,
+            scene_notes::scene_capture_arm,
+            scene_notes::scene_capture_cancel,
+            scene_notes::scene_test_arm,
+            scene_notes::scene_note_current,
+            scene_notes::scene_note_ack,
+            scene_notes::scene_note_snooze,
+            scene_notes::scene_note_open_flow,
             memo_package::memo_package_export,
             memo_package::memo_package_import,
             memo_archive::memo_archive_preview,

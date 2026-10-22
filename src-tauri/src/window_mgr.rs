@@ -40,6 +40,8 @@ pub const MAIN: &str = "main";
 pub const FLOATING: &str = "floating";
 /// 快速添加窗口标签
 pub const QUICK_ADD: &str = "quick-add";
+/// 场景触发的独立便签窗口
+pub const SCENE_NOTE: &str = "scene-note";
 
 /// 悬浮窗默认宽度（紧凑但不拥挤）
 const FLOATING_W: f64 = 450.0;
@@ -109,6 +111,8 @@ pub struct WindowConfig {
     pub shortcut_today: String,
     /// 呼出悬浮窗并恢复可交互状态的全局快捷键
     pub shortcut_floating: String,
+    /// 对允许程序执行场景采集或规则测试的一次性快捷键
+    pub scene_capture_shortcut: String,
 }
 
 impl Default for WindowConfig {
@@ -134,6 +138,7 @@ impl Default for WindowConfig {
             shortcut_quick_add: "CmdOrCtrl+Alt+N".to_string(),
             shortcut_today: "CmdOrCtrl+Alt+D".to_string(),
             shortcut_floating: "Alt+Q".to_string(),
+            scene_capture_shortcut: "Ctrl+Alt+Shift+S".to_string(),
         }
     }
 }
@@ -336,6 +341,62 @@ pub fn toggle_quick_add(app: &AppHandle) {
     }
 }
 
+/// 显示独立置顶便签。初次展示不请求焦点，避免把正在操作的业务窗口抢到后台。
+pub fn show_scene_note(app: &AppHandle) {
+    let app = app.clone();
+    let app_for_ui = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let existing = app_for_ui.get_webview_window(SCENE_NOTE);
+        if let Some(window) = existing.as_ref() {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.emit("scene-note-refresh", ());
+                return;
+            }
+        }
+        let window = if let Some(window) = existing {
+            window
+        } else {
+            let mut builder = WebviewWindowBuilder::new(
+                &app_for_ui,
+                SCENE_NOTE,
+                WebviewUrl::App("index.html".into()),
+            )
+            .title("Lumen 场景便签")
+            .inner_size(390.0, 280.0)
+            .min_inner_size(320.0, 180.0)
+            .resizable(true)
+            .decorations(false)
+            .always_on_top(true)
+            .focused(false)
+            .skip_taskbar(true)
+            .visible(false);
+            if let Ok(Some(monitor)) = app_for_ui.primary_monitor() {
+                let scale = monitor.scale_factor();
+                let size = monitor.size();
+                let width = 390.0;
+                let x = size.width as f64 / scale - width - 24.0;
+                builder = builder.position(x.max(0.0), 48.0);
+            }
+            match builder.build() {
+                Ok(window) => window,
+                Err(error) => {
+                    log::error!("创建场景便签窗口失败：{error}");
+                    return;
+                }
+            }
+        };
+        let _ = window.set_always_on_top(true);
+        let _ = window.show();
+        let _ = window.emit("scene-note-refresh", ());
+    });
+}
+
+pub fn hide_scene_note(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(SCENE_NOTE) {
+        let _ = window.hide();
+    }
+}
+
 /// 切换主窗口显隐（托盘与全局快捷键共用）
 pub fn toggle_main(app: &AppHandle) {
     let Some(w) = app.get_webview_window(MAIN) else {
@@ -470,6 +531,7 @@ pub async fn window_set_config(
         || cfg.shortcut_quick_add != old.shortcut_quick_add
         || cfg.shortcut_today != old.shortcut_today
         || cfg.shortcut_floating != old.shortcut_floating
+        || cfg.scene_capture_shortcut != old.scene_capture_shortcut
     {
         if let Err(e) = crate::shortcuts::reload(&app, &cfg) {
             // 快捷键注册失败不应让整个设置更新失败，但必须让用户知道
@@ -617,6 +679,7 @@ pub async fn window_reset_safe(
         shortcut_quick_add: old.shortcut_quick_add.clone(),
         shortcut_today: old.shortcut_today.clone(),
         shortcut_floating: old.shortcut_floating.clone(),
+        scene_capture_shortcut: old.scene_capture_shortcut.clone(),
         // 主窗口恢复为可见、非置顶、在任务栏显示
         main_show_in_taskbar: true,
         ..WindowConfig::default()

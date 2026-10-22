@@ -9,6 +9,7 @@ import { readText } from '@tauri-apps/plugin-clipboard-manager'
 import { installFreshPaste } from './lib/fresh-paste'
 import { installAppearance } from './lib/appearance'
 import { contentError } from './lib/content-assets'
+import { SceneNoteWindow } from './components/SceneNotesView'
 
 if ('__TAURI_INTERNALS__' in window) {
   const removePasteHandler = installFreshPaste(readText, () => {
@@ -71,6 +72,8 @@ function pickRoot(): React.ComponentType {
       return FloatingToday
     case 'quick-add':
       return QuickAddWindow
+    case 'scene-note':
+      return SceneNoteWindow
     default:
       return App
   }
@@ -84,7 +87,7 @@ if (!rootEl) {
 }
 
 // 给 body 打上窗口类型，便于 CSS 针对不同窗口调整（例如去掉外边距）
-document.body.dataset.window = Root === FloatingToday ? 'floating' : Root === QuickAddWindow ? 'quick-add' : 'main'
+document.body.dataset.window = Root === FloatingToday ? 'floating' : Root === QuickAddWindow ? 'quick-add' : Root === SceneNoteWindow ? 'scene-note' : 'main'
 
 void installAppearance(error => {
   const alert = document.createElement('div')

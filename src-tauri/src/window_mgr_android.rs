@@ -10,6 +10,10 @@ use crate::{
 };
 
 pub const MAIN: &str = "main";
+pub const SCENE_NOTE: &str = "scene-note";
+
+pub fn show_scene_note(_app: &AppHandle) {}
+pub fn hide_scene_note(_app: &AppHandle) {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -32,6 +36,7 @@ pub struct WindowConfig {
     pub shortcut_quick_add: String,
     pub shortcut_today: String,
     pub shortcut_floating: String,
+    pub scene_capture_shortcut: String,
 }
 
 impl Default for WindowConfig {
@@ -55,6 +60,7 @@ impl Default for WindowConfig {
             shortcut_quick_add: "CmdOrCtrl+Alt+N".into(),
             shortcut_today: "CmdOrCtrl+Alt+D".into(),
             shortcut_floating: "Alt+Q".into(),
+            scene_capture_shortcut: "Ctrl+Alt+Shift+S".into(),
         }
     }
 }

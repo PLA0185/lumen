@@ -33,6 +33,7 @@ import { isAndroidPlatform } from './lib/platform'
 import { CalendarView } from './components/CalendarView'
 import { StatsView } from './components/StatsView'
 import { BoardView } from './components/BoardView'
+import { SceneNotesView } from './components/SceneNotesView'
 import { TaskEditor } from './components/TaskEditor'
 import { ScopeDialog } from './components/ScopeDialog'
 import * as recurrence from './lib/recurrence-ipc'
@@ -54,6 +55,7 @@ const IMPLEMENTED_VIEWS = new Set<ViewId>([
   'memos',
   'flows',
   'knowledge',
+  'scene-notes',
   'nutrition',
   'assistant',
   'today',
@@ -150,6 +152,10 @@ export default function App() {
     setKnowledgeFlowTarget({ flowId, stepId, requestId: crypto.randomUUID() })
     navigate('flows')
   }, [navigate])
+  useEffect(() => listenEvent<{ memoId: string; stepId: string | null }>('scene-open-flow', event => {
+    if (event.payload.stepId) openKnowledgeFlow(event.payload.memoId, event.payload.stepId)
+    else navigate('flows')
+  }), [openKnowledgeFlow, navigate])
   /** 正在编辑的任务（null 表示编辑对话框关闭） */
   const [editing, setEditing] = useState<Task | null>(null)
   const [deletingRecurring, setDeletingRecurring] = useState<Task | null>(null)
@@ -663,7 +669,7 @@ export default function App() {
         {isRepeatView(view) && <RepeatViewTabs current={view} onSelect={navigate} />}
 
         <main className="content">
-          {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} onImportKindChange={kind => { if (kind === 'flow') { setFlowSearch(''); setView('flows') } else { setMemoSearch(''); setView('memos') } }} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
+          {isHandbookView ? <MemosView key={view} query={view === 'flows' ? flowSearch : memoSearch} kindFilter={view === 'flows' ? 'flow' : 'memo'} onDirtyChange={setMemoDirty} onImportKindChange={kind => { if (kind === 'flow') { setFlowSearch(''); setView('flows') } else { setMemoSearch(''); setView('memos') } }} initialFlowTarget={view === 'flows' ? knowledgeFlowTarget : null} onFlowTargetHandled={() => setKnowledgeFlowTarget(null)} /> : view === 'knowledge' ? null : view === 'scene-notes' ? <SceneNotesView /> : view === 'nutrition' ? <NutritionView isAndroid={isAndroid} /> : <>
           {view === 'today' && <TodayDateSelector selectedDate={todayDate} onChange={setTodayDate} />}
           {showQuickAdd && IMPLEMENTED_VIEWS.has(view) && (
             <div style={{ maxWidth: 900, margin: '0 auto 12px' }}>
