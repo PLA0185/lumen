@@ -298,6 +298,7 @@ export type ViewId =
   | 'flows'
   | 'knowledge'
   | 'nutrition'
+  | 'scene-notes'
   | 'assistant'
   | 'inbox'
   | 'today'

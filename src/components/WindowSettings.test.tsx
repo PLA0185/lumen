@@ -39,6 +39,7 @@ const config: win.WindowConfig = {
   shortcutQuickAdd: 'Ctrl+Alt+N',
   shortcutToday: 'Ctrl+Alt+T',
   shortcutFloating: 'CmdOrCtrl+Alt+Q',
+  sceneCaptureShortcut: 'Ctrl+Alt+Shift+S',
 }
 async function mount() {
   vi.spyOn(win, 'windowGetConfig').mockResolvedValue({

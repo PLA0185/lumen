@@ -38,6 +38,8 @@ export interface WindowConfig {
   shortcutToday: string
   /** 呼出悬浮窗，并恢复为可点击状态 */
   shortcutFloating: string
+  /** 对白名单前台程序执行一次性场景采集/规则测试 */
+  sceneCaptureShortcut: string
 }
 
 /** 窗口配置查询结果 */

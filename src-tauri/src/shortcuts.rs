@@ -50,11 +50,12 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
     let mut failures: Vec<String> = Vec::new();
 
     // 每个快捷键单独注册，任何一个失败都不影响其它（并记录原因）
-    let items: [(&str, &str); 4] = [
+    let items: [(&str, &str); 5] = [
         (&cfg.shortcut_toggle, "打开/隐藏主窗口"),
         (&cfg.shortcut_quick_add, "快速添加"),
         (&cfg.shortcut_today, "今日概览"),
         (&cfg.shortcut_floating, "呼出悬浮窗"),
+        (&cfg.scene_capture_shortcut, "场景便签采集"),
     ];
 
     // 去重：两个功能配同一个键时，只有先注册的那个生效，
@@ -113,6 +114,7 @@ pub fn reload(app: &AppHandle, cfg: &WindowConfig) -> AppResult<()> {
                         let _ = tauri::Emitter::emit(&w, "navigate", "today");
                     }
                 }
+                "场景便签采集" => crate::scene_notes::capture_armed(app),
                 _ => {}
             }
         }) {
@@ -187,6 +189,7 @@ mod tests {
             c.shortcut_quick_add.clone(),
             c.shortcut_today.clone(),
             c.shortcut_floating.clone(),
+            c.scene_capture_shortcut.clone(),
         ];
         let n = v.len();
         v.sort();
@@ -209,6 +212,11 @@ mod tests {
             parse(&c.shortcut_floating).is_ok(),
             "{}",
             c.shortcut_floating
+        );
+        assert!(
+            parse(&c.scene_capture_shortcut).is_ok(),
+            "{}",
+            c.scene_capture_shortcut
         );
     }
 }

@@ -538,6 +538,7 @@ function WindowOptions() {
                 ['shortcutQuickAdd', '快速添加'],
                 ['shortcutToday', '今日概览'],
                 ['shortcutFloating', '显示 / 隐藏悬浮窗'],
+                ['sceneCaptureShortcut', '场景采集 / 规则测试'],
               ] as const
             ).map(([key, label]) => (
               <div className="setrow" key={key}>

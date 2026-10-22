@@ -5017,3 +5017,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [PR #44：回退跨平台界面重构](https://github.com/PLA0185/lumen/pull/44)
 - [README 文档索引](../README.md#文档索引)
 - [重构前界面基线 v0.4.58](https://github.com/PLA0185/lumen/tree/v0.4.58)
+
+## 第 123 轮 · 2026-10-22 · 智能场景便签
+
+### 做了
+
+- 新增 Windows 本机智能场景便签（0.4.65）：规则可限定前台 `.exe` 和可选窗口标题，用本机 OCR、用户确认的局部图像或两者组合匹配；连续命中后显示不抢焦点的置顶便签，支持稍后提醒、确认完成和打开关联备忘/流程步骤。
+- 自动监测默认关闭，并要求启用规则及明确确认；监测只在允许程序位于前台时采集单窗口帧，不启用全屏回退。一次性采集 60 秒过期并可取消，窗口改变时丢弃帧；只保存用户框选并确认的局部样本。
+- 新增正式迁移 0017。完整本地备份包含规则、样本与诊断事件；设备本地监测授权不进备份，恢复后保持关闭；场景记录不进入云同步。Android 提供 Windows 专属说明页，原有 Android 功能保留。
+- 编辑现有规则时保留其启用状态；界面将一次性采集准确标为采集一帧，避免误解为连续录制。
+
+### 没做到
+
+- 本机没有 Java、Android SDK/NDK 或 Android Rust target，因此未在此机生成或安装 Android APK；OnePlus Ace 2 / Android 16 未做实机回归。
+- 未在真实 FNSKU 业务应用中验收命中率、窗口变化、不同 DPI/缩放和多显示器行为；这些环境结果不能由本地单元测试替代。
+- Windows Rust 测试在输出最终结果后测试进程未退出；结束该挂起进程后未能得到命令的正常退出码，故将测试结果记为 619 项通过、4 项忽略、0 项失败，同时注明进程退出异常。
+
+### 怎么验证的
+
+- `pnpm install --frozen-lockfile`、`pnpm check:version`（0.4.65）、`pnpm typecheck`、`pnpm test`（57 个文件、421 项）、`pnpm build`、`pnpm lint` 均退出码为 0；构建保留既有动态导入分块告警。
+- `cargo fmt --check`、`cargo check --lib`、`cargo clippy --all-targets --all-features -- -D warnings` 退出码为 0。`cargo test --lib` 输出 `619 passed; 0 failed; 4 ignored`，但测试进程在汇总后挂起，未将其报告为命令完整成功。
+- 新增测试覆盖状态机、OCR 归一化、局部图像相似度、一次性采集取消/过期、规则校验和临时 SQLite 数据库中的备份往返。所有测试使用临时数据库，没有对用户生产数据做写入或破坏性操作。
+- `git diff --check` 与版本一致性检查通过。密钥/数据库/构建产物扫描未发现受跟踪的敏感文件；私钥标记检索只命中说明文档。
+
+### 相关文档
+
+- [智能场景便签说明](scene-notes.md)
+- [迁移 0017：场景便签](../src-tauri/migrations/0017_scene_notes.sql)
+- [0.4.65 发布说明](../RELEASE_NOTES.md)
+- [README 文档索引](../README.md#文档索引)

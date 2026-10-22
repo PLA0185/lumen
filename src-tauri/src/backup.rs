@@ -22,8 +22,10 @@
 
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 // `Column` trait 提供 `name()`，必须显式引入（trait 方法不会自动可见）
+use sha2::Digest;
 use sqlx::{Column, Row};
 use tauri::State;
 
@@ -32,7 +34,7 @@ use crate::db::{now_stamp, to_db_time, utc_now, Db};
 use crate::error::{AppError, AppResult};
 
 /// 备份格式版本。格式变更时必须递增，并在导入时按版本分支处理。
-pub const BACKUP_FORMAT_VERSION: u32 = 8;
+pub const BACKUP_FORMAT_VERSION: u32 = 9;
 
 /// 备份文件的扩展名
 pub const BACKUP_EXT: &str = "lumen-backup.json";
@@ -162,6 +164,10 @@ pub struct BackupData {
     /// 版本 8 加入饮食与采购清单；空 map 不改变旧备份的校验和。
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub nutrition_data: std::collections::BTreeMap<String, Vec<serde_json::Value>>,
+    /// Version 9 carries Windows scene rules and their local-only templates in full backups.
+    /// This collection is intentionally separate from `sync_history` and cloud business data.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub scene_data: std::collections::BTreeMap<String, Vec<serde_json::Value>>,
 }
 
 impl BackupData {
@@ -332,6 +338,11 @@ pub(crate) async fn dump_table_from(
         "recipe_ingredients" => "SELECT * FROM recipe_ingredients",
         "nutrition_entries" => "SELECT * FROM nutrition_entries",
         "shopping_items" => "SELECT * FROM shopping_items",
+        "scene_templates" => "SELECT * FROM scene_templates",
+        "scene_rules" => "SELECT * FROM scene_rules",
+        "scene_runtime" => "SELECT * FROM scene_runtime",
+        "scene_events" => "SELECT * FROM scene_events",
+        "scene_monitor_settings" => "SELECT * FROM scene_monitor_settings",
 
         _ => return Err(AppError::internal("内部错误：非法表名")),
     };
@@ -488,6 +499,18 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
             nutrition_data.insert(table.to_owned(), rows);
         }
     }
+    let mut scene_data = std::collections::BTreeMap::new();
+    for table in [
+        "scene_templates",
+        "scene_rules",
+        "scene_runtime",
+        "scene_events",
+    ] {
+        let rows = dump_table_from(conn, table).await?;
+        if !rows.is_empty() {
+            scene_data.insert(table.to_owned(), rows);
+        }
+    }
 
     Ok(BackupData {
         sync_history,
@@ -514,6 +537,7 @@ async fn build_backup_data_from(conn: &mut sqlx::SqliteConnection) -> AppResult<
         focus_sessions: dump_table_from(conn, "focus_sessions").await?,
         goals: dump_table_from(conn, "goals").await?,
         nutrition_data,
+        scene_data,
 
         attachments_note: if cached_count > 0 {
             format!("本备份包含 {attachment_count} 条附件记录和 {cached_count} 个云同步缓存文件本体。恢复时会重建已有记录的缓存副本；未缓存的传统附件文件不在备份中，需保留原文件。")
@@ -622,6 +646,21 @@ fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
         .any(|key| !NUTRITION_TABLES.contains(&key.as_str()))
     {
         issues.push("备份包含不支持的饮食或采购表".into());
+    }
+    const SCENE_TABLES: [&str; 5] = [
+        "scene_templates",
+        "scene_rules",
+        "scene_runtime",
+        "scene_events",
+        "scene_monitor_settings",
+    ];
+    if file
+        .data
+        .scene_data
+        .keys()
+        .any(|key| !SCENE_TABLES.contains(&key.as_str()))
+    {
+        issues.push("备份包含不支持的智能场景数据表".into());
     }
     if file
         .data
@@ -748,6 +787,61 @@ fn backup_issues(file: &BackupFile) -> AppResult<Vec<String>> {
             || end.zip(start).is_none_or(|(end, start)| end < start)
         {
             issues.push(format!("知识库来源 {source_id} 的文字定位无效"));
+        }
+    }
+    let templates = file
+        .data
+        .scene_data
+        .get("scene_templates")
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let template_ids: std::collections::HashSet<&str> = templates
+        .iter()
+        .filter_map(|row| row.get("id").and_then(serde_json::Value::as_str))
+        .collect();
+    for rule in file
+        .data
+        .scene_data
+        .get("scene_rules")
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+    {
+        let Some(id) = rule.get("id").and_then(serde_json::Value::as_str) else {
+            issues.push("智能场景规则缺少编号".into());
+            continue;
+        };
+        if uuid::Uuid::parse_str(id).is_err() {
+            issues.push("智能场景规则编号无效".into());
+        }
+        if let Some(template_id) = rule.get("template_id").and_then(serde_json::Value::as_str) {
+            if !template_ids.contains(template_id) {
+                issues.push(format!("智能场景规则 {id} 缺少参考图"));
+            }
+        }
+    }
+    for template in templates {
+        let Some(id) = template.get("id").and_then(serde_json::Value::as_str) else {
+            issues.push("智能场景参考图缺少编号".into());
+            continue;
+        };
+        let raw = template
+            .get("data_base64")
+            .and_then(serde_json::Value::as_str);
+        let declared_size = template
+            .get("byte_size")
+            .and_then(serde_json::Value::as_u64);
+        let digest = template.get("sha256").and_then(serde_json::Value::as_str);
+        match (raw, declared_size, digest) {
+            (Some(raw), Some(size), Some(digest)) => {
+                match base64::engine::general_purpose::STANDARD.decode(raw) {
+                    Ok(bytes)
+                        if bytes.len() == size as usize
+                            && size <= 2 * 1024 * 1024
+                            && hex::encode(sha2::Sha256::digest(&bytes)) == digest => {}
+                    _ => issues.push(format!("智能场景参考图 {id} 的内容、大小或校验和无效")),
+                }
+            }
+            _ => issues.push(format!("智能场景参考图 {id} 缺少有效内容")),
         }
     }
     Ok(issues)
@@ -989,6 +1083,11 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
         "recipes",
         "shopping_items",
         "nutrition_preferences",
+        "scene_events",
+        "scene_runtime",
+        "scene_rules",
+        "scene_monitor_settings",
+        "scene_templates",
     ] {
         // 表名来自上面这个内部字面量数组，非用户输入
         let sql = format!("DELETE FROM {t}");
@@ -999,7 +1098,8 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
 
     // 插入顺序与外键方向一致：父表先插
     let nutrition = &file.data.nutrition_data;
-    let plan: [(&str, &[serde_json::Value]); 27] = [
+    let scenes = &file.data.scene_data;
+    let plan: [(&str, &[serde_json::Value]); 32] = [
         ("projects", &file.data.projects),
         ("categories", &file.data.categories),
         ("tags", &file.data.tags),
@@ -1051,6 +1151,35 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
             "shopping_items",
             nutrition
                 .get("shopping_items")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "scene_templates",
+            scenes
+                .get("scene_templates")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "scene_rules",
+            scenes.get("scene_rules").map(Vec::as_slice).unwrap_or(&[]),
+        ),
+        (
+            "scene_runtime",
+            scenes
+                .get("scene_runtime")
+                .map(Vec::as_slice)
+                .unwrap_or(&[]),
+        ),
+        (
+            "scene_events",
+            scenes.get("scene_events").map(Vec::as_slice).unwrap_or(&[]),
+        ),
+        (
+            "scene_monitor_settings",
+            scenes
+                .get("scene_monitor_settings")
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
         ),
@@ -1107,6 +1236,16 @@ async fn restore_from(db: &Db, path: &str) -> AppResult<RestoreResult> {
     }
     crate::cloud_sync::prepare_restore(&mut tx, file.format_version).await?;
     crate::cloud_sync::restore_cached_files(&mut tx, db.data_dir()).await?;
+    let restored_at = now_stamp();
+    sqlx::query("INSERT OR IGNORE INTO scene_monitor_settings (id,enabled,paused,consented_at,updated_at) VALUES ('default',0,0,NULL,?)")
+        .bind(&restored_at).execute(&mut *tx).await?;
+    // Explicit monitoring consent belongs to this installation and must never be
+    // carried across restore onto a different machine or silently re-enabled.
+    sqlx::query("UPDATE scene_monitor_settings SET enabled=0,paused=0,consented_at=NULL,updated_at=? WHERE id='default'")
+        .bind(&restored_at).execute(&mut *tx).await?;
+    // A previous foreground window is never considered active after restore or restart.
+    sqlx::query("UPDATE scene_runtime SET state='outside',window_identity_hash=NULL,last_seen_at=NULL,snooze_until=NULL,updated_at=?")
+        .bind(restored_at).execute(&mut *tx).await?;
 
     tx.commit().await?;
     log::info!(
@@ -2411,6 +2550,126 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[tokio::test]
+    async fn scene_backup_roundtrip_preserves_rules_and_templates_but_resets_consent() {
+        use base64::Engine;
+        use sha2::Digest;
+        use std::io::Cursor;
+
+        let (db, dir) = make_db_with_data().await;
+        let now = now_stamp();
+        let mut png = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            8,
+            8,
+            image::Rgba([12, 34, 56, 255]),
+        ))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+        let image_bytes = png.into_inner();
+        let template_id = uuid::Uuid::now_v7().to_string();
+        let rule_id = uuid::Uuid::now_v7().to_string();
+        let image_hash = hex::encode(sha2::Sha256::digest(&image_bytes));
+        sqlx::query("INSERT INTO scene_templates (id,mime,data_base64,byte_size,sha256,width,height,created_at) VALUES (?,'image/png',?,?,?,8,8,?)")
+            .bind(&template_id)
+            .bind(base64::engine::general_purpose::STANDARD.encode(&image_bytes))
+            .bind(image_bytes.len() as i64)
+            .bind(&image_hash)
+            .bind(&now)
+            .execute(db.pool()).await.unwrap();
+        let template_config = serde_json::to_string(&crate::scene_notes::models::TemplateConfig {
+            x: 0.2,
+            y: 0.3,
+            width: 0.4,
+            height: 0.5,
+            source_width: 800,
+            source_height: 600,
+            threshold: 0.86,
+        })
+        .unwrap();
+        sqlx::query("INSERT INTO scene_rules (id,name,enabled,priority,program_allowlist_json,window_title_contains_json,match_mode,template_id,template_config_json,ocr_required_terms_json,ocr_excluded_terms_json,headline,body_md,memo_id,step_id,stable_hits,stable_leave_ms,default_snooze_minutes,revision,created_at,updated_at) VALUES (?, 'FNSKU 提醒', 1, 3, '[\"chrome.exe\"]', '[]', 'image_and_ocr', ?, ?, '[\"FNSKU\"]', '[\"退货\"]', 'FNSKU 要扫码试一下！', '检查商品标签', NULL, NULL, 2, 6000, 10, 1, ?, ?)")
+            .bind(&rule_id).bind(&template_id).bind(&template_config).bind(&now).bind(&now)
+            .execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO scene_runtime (rule_id,state,window_identity_hash,last_seen_at,last_fired_at,last_ack_at,snooze_until,updated_at) VALUES (?,'acked','hashed-window',?,?,?,NULL,?)")
+            .bind(&rule_id).bind(&now).bind(&now).bind(&now).bind(&now)
+            .execute(db.pool()).await.unwrap();
+        sqlx::query("INSERT INTO scene_events (id,rule_id,occurred_at,event_type,result_code,image_score,elapsed_ms) VALUES (?,? ,?,'trigger','MATCH_STABLE',0.95,123)")
+            .bind(uuid::Uuid::now_v7().to_string()).bind(&rule_id).bind(&now)
+            .execute(db.pool()).await.unwrap();
+        sqlx::query("UPDATE scene_monitor_settings SET enabled=1,paused=1,consented_at=?,updated_at=? WHERE id='default'")
+            .bind(&now).bind(&now).execute(db.pool()).await.unwrap();
+
+        let backup = build_backup_data(&db)
+            .await
+            .expect("导出场景规则和局部样本");
+        for table in [
+            "scene_events",
+            "scene_runtime",
+            "scene_rules",
+            "scene_templates",
+        ] {
+            let sql = format!("DELETE FROM {table}");
+            sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(db.pool())
+                .await
+                .unwrap();
+        }
+        sqlx::query("DELETE FROM scene_monitor_settings")
+            .execute(db.pool())
+            .await
+            .unwrap();
+        let mut columns_by_table = std::collections::HashMap::new();
+        for table in [
+            "scene_templates",
+            "scene_rules",
+            "scene_runtime",
+            "scene_events",
+        ] {
+            columns_by_table.insert(table, table_columns(&db, table).await.unwrap());
+        }
+        let mut tx = db.pool().begin().await.unwrap();
+        for table in [
+            "scene_templates",
+            "scene_rules",
+            "scene_runtime",
+            "scene_events",
+        ] {
+            let rows = backup
+                .scene_data
+                .get(table)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let columns = &columns_by_table[table];
+            insert_rows(&mut tx, table, rows, columns).await.unwrap();
+        }
+        let restored_at = now_stamp();
+        sqlx::query("INSERT OR IGNORE INTO scene_monitor_settings (id,enabled,paused,consented_at,updated_at) VALUES ('default',0,0,NULL,?)")
+            .bind(&restored_at).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE scene_monitor_settings SET enabled=0,paused=0,consented_at=NULL,updated_at=? WHERE id='default'")
+            .bind(&restored_at).execute(&mut *tx).await.unwrap();
+        sqlx::query("UPDATE scene_runtime SET state='outside',window_identity_hash=NULL,last_seen_at=NULL,snooze_until=NULL,updated_at=?")
+            .bind(&restored_at).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+
+        for table in ["scene_templates", "scene_rules", "scene_events"] {
+            assert_eq!(
+                dump_table(&db, table).await.unwrap(),
+                backup.scene_data[table],
+                "{table} should round-trip exactly"
+            );
+        }
+        let runtime = dump_table(&db, "scene_runtime").await.unwrap();
+        assert_eq!(runtime[0]["state"], "outside");
+        assert_eq!(runtime[0]["window_identity_hash"], serde_json::Value::Null);
+        let settings = dump_table(&db, "scene_monitor_settings").await.unwrap();
+        assert_eq!(settings[0]["enabled"], 0);
+        assert_eq!(settings[0]["paused"], 0);
+        assert_eq!(settings[0]["consented_at"], serde_json::Value::Null);
+
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     /// 验证外键约束确实生效，且恢复时的插入顺序能满足它。
     ///
     /// 两件事分开验：
@@ -2662,6 +2921,7 @@ mod tests {
             focus_sessions: vec![],
             goals: vec![],
             nutrition_data: Default::default(),
+            scene_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2697,6 +2957,7 @@ mod tests {
             focus_sessions: vec![],
             goals: vec![],
             nutrition_data: Default::default(),
+            scene_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2735,6 +2996,7 @@ mod tests {
             focus_sessions: vec![],
             goals: vec![],
             nutrition_data: Default::default(),
+            scene_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2773,6 +3035,7 @@ mod tests {
             focus_sessions: vec![],
             goals: vec![],
             nutrition_data: Default::default(),
+            scene_data: Default::default(),
 
             attachments_note: String::new(),
         };
@@ -2823,6 +3086,7 @@ mod tests {
                 focus_sessions: vec![],
                 goals: vec![],
                 nutrition_data: Default::default(),
+                scene_data: Default::default(),
 
                 attachments_note: "无附件".into(),
             },
