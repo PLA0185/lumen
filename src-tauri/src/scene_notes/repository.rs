@@ -362,18 +362,22 @@ pub async fn save_rule(db: &Db, mut input: SceneRuleInput) -> AppResult<SceneRul
     // Deleting unused reference frames is best-effort cleanup, never a reason
     // to report a successful rule write as failed after the transaction commits.
     if let Some(previous) = previous_template {
-        if Some(previous.clone()) != input.existing_template_id {
-            let still_referenced: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM scene_rules WHERE template_id=?")
-                    .bind(&previous)
-                    .fetch_one(db.pool())
-                    .await?;
-            if still_referenced == 0 {
-                sqlx::query("DELETE FROM scene_templates WHERE id=?")
+        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM scene_rules WHERE template_id=?")
+            .bind(&previous)
+            .fetch_one(db.pool())
+            .await
+        {
+            Ok(0) => {
+                if let Err(error) = sqlx::query("DELETE FROM scene_templates WHERE id=?")
                     .bind(previous)
                     .execute(db.pool())
-                    .await?;
+                    .await
+                {
+                    log::warn!("删除未使用的场景样本失败：{error}");
+                }
             }
+            Ok(_) => {}
+            Err(error) => log::warn!("检查场景样本引用失败：{error}"),
         }
     }
     get_rule(db, &id).await
@@ -807,6 +811,92 @@ mod tests {
         let stored = get_rule(&db, &saved.id).await.unwrap();
         assert_eq!(stored.revision, 1);
         assert_eq!(stored.headline, "FNSKU 要扫码试一下！");
+        db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn switching_image_rule_to_ocr_removes_its_unreferenced_template() {
+        let dir =
+            std::env::temp_dir().join(format!("lumen-scene-template-{}", uuid::Uuid::now_v7()));
+        let db = Db::init(&dir).await.unwrap();
+        let mut image = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(8, 8)
+            .write_to(&mut image, image::ImageFormat::Png)
+            .unwrap();
+        let image_base64 = STANDARD.encode(image.into_inner());
+        let input = SceneRuleInput {
+            id: None,
+            expected_revision: None,
+            name: "图像规则".into(),
+            enabled: false,
+            priority: 0,
+            program_allowlist: vec!["editor.exe".into()],
+            window_title_contains: vec![],
+            match_mode: SceneMatchMode::Image,
+            template_config: Some(TemplateConfig {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+                source_width: 8,
+                source_height: 8,
+                threshold: 0.86,
+            }),
+            template_image_base64: Some(image_base64),
+            existing_template_id: None,
+            required_terms: vec![],
+            excluded_terms: vec![],
+            headline: "检查画面".into(),
+            body_md: String::new(),
+            memo_id: None,
+            step_id: None,
+            stable_hits: 2,
+            stable_leave_ms: 6000,
+            default_snooze_minutes: 10,
+        };
+        let saved = save_rule(&db, input).await.unwrap();
+        let template_id = saved.template_id.clone().unwrap();
+        let template_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scene_templates WHERE id=?")
+                .bind(&template_id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(template_count, 1);
+
+        let mut updated = SceneRuleInput {
+            id: Some(saved.id.clone()),
+            expected_revision: Some(saved.revision),
+            name: saved.name,
+            enabled: false,
+            priority: saved.priority,
+            program_allowlist: saved.program_allowlist,
+            window_title_contains: saved.window_title_contains,
+            match_mode: SceneMatchMode::Ocr,
+            template_config: None,
+            template_image_base64: None,
+            existing_template_id: Some(template_id.clone()),
+            required_terms: vec!["READY".into()],
+            excluded_terms: vec![],
+            headline: saved.headline,
+            body_md: saved.body_md,
+            memo_id: None,
+            step_id: None,
+            stable_hits: saved.stable_hits,
+            stable_leave_ms: saved.stable_leave_ms,
+            default_snooze_minutes: saved.default_snooze_minutes,
+        };
+        updated.expected_revision = Some(saved.revision);
+        let saved = save_rule(&db, updated).await.unwrap();
+        assert_eq!(saved.match_mode, SceneMatchMode::Ocr);
+        let template_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM scene_templates WHERE id=?")
+                .bind(template_id)
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(template_count, 0);
         db.pool().close().await;
         std::fs::remove_dir_all(dir).unwrap();
     }
