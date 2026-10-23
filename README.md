@@ -442,10 +442,11 @@ pnpm typecheck                # 类型检查
 
 ## 文档索引
 
-当前源码版本 0.4.66。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。Windows 安装包与 Android ARM64 APK 按同版发布。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
+当前源码版本 0.4.67。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。Windows 安装包与 Android ARM64 APK 按同版发布。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
 
 | 文档 | 内容 |
 | --- | --- |
+| [全项目 UI 审查与整改（2026-10-23）](docs/refactoring-ui-audit-2026-10-23.md) | 28 个主导航视图、Android 竖屏/横屏和 Windows 窄/宽窗口审查、修复清单与未验证边界 |
 | [智能场景便签](docs/scene-notes.md) | Windows 本机窗口识别与置顶提示、一次性局部参考图、隐私边界、备份与平台限制 |
 | [0.4.61 实际窗口排版整改](docs/design-system/v0.4.61/REAL-WINDOW-FIXES.md) | 用户实机截图对应的问题、修复行为、浏览器验收视口与未完成的 Excel 公式问题 |
 | [ChatGPT 内容导入](docs/chatgpt-content-import-2026-10-12.md) | ChatGPT 网页 / 桌面端复制导入或拖入 ZIP 批量导入备忘、流程和配套图片；预览确认后保存，列明原生 MCP 写入限制 |

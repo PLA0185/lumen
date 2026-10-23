@@ -129,6 +129,11 @@ export default function App() {
   const isAndroid = isAndroidPlatform()
   const isHandbookView = view === 'memos' || view === 'flows'
   const androidMoreActive = !ANDROID_PRIMARY_VIEWS.has(view)
+  const isTaskWorkspaceView = !isHandbookView && !(
+    ['knowledge', 'nutrition', 'assistant', 'scene-notes', 'projects', 'tags', 'settings', 'stats'] as ViewId[]
+  ).includes(view)
+  const isTaskListView = isTaskWorkspaceView && !(['calendar', 'board'] as ViewId[]).includes(view)
+  const canCreateTask = isTaskWorkspaceView && view !== 'completed' && view !== 'trash'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [knowledgeFlowTarget, setKnowledgeFlowTarget] = useState<{ flowId: string; stepId: string; requestId: string } | null>(null)
   const [showAi, setShowAi] = useState(false)
@@ -530,10 +535,11 @@ export default function App() {
 
           <div className="topbar__actions">
             <div className="topbar__controls">
+            <div className="topbar__utility">
             {/* 悬浮窗开关：这是"今日清单浮在桌面角落"的唯一显眼入口 */}
-            {view !== 'knowledge' && <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>}
+            {view !== 'knowledge' && view !== 'assistant' && <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowAi(true)} aria-haspopup="dialog">AI 助手</button>}
             {view !== 'knowledge' && <CloudSyncButton />}
-            {!isAndroid && view !== 'knowledge' && <button
+            {!isAndroid && isTaskWorkspaceView && <button
               type="button"
               className={`btn btn--ghost btn--sm${floatingOn ? ' btn--filter-on' : ''}`}
               aria-pressed={floatingOn === true}
@@ -549,7 +555,7 @@ export default function App() {
               悬浮窗
             </button>}
 
-            {!isHandbookView && view !== 'knowledge' && view !== 'nutrition' && <><button
+            {isTaskListView && <><button
               type="button"
               className={`btn btn--ghost btn--sm${overdueOnly ? ' btn--filter-on' : ''}`}
               aria-pressed={overdueOnly}
@@ -578,7 +584,8 @@ export default function App() {
               <option value="planned:asc">按计划时间（近→远）</option>
               <option value="title:asc">按标题</option>
             </select>
-
+            </>}
+            </div>
             {/*
               「取消导出」必须是**兄弟节点**而不是套在导出按钮里：
               button 里再放 button 是非法 HTML，浏览器会把它拆出来。
@@ -596,19 +603,18 @@ export default function App() {
                 取消导出
               </button>
             )}
-            <button
+            </div>
+            {canCreateTask && <button
               type="button"
               className="btn btn--primary btn--sm"
               onClick={() => { setCreationContext(undefined); setShowQuickAdd((v) => !v) }}
-              disabled={ORGANIZE_VIEWS.has(view) || view === 'trash' || view === 'completed' || view === 'settings' || view === 'stats' || view === 'assistant'}
               title="新建任务（Ctrl+N）"
             >
               <Icon name="plus" size={15} /> 新建
-            </button>
-            </>}
-            </div>
+            </button>}
+          </div>
             <div className="topbar__end">
-            {view !== 'knowledge' && view !== 'nutrition' && <>
+            {(isTaskWorkspaceView || isHandbookView) && <>
             <div className="search">
               <span className="search__icon" aria-hidden="true">
                 <Icon name="search" size={15} />
@@ -642,7 +648,7 @@ export default function App() {
               )}
             </div>
             </>}
-            {!isHandbookView && view !== 'knowledge' && view !== 'nutrition' && <>
+            {isTaskWorkspaceView && <>
             <button
               type="button"
               className="btn btn--ghost btn--sm"
@@ -663,7 +669,6 @@ export default function App() {
 
             </>}
             </div>
-          </div>
         </header>
 
         {isRepeatView(view) && <RepeatViewTabs current={view} onSelect={navigate} />}

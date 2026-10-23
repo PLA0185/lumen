@@ -545,11 +545,6 @@ export function QuickAdd({
         </div>
       )}
       {!compact && (
-        <div className="quickadd__ai">
-          <AiAssistant compact creationDefaults={{ plannedDate: defaultPlannedDate, periodType: defaultPeriodType, ...context }} />
-        </div>
-      )}
-      {!compact && (
         <div className="quickadd__actions quickadd__actions--bottom">
           <button
             type="button"
@@ -564,6 +559,11 @@ export function QuickAdd({
               取消
             </button>
           )}
+        </div>
+      )}
+      {!compact && (
+        <div className="quickadd__ai">
+          <AiAssistant compact creationDefaults={{ plannedDate: defaultPlannedDate, periodType: defaultPeriodType, ...context }} />
         </div>
       )}
     </div>

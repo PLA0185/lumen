@@ -194,6 +194,7 @@ export function TaskCard({
   const isRecurring = task.seriesId !== null
   const periodLabel = periodBadgeLabel(task.periodType, task.plannedAt)
   const [expanded, setExpanded] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
 
   const hasDetail = !inTrash
   const canDrag = sortable && !inTrash
@@ -354,7 +355,18 @@ export function TaskCard({
           </div>
         </div>
 
-        <div className="task__actions">
+        <button
+          type="button"
+          className="task__actions-toggle"
+          aria-label={`${actionsOpen ? '收起' : '显示'}「${task.title}」的更多操作`}
+          aria-expanded={actionsOpen}
+          onClick={() => setActionsOpen(value => !value)}
+        >
+          <span>{actionsOpen ? '收起' : '更多'}</span>
+          <Icon name={actionsOpen ? 'chevron-up' : 'chevron-down'} size={14} />
+        </button>
+
+        <div className={`task__actions${actionsOpen ? ' task__actions--open' : ''}`}>
           {inTrash ? (
             <>
               <button
