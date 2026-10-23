@@ -5134,3 +5134,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.67/Lumen_0.4.67_x64-setup.exe)
 - [0.4.67 发布说明](../RELEASE_NOTES.md)
 - [全项目 UI 审查与整改](refactoring-ui-audit-2026-10-23.md)
+
+## 第 127 轮 · 2026-10-23 · 编辑任务快捷改期与 v0.4.68 双端发布
+
+### 做了
+
+- 修复编辑任务只能手动选计划日期的问题：在计划日期下增加“今天 / 明天 / 下周”快捷改期；“下周”明确设置为下周一，已有计划时刻保留，截止日期不变。
+- 同步准备 v0.4.68 版本号、README 与发布说明。PR #51 已合并；正式发布包含 Windows x64 安装包和 Android ARM64 APK。
+- 更新清单 `latest.json` 已公开并返回 0.4.68，Windows 检查更新可查询到该版本。
+
+### 没做到
+
+- 未在 Android 实机安装 APK 验收；发布流水线验证了 ARM64 APK 的签名构建和上传，不等于 OnePlus Ace 2 / Android 16 的启动闪退已修复或已验证。
+- 本机 `cargo test --lib` 显示 620 项通过、4 项忽略、0 项失败，但进程在汇总后未退出；手动中断后命令退出码为 1，因此不记作本地完整通过。由 PR CI 的 Rust 测试和发布门禁复核。
+
+### 怎么验证的
+
+- 新增编辑任务改期行为测试：加入功能前因快捷按钮不存在而失败；修复后验证计划日期为下周一、计划时刻仍为 15:30、截止时间不变，并验证保存载荷。
+- 本地 TaskEditor 8 项测试、前端全量 422 项测试、类型检查、前端构建、lint、`cargo fmt --check` 与无豁免 Clippy 均通过；版本校验 `node tools/check-version.mjs --tag=v0.4.68` 通过。
+- PR #51 的 GitHub CI run 230 前端与 Rust 两组门禁全部通过。Release run 57 的 Android 签名 APK 构建、Windows 完整发布门禁、安装包签名/篡改拒绝、更新清单规范化、APK 上传及公开发布步骤均成功；记录时仅剩缓存收尾步骤。
+- 公开 Release 包含 Android APK（38,513,986 字节）、Windows x64 安装包（24,971,410 字节）及 436 字节签名文件。公开 `latest.json` 返回 0.4.68，Windows 平台清单指向匿名下载直链。未读取或改写用户生产数据库。
+
+### 相关文档
+
+- [PR #51：编辑任务支持快捷改期](https://github.com/PLA0185/lumen/pull/51)
+- [GitHub Release v0.4.68](https://github.com/PLA0185/lumen/releases/tag/v0.4.68)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.68/Lumen_0.4.68_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.68/Lumen_0.4.68_x64-setup.exe)
+- [0.4.68 发布说明](../RELEASE_NOTES.md)
