@@ -27,6 +27,7 @@
 | 10 | color | P0 | `src/styles.css` `--c-accent` 文本用法 | §5.6 | 深色主题的普通强调文字使用 `#4f46e5`，在卡片表面上仅 2.55:1。 | 增加语义色文字令牌：深色 `#a5b4fc`、浅色 `#4338ca`；背景填充仍使用现有主色。两主题在表面上的比值分别为 8.03:1、7.90:1。 | M | rendered |
 | 11 | hierarchy | P1 | `src/components/StatsView.tsx` | §2.6 | 统计页从 h1 直接跳到 h3，成就标题又跳到 h4，标题结构不连续。 | 分区标题改为 h2、成就标题改为 h3，视觉字号仍由现有类控制。Lighthouse 手机无障碍从 98 提到 100。 | S | rendered |
 | 12 | layout | P1 | `src/platform.css` 统计筛选栏 | §3.4.2；Beyond the Book: Target sizes ✚ | 窄屏把四个范围和刷新按钮塞在一行，刷新按钮被裁，筛选标签缩得太小。 | 四个范围按钮按四列等宽显示，刷新单独放在下一行；保留完整标签与 48px 高度。 | M | rendered |
+| 13 | hierarchy | P1 | `src/styles.css`、`src/platform.css`、`src/nutrition.css`、`src/components/scene-notes.css` | §2.2.b | 正常文字和强调文字混用 400、500、550、600、650、700 六档字重，细微档位差不容易形成稳定层级。 | 把普通文字统一为 400、强调文字统一为 600，再用字号和文字颜色补足层级。 | M | rendered |
 
 ## 覆盖矩阵
 
