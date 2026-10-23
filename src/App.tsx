@@ -21,6 +21,7 @@ import { Sidebar, VIEW_META } from './components/Sidebar'
 import { RepeatViewTabs } from './components/RepeatViewTabs'
 import { isRepeatView } from './lib/repeat-views'
 import { TaskCard } from './components/TaskCard'
+import { TaskSections } from './components/TaskSections'
 import { QuickAdd } from './components/QuickAdd'
 import { OrganizeView } from './components/OrganizeView'
 import { SettingsView } from './components/SettingsView'
@@ -1107,8 +1108,10 @@ function TaskArea({
 
   return (
     <>
-      <ul className="tasklist">
-        {tasks.map((t) => (
+      <TaskSections
+        tasks={tasks}
+        separateCompleted={view === 'today'}
+        renderTask={(t) => (
           <TaskCard
             key={t.id}
             task={t}
@@ -1129,8 +1132,8 @@ function TaskArea({
               if (window.confirm('永久删除后无法恢复，确定继续吗？')) onPurge(id)
             }}
           />
-        ))}
-      </ul>
+        )}
+      />
 
       {/*
         分页的可见出口（整改任务书 §4.2：不得静默只展示前 N 条）。

@@ -655,6 +655,39 @@ select {
   list-style: none;
 }
 
+.tasklist-sections {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+.tasklist-sections .tasklist {
+  max-width: none;
+}
+
+.tasklist-completed {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius);
+  background: var(--c-surface);
+}
+
+.tasklist-completed > summary {
+  padding: 12px 14px;
+  color: var(--c-text-2);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tasklist-completed[open] > summary {
+  border-bottom: 1px solid var(--c-border);
+}
+
+.tasklist-completed > .tasklist {
+  padding: 10px;
+}
+
 .today-date-strip {
   max-width: 1120px;
   display: flex;
