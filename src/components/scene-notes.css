@@ -2,7 +2,7 @@
 .scene-page__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin: 0 0 22px; }
 .scene-page__header h1 { margin: 2px 0 6px; font-size: 28px; letter-spacing: -.025em; }
 .scene-page__header p { margin: 0; color: var(--c-muted); }
-.scene-page .eyebrow { margin: 0 0 5px; color: var(--c-accent); font-size: var(--font-xs); font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.scene-page .eyebrow { margin: 0 0 5px; color: var(--c-accent-ink); font-size: var(--font-xs); font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
 .scene-status { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 8px 12px; border: 1px solid var(--c-border); border-radius: 999px; font-size: var(--font-sm); }
 .scene-status > span { width: 8px; height: 8px; border-radius: 50%; background: var(--c-muted); }
 .scene-status--on { color: var(--c-success); border-color: color-mix(in srgb, var(--c-success) 45%, var(--c-border)); }

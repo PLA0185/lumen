@@ -64,7 +64,7 @@ function FocusSection() {
 
   return (
     <div className="setgroup">
-      <h3 className="setgroup__title">专注记录</h3>
+      <h2 className="setgroup__title">专注记录</h2>
       <div className="statcards">
         <div className="statcard">
           <div className="statcard__label">今日专注</div>
@@ -315,7 +315,7 @@ export function StatsView() {
 
       {/* ---------------- 耗时估算 ---------------- */}
       <div className="setgroup">
-        <h3 className="setgroup__title">耗时估算</h3>
+        <h2 className="setgroup__title">耗时估算</h2>
         <table className="kvtable">
           <tbody>
             <tr>
@@ -348,7 +348,7 @@ export function StatsView() {
 
       {/* ---------------- 每日趋势（纯 CSS 柱状图，避免图表库绑定） ---------------- */}
       <div className="setgroup">
-        <h3 className="setgroup__title">每日趋势</h3>
+        <h2 className="setgroup__title">每日趋势</h2>
         <p className="setgroup__desc">
           浅色柱是当天计划数，深色柱是当天完成数。没有安排的日子柱高为 0。
         </p>
@@ -374,7 +374,7 @@ export function StatsView() {
       {/* ---------------- 分类与项目占比 ---------------- */}
       <div className="stats__cols">
         <div className="setgroup">
-          <h3 className="setgroup__title">分类占比</h3>
+          <h2 className="setgroup__title">分类占比</h2>
           {stats.byCategory.length === 0 ? (
             <p className="setgroup__hint">本区间没有已完成的任务，或任务未设置分类。</p>
           ) : (
@@ -405,7 +405,7 @@ export function StatsView() {
         </div>
 
         <div className="setgroup">
-          <h3 className="setgroup__title">项目分布</h3>
+          <h2 className="setgroup__title">项目分布</h2>
           {stats.byProject.length === 0 ? (
             <p className="setgroup__hint">本区间没有已完成的任务，或任务未归属项目。</p>
           ) : (
@@ -438,7 +438,7 @@ export function StatsView() {
       {/* ---------------- 连续天数 ---------------- */}
       {growthCfg?.showStreak && (
         <div className="setgroup">
-          <h3 className="setgroup__title">连续完成</h3>
+          <h2 className="setgroup__title">连续完成</h2>
           <div className="statcards">
             <div className="statcard">
               <div className="statcard__label">当前连续</div>
@@ -469,7 +469,7 @@ export function StatsView() {
 
       {/* ---------------- 个人目标 ---------------- */}
       <div className="setgroup">
-        <h3 className="setgroup__title">个人目标</h3>
+        <h2 className="setgroup__title">个人目标</h2>
         <p className="setgroup__desc">
           进度按「目标创建之后完成的任务数」计算——这样新建一个目标时不会
           因为历史完成量而立刻显示达成。
@@ -678,9 +678,9 @@ export function StatsView() {
               </div>
             </div>
 
-            <h4 className="setgroup__title" style={{ marginTop: 14 }}>
+            <h3 className="setgroup__title" style={{ marginTop: 14 }}>
               成就
-            </h4>
+            </h3>
             <ul className="achlist">
               {growth.achievements.map((a) => (
                 <li key={a.id} className={`achrow${a.achieved ? ' achrow--done' : ''}`}>

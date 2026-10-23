@@ -277,6 +277,13 @@ export function CalendarView({ onDateChange, onCreateTask }: {
             setMode('day')
           }
         }}
+        onKeyDown={(e) => {
+          if (mode !== 'month' || (e.key !== 'Enter' && e.key !== ' ')) return
+          e.preventDefault()
+          setAnchor(d)
+          setMode('day')
+        }}
+        tabIndex={mode === 'month' ? 0 : undefined}
         role={mode === 'month' ? 'gridcell' : undefined}
         aria-label={`${d.getMonth() + 1} 月 ${d.getDate()} 日，${list.length} 项任务`}
       >
@@ -360,7 +367,7 @@ export function CalendarView({ onDateChange, onCreateTask }: {
 
         <button
           type="button"
-          className="btn btn--ghost btn--sm"
+          className="btn btn--ghost btn--sm calbar__today"
           onClick={() => setAnchor(startOfLocalDay(new Date()))}
         >
           回到今天
@@ -369,7 +376,8 @@ export function CalendarView({ onDateChange, onCreateTask }: {
 
       <p className="calhint">
         普通任务显示在计划日期（没有计划日期时显示在截止日期）；周、月、季度、年跨度任务会在锚点日期所属周期的每天显示。
-        任务完成当天仍显示，从次日起隐藏。每个日期格右侧的「+」可直接在该天新建任务。拖动任务到另一天即可改期——
+        任务完成当天仍显示，从次日起隐藏。<span className="calhint__desktop-create">每个日期格右侧的「+」可直接在该天新建任务。</span>
+        <span className="calhint__mobile-create">月历中点击日期可查看当天任务，再在日视图新建。</span>拖动任务到另一天即可改期——
         <strong>只改计划时间，不影响截止时间</strong>，原有的具体时刻会被保留。
         {busy && ' 正在保存…'}
       </p>
