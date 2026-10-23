@@ -5162,3 +5162,29 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.68/Lumen_0.4.68_android_arm64.apk)
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.68/Lumen_0.4.68_x64-setup.exe)
 - [0.4.68 发布说明](../RELEASE_NOTES.md)
+
+## 第 128 轮 · 2026-10-23 · 今天页已完成任务折叠与 v0.4.69 双端发布
+
+### 做了
+
+- 今天页任务列表把未完成任务放在前面；已完成任务会集中进入默认折叠的“已完成（数量）”区，展开后仍可查看。完成状态与任务内容不变，其他任务视图保持原列表。
+- 更新版本到 0.4.69，正式发布同版 Windows x64 安装包与 Android ARM64 APK。公开 Release 同时包含 updater `latest.json` 和 Windows 安装包签名。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 实机安装并验收折叠交互；本轮确认了 APK 构建、签名及发布，不代表已验证该手机上的启动或显示效果。
+- 本机 `cargo test --lib` 进程未返回最终结果，停止后不计作本地通过；Rust 测试由 GitHub CI 与发布门禁执行并通过。
+
+### 怎么验证的
+
+- 前端新增任务分组测试，确认待办位于已完成区之前、已完成区默认折叠且可展开。前端全量 423 项测试、类型检查、构建、lint、`cargo fmt --check`、Clippy 与版本校验均通过。
+- PR #53 的 GitHub CI run 234 中前端与 Rust 检查全部成功。Release run 58 完成 Windows 安装包签名及篡改拒绝验证，并成功公开双端安装包。
+- Release v0.4.69 的 Android APK 为 38,514,242 字节，Windows x64 安装包为 24,973,056 字节，安装包签名为 436 字节。未读取或改写用户生产数据库。
+
+### 相关文档
+
+- [PR #53：今天页折叠已完成任务](https://github.com/PLA0185/lumen/pull/53)
+- [GitHub Release v0.4.69](https://github.com/PLA0185/lumen/releases/tag/v0.4.69)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.69/Lumen_0.4.69_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.69/Lumen_0.4.69_x64-setup.exe)
+- [0.4.69 发布说明](../RELEASE_NOTES.md)
