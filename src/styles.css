@@ -2626,6 +2626,16 @@ input[type='number'].input--compact {
   min-width: 0;
 }
 
+.taskeditor__date-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
+  color: var(--c-text-3);
+  font-size: 0.85em;
+}
+
 /* 标签多选 */
 .tagpicker {
   display: flex;

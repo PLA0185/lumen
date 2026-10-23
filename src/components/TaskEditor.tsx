@@ -23,6 +23,7 @@ import { ContentMarkdown } from './ContentMarkdown'
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { addDays, addWeeks, format, startOfWeek } from 'date-fns'
 import * as ipc from '../lib/ipc'
 import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
@@ -577,6 +578,23 @@ export function TaskEditor({ task, onClose, onSaved }: TaskEditorProps) {
                     <Icon name="close" size={14} />
                   </button>
                 )}
+              </div>
+              <div className="taskeditor__date-presets" role="group" aria-label="计划日期快捷改期">
+                <span>快捷改期</span>
+                <button type="button" className="btn btn--quiet btn--sm"
+                  onClick={() => setPlannedDate(format(new Date(), 'yyyy-MM-dd'))}>
+                  今天
+                </button>
+                <button type="button" className="btn btn--quiet btn--sm"
+                  onClick={() => setPlannedDate(format(addDays(new Date(), 1), 'yyyy-MM-dd'))}>
+                  明天
+                </button>
+                <button type="button" className="btn btn--quiet btn--sm"
+                  aria-label="将计划日期设为下周一"
+                  title="设为下周一；截止时间不会改变"
+                  onClick={() => setPlannedDate(format(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }), 'yyyy-MM-dd'))}>
+                  下周
+                </button>
               </div>
             </div>
 

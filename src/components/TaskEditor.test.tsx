@@ -7,6 +7,8 @@ import * as org from '../lib/organize-ipc'
 import * as rec from '../lib/recurrence-ipc'
 import * as reminders from '../lib/reminder-ipc'
 import { publishDataChange } from '../lib/data-change'
+import { addWeeks, format, startOfWeek } from 'date-fns'
+import { combineDateTime } from '../lib/datetime'
 import type { Task } from '../lib/types'
 import { TaskEditor } from './TaskEditor'
 
@@ -79,6 +81,26 @@ it('任务编辑窗口直接显示提醒时间类型选项', async () => {
   const options = [...document.querySelectorAll<HTMLSelectElement>('[aria-label="提醒类型"] option')]
     .map(option => option.textContent)
   expect(options).toEqual(expect.arrayContaining(['截止时提醒', '计划时间到点提醒', '自定义时间']))
+})
+
+it('编辑任务可快捷改到下周一，保留计划时刻和截止时间并保存', async () => {
+  const plannedAt = new Date(2026, 9, 22, 15, 30).toISOString()
+  const dueAt = new Date(2026, 10, 5, 18, 0).toISOString()
+  await mount({ ...task, plannedAt, hasPlannedTime: 1, dueAt, hasDueTime: 1 })
+
+  const nextMonday = format(startOfWeek(addWeeks(new Date(), 1), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+  await click('[aria-label="将计划日期设为下周一"]')
+
+  expect(document.querySelector<HTMLInputElement>('[aria-label="计划日期"]')!.value).toBe(nextMonday)
+  expect(document.querySelector<HTMLInputElement>('[aria-label="计划时刻（留空表示仅日期）"]')!.value).toBe('15:30')
+  await click('.modal__actions .btn--primary')
+
+  expect(ipc.saveTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+    plannedAt: combineDateTime(nextMonday, '15:30')!.utc,
+    hasPlannedTime: true,
+    dueAt,
+    hasDueTime: true,
+  }), [])
 })
 
 it('组织刷新保留新增的未保存标签，保存仍提交用户选择', async () => {
