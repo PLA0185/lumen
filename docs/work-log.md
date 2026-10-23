@@ -5106,3 +5106,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [全项目 UI 审查与整改（2026-10-23）](refactoring-ui-audit-2026-10-23.md)
 - [README 文档索引](../README.md#文档索引)
 - [工作记录](work-log.md)
+
+## 第 126 轮 · 2026-10-23 · 发布 v0.4.67 双端更新
+
+### 做了
+
+- 合并 PR #49，将本轮全项目界面整改并入 main；前端、Rust 及完整发布门禁均通过。
+- 将前端、Tauri、Rust 与 README 版本统一为 0.4.67，补充发布说明并推送 `v0.4.67` 标签。
+- 发布签名的 Windows x64 安装包和 Android ARM64 APK，并上传更新器使用的 `latest.json`。
+
+### 没做到
+
+- 未在 OnePlus Ace 2 / Android 16 实机验收；本版本没有修复或验证此前报告的启动闪退。
+- 未在用户的已安装客户端上实际点击检查更新；已直接读取公开更新清单确认其版本为 0.4.67。
+
+### 怎么验证的
+
+- PR #49 的 GitHub CI run 226 通过；Release run 56（39889959112）整体成功，包含 Android ARM64 签名构建、发布门禁、Windows 安装包验签/篡改拒绝、`latest.json` 规范化、APK 上传和 Release 发布。
+- 公开 `latest.json` 返回 `0.4.67`，平台清单包含 `windows-x86_64` 与 `windows-x86_64-nsis`。Release assets 包含 APK（38,513,730 字节）、Windows x64 安装包（24,967,678 字节）与签名文件。
+- 版本校验 `node tools/check-version.mjs --tag=v0.4.67` 通过；未访问或改写用户数据库。
+
+### 相关文档
+
+- [PR #49：修复全项目 UI 排版并准备 v0.4.67](https://github.com/PLA0185/lumen/pull/49)
+- [GitHub Release v0.4.67](https://github.com/PLA0185/lumen/releases/tag/v0.4.67)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.67/Lumen_0.4.67_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.67/Lumen_0.4.67_x64-setup.exe)
+- [0.4.67 发布说明](../RELEASE_NOTES.md)
+- [全项目 UI 审查与整改](refactoring-ui-audit-2026-10-23.md)
