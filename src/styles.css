@@ -4842,6 +4842,9 @@ body {
 .floating__list-head { display: flex; justify-content: space-between; gap: 8px; color: var(--c-text-3); font-size: .74rem; padding: 2px 2px 6px; }
 .floating__list-head button { color: var(--c-text-2); }
 .floating__workspace .floating__list { padding: 0; overflow: visible; }
+.floating__completed { margin-top: 8px; border-top: 1px solid var(--c-border); }
+.floating__completed > summary { padding: 8px 3px 4px; color: var(--c-text-3); font-size: .78rem; cursor: pointer; user-select: none; }
+.floating__completed[open] > .floating__list { margin-top: 2px; }
 .floating__workspace .floating__item { padding: 11px 3px; border-bottom: 1px solid var(--c-border); border-radius: 0; font-size: .88rem; }
 .floating__workspace .floating__item .subtask-preview { margin-top: 5px; }
 .floating__progress { padding: 1px 5px; font-size: .74rem; color: var(--c-ok); background: var(--c-ok-soft); border-radius: 10px; font-variant-numeric: tabular-nums; }

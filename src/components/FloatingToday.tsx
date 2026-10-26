@@ -44,6 +44,7 @@ import { QuickAdd } from './QuickAdd'
 import { FocusPanel } from './FocusPanel'
 import { ReminderEditor } from './ReminderEditor'
 import { AiAssistant } from './AiAssistant'
+import { FloatingTaskSections } from './FloatingTaskSections'
 
 /** 拖动结束后再落库的延迟：拖动过程中会连续触发 resize 事件 */
 const SIZE_SAVE_DELAY = 400
@@ -608,10 +609,10 @@ export function FloatingToday() {
             </span>
           </div>
         ) : (
-          <ul className="floating__list">
-            {tasks
-              .filter((t) => !hideDone || t.status !== 'done')
-              .map((t) => {
+          <FloatingTaskSections
+            tasks={tasks}
+            hideDone={hideDone}
+            renderTask={(t) => {
                 const isDone = t.status === 'done'
                 const overdue = isOverdue(t)
                 const at = fromUtcIso(t.plannedAt)
@@ -731,8 +732,8 @@ export function FloatingToday() {
                     )}
                   </li>
                 )
-              })}
-          </ul>
+            }}
+          />
         )}
 
         {!clickThrough && (
