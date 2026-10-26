@@ -442,7 +442,7 @@ pnpm typecheck                # 类型检查
 
 ## 文档索引
 
-当前源码版本 0.4.69。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。Windows 安装包与 Android ARM64 APK 按同版发布。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
+当前源码版本 0.4.70。今天页和悬浮窗都将已完成任务收进默认折叠区；待办保持可见。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。Windows 安装包与 Android ARM64 APK 按同版发布。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
 
 | 文档 | 内容 |
 | --- | --- |
