@@ -5234,3 +5234,27 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - [0.4.71 发布说明](../RELEASE_NOTES.md)
 - [日期分桶逻辑](../src/lib/calendar-task-buckets.ts)
+
+## 第 131 轮 · 2026-10-27 · v0.4.71 双端发布
+
+### 做了
+
+- PR #56 已合并，今天页、明天页和悬浮窗的周期任务逐日显示修复进入主分支。
+- 发布 0.4.71 的 Windows x64 安装包和 Android ARM64 APK；公开 Release 同时提供 Windows 更新签名与 `latest.json`。
+
+### 没做到
+
+- 未在用户的 Windows 客户端实机验收周期任务显示；未在 OnePlus Ace 2 / Android 16 上安装或验证此前报告的启动闪退。
+
+### 怎么验证的
+
+- PR CI run 240 和主分支 CI run 241 的前端与 Rust 检查均通过。Release run 60 的完整门禁、Android 签名构建、Windows 安装包签名及篡改拒绝、更新清单规范化、APK 上传和公开发布步骤成功；记录时仅剩缓存收尾。
+- 公开 Release 包含 Android APK（38,523,746 字节）、Windows 安装包（24,975,915 字节）和 436 字节签名；公开更新清单的版本为 0.4.71，包含 Windows 两种平台键。
+
+### 相关文档
+
+- [PR #56：修复周期任务逐日显示](https://github.com/PLA0185/lumen/pull/56)
+- [GitHub Release v0.4.71](https://github.com/PLA0185/lumen/releases/tag/v0.4.71)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_android_arm64.apk)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_x64-setup.exe)
+- [0.4.71 发布说明](../RELEASE_NOTES.md)
