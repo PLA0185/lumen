@@ -17,8 +17,15 @@ import {
   bucketOf,
   isOverdue,
   formatTaskTime,
+  taskDoneOnDay,
 } from './datetime'
 import type { Task } from './types'
+
+it('周期任务完成前的历史日期按未完成显示，完成当日显示已完成', () => {
+  const task = makeTask({ status: 'done', periodType: 'week', completedAt: new Date(2026, 9, 27, 15).toISOString() })
+  expect(taskDoneOnDay(task, new Date(2026, 9, 26, 12))).toBe(false)
+  expect(taskDoneOnDay(task, new Date(2026, 9, 27, 12))).toBe(true)
+})
 
 /** 构造一个测试任务，只需覆盖被测字段 */
 function makeTask(over: Partial<Task> = {}): Task {

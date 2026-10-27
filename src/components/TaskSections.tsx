@@ -7,18 +7,20 @@ type TaskWithStatus = { id: string; status: TaskStatus };
 export function TaskSections<T extends TaskWithStatus>({
   tasks,
   separateCompleted = false,
+  isCompleted = (task) => task.status === "done",
   renderTask,
 }: {
   tasks: T[];
   separateCompleted?: boolean;
+  isCompleted?: (task: T) => boolean;
   renderTask: (task: T) => ReactNode;
 }) {
   if (!separateCompleted) {
     return <ul className="tasklist">{tasks.map(renderTask)}</ul>;
   }
 
-  const unfinished = tasks.filter((task) => task.status !== "done");
-  const completed = tasks.filter((task) => task.status === "done");
+  const unfinished = tasks.filter((task) => !isCompleted(task));
+  const completed = tasks.filter(isCompleted);
 
   return (
     <div className="tasklist-sections">

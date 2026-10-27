@@ -57,4 +57,13 @@ describe("浮窗直接新建与一周导航", () => {
     expect(html).not.toContain("已完成事项");
     expect(html).not.toContain("floating__completed");
   });
+
+  it("查看历史日期时，之后完成的任务不会被隐藏", () => {
+    const html = renderToStaticMarkup(
+      <FloatingTaskSections tasks={[{ id: "later", title: "历史待办", status: "done" } as Task]}
+        hideDone isCompleted={() => false} renderTask={(task) => <li key={task.id}>{task.title}</li>} />,
+    );
+    expect(html).toContain("历史待办");
+    expect(html).toContain('aria-label="待处理任务"');
+  });
 });

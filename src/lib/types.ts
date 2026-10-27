@@ -152,6 +152,17 @@ export interface UpdateTaskInput {
 }
 
 /** 列表查询条件（§4.1 组合筛选 + 搜索） */
+export interface PeriodDayBounds {
+  weekFrom: string
+  weekTo: string
+  monthFrom: string
+  monthTo: string
+  quarterFrom: string
+  quarterTo: string
+  yearFrom: string
+  yearTo: string
+}
+
 export interface TaskQuery {
   groupRecurring?: boolean
   statuses?: TaskStatus[]
@@ -168,6 +179,8 @@ export interface TaskQuery {
   priorities?: number[]
   plannedFrom?: string | null
   plannedTo?: string | null
+  /** 在单日查询中同时包含该日所属周期内的跨度任务。 */
+  periodDay?: PeriodDayBounds
   dueFrom?: string | null
   dueTo?: string | null
   search?: string | null

@@ -25,6 +25,11 @@ describe('新建任务保留当前视图归属', () => {
     expect(query.plannedTo).toBe(dateRange(selectedDate).end)
     expect(creationDefaults('today', selectedDate).plannedDate).toBe(selectedDate)
   })
+  it('选中周二时查询包含该周的周期任务范围', () => {
+    const query = buildQuery({view:'today', todayDate:'2026-10-27', search:'', statusFilter:[], sortBy:'manual', sortDesc:false, overdueOnly:false}) as ReturnType<typeof buildQuery> & { periodDay?: { weekFrom: string; weekTo: string } }
+    expect(query.periodDay?.weekFrom).toBe(dateRange('2026-10-26').start)
+    expect(query.periodDay?.weekTo).toBe(dateRange('2026-11-01').end)
+  })
   it('周期归属与当前视图的查询条件一致，收件箱不强加日期', () => {
     for (const view of ['period-week', 'period-month', 'period-quarter', 'period-year'] as ViewId[]) {
       const defaults = creationDefaults(view, '', now)

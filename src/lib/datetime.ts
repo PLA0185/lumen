@@ -11,7 +11,7 @@
 
 import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, addDays, differenceInCalendarWeeks } from 'date-fns'
 import { PERIOD_BADGES, type PeriodType } from './types'
-import type { Task } from './types'
+import type { PeriodDayBounds, Task } from './types'
 
 /** 把 Date 转为后端要求的 UTC ISO-8601（毫秒精度，带 Z） */
 export function toUtcIso(d: Date): string {
@@ -125,6 +125,33 @@ export function dateRange(date: string): { start: string; end: string } {
   const local = new Date(year, month - 1, day)
   if (local.getFullYear() !== year || local.getMonth() !== month - 1 || local.getDate() !== day) return todayRange()
   return localDayRange(local)
+}
+
+/** 所选本地日所属自然周期的 UTC 边界，供列表与计数共用。 */
+export function periodDayBounds(day: Date): PeriodDayBounds {
+  const year = day.getFullYear()
+  const month = day.getMonth()
+  const firstQuarterMonth = Math.floor(month / 3) * 3
+  const week = weekRange(day)
+  const endBefore = (next: Date) => toUtcIso(new Date(next.getTime() - 1))
+  return {
+    weekFrom: week.start,
+    weekTo: week.end,
+    monthFrom: toUtcIso(new Date(year, month, 1)),
+    monthTo: endBefore(new Date(year, month + 1, 1)),
+    quarterFrom: toUtcIso(new Date(year, firstQuarterMonth, 1)),
+    quarterTo: endBefore(new Date(year, firstQuarterMonth + 3, 1)),
+    yearFrom: toUtcIso(new Date(year, 0, 1)),
+    yearTo: endBefore(new Date(year + 1, 0, 1)),
+  }
+}
+
+/** 周期任务在所选日之后才完成时，历史日期仍显示为未完成。 */
+export function taskDoneOnDay(task: Task, day: Date): boolean {
+  if (task.status !== 'done') return false
+  if (!['week', 'month', 'quarter', 'year'].includes(task.periodType)) return true
+  const completedAt = fromUtcIso(task.completedAt) ?? fromUtcIso(task.updatedAt) ?? fromUtcIso(task.createdAt)
+  return !completedAt || completedAt.getTime() <= endOfDay(day).getTime()
 }
 
 /** 本地"明天"的起止 */

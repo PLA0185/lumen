@@ -15,6 +15,19 @@ afterEach(() => {
 });
 
 describe("今天页任务分组", () => {
+  it("之后才完成的周期任务在历史日期保留在待处理区", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(
+      <TaskSections tasks={[{ id: "later", status: "done" as TaskStatus }]}
+        separateCompleted isCompleted={() => false}
+        renderTask={(task) => <li key={task.id}>历史待办</li>} />,
+    ));
+    expect(host.querySelector('ul[aria-label="待处理任务"]')?.textContent).toContain("历史待办");
+    expect(host.querySelector("details.tasklist-completed")).toBeNull();
+  });
+
   it("把已完成任务放入默认折叠的已完成区，待办仍显示在前面", async () => {
     const host = document.createElement("div");
     document.body.append(host);
