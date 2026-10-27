@@ -84,4 +84,15 @@ describe('任务卡片中的文本与子任务', () => {
     expect(html).toContain('下周内')
     expect(html).not.toContain('本周内')
   })
+
+  it('历史日期的后来完成任务显示为未完成，并阻止误改真实完成状态', () => {
+    const html = renderToStaticMarkup(
+      <TaskCard task={{ ...task, status: 'done', periodType: 'week' }} displayDone={false}
+        completionReadOnly onToggle={() => {}} onDelete={() => {}} />,
+    )
+    expect(html).toContain('aria-checked="false"')
+    expect(html).toContain('历史日期不能修改完成状态')
+    expect(html).toContain('disabled=""')
+    expect(html).toContain('之后已完成')
+  })
 })

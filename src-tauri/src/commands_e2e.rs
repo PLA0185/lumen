@@ -546,6 +546,106 @@ fn task(title: &str) -> CreateTaskInput {
 }
 
 #[tokio::test]
+async fn daily_list_and_count_include_period_tasks_until_completion_day() {
+    let (state, dir) = setup("daily-period-tasks").await;
+    let db = &state.db;
+    let mut ids = Vec::new();
+    for (title, period, planned) in [
+        ("周任务", "week", "2026-10-25T16:00:00.000Z"),
+        ("月任务", "month", "2026-10-01T04:00:00.000Z"),
+        ("季度任务", "quarter", "2026-10-01T04:00:00.000Z"),
+        ("年任务", "year", "2026-01-01T04:00:00.000Z"),
+        ("下周任务", "week", "2026-11-02T04:00:00.000Z"),
+        ("普通周一任务", "none", "2026-10-26T04:00:00.000Z"),
+        ("周二完成", "week", "2026-10-26T04:00:00.000Z"),
+    ] {
+        let row = create_task_impl(
+            db,
+            CreateTaskInput {
+                planned_at: Some(planned.into()),
+                period_type: Some(period.into()),
+                ..task(title)
+            },
+        )
+        .await
+        .unwrap();
+        ids.push(row.id);
+    }
+    sqlx::query("UPDATE tasks SET status='done', completed_at='2026-10-27T07:00:00.000Z', updated_at='2026-10-27T07:00:00.000Z' WHERE id=?1")
+        .bind(&ids[6]).execute(db.pool()).await.unwrap();
+    let unscheduled = create_task_impl(
+        db,
+        CreateTaskInput {
+            period_type: Some("week".into()),
+            ..task("周二创建的无日期周任务")
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET created_at='2026-10-27T04:00:00.000Z' WHERE id=?1")
+        .bind(&unscheduled.id)
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+    let mut query: TaskQuery = serde_json::from_value(serde_json::json!({
+        "statuses": ["todo", "doing", "waiting", "done"],
+        "plannedFrom": "2026-10-26T16:00:00.000Z",
+        "plannedTo": "2026-10-27T15:59:59.999Z",
+        "periodDay": {
+            "weekFrom": "2026-10-25T16:00:00.000Z", "weekTo": "2026-11-01T15:59:59.999Z",
+            "monthFrom": "2026-09-30T16:00:00.000Z", "monthTo": "2026-10-31T15:59:59.999Z",
+            "quarterFrom": "2026-09-30T16:00:00.000Z", "quarterTo": "2026-12-31T15:59:59.999Z",
+            "yearFrom": "2025-12-31T16:00:00.000Z", "yearTo": "2026-12-31T15:59:59.999Z"
+        }
+    }))
+    .unwrap();
+    let rows = list_tasks_impl(db, query.clone()).await.unwrap();
+    let visible: std::collections::HashSet<&str> = rows.iter().map(|t| t.id.as_str()).collect();
+    for id in [&ids[0], &ids[1], &ids[2], &ids[3], &ids[6]] {
+        assert!(visible.contains(id.as_str()));
+    }
+    assert!(!visible.contains(ids[4].as_str()));
+    assert!(!visible.contains(ids[5].as_str()));
+    assert!(visible.contains(unscheduled.id.as_str()));
+    assert_eq!(
+        crate::commands::count_tasks_impl(db, &query).await.unwrap(),
+        6
+    );
+
+    let mut monday = query.clone();
+    monday.planned_from = Some("2026-10-25T16:00:00.000Z".into());
+    monday.planned_to = Some("2026-10-26T15:59:59.999Z".into());
+    monday.statuses = vec!["todo".into(), "doing".into(), "waiting".into()];
+    let monday_rows = list_tasks_impl(db, monday.clone()).await.unwrap();
+    assert!(monday_rows.iter().any(|t| t.id == ids[6]));
+    assert_eq!(
+        crate::commands::count_tasks_impl(db, &monday)
+            .await
+            .unwrap(),
+        monday_rows.len() as i64
+    );
+    assert!(!list_tasks_impl(db, monday)
+        .await
+        .unwrap()
+        .iter()
+        .any(|t| t.id == unscheduled.id));
+
+    query.planned_from = Some("2026-10-27T16:00:00.000Z".into());
+    query.planned_to = Some("2026-10-28T15:59:59.999Z".into());
+    let next = list_tasks_impl(db, query.clone()).await.unwrap();
+    assert!(next.iter().any(|t| t.id == ids[0]));
+    assert!(!next.iter().any(|t| t.id == ids[6]));
+    assert_eq!(
+        crate::commands::count_tasks_impl(db, &query).await.unwrap(),
+        5
+    );
+
+    state.db.pool().close().await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn calendar_range_includes_period_tasks_in_their_active_window() {
     let (state, dir) = setup("calendar-period-tasks").await;
     let db = &state.db;

@@ -10,7 +10,8 @@ import { TodayDateSelector } from './components/TodayDateSelector'
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { addDays, format } from 'date-fns'
+import { taskDoneOnDay } from './lib/datetime'
 import { creationDefaults, type TaskCreationContext } from './lib/task-creation-context'
 import { ContextTaskList } from './components/ContextTaskList'
 import { useApp, PAGE_SIZE, buildQuery } from './lib/store'
@@ -762,6 +763,7 @@ export default function App() {
 
           <TaskArea
             view={view}
+            selectedDay={view === 'today' ? new Date(`${todayDate}T00:00:00`) : view === 'tomorrow' ? addDays(new Date(), 1) : null}
             isAndroid={isAndroid}
             tasks={sortedTasks}
             progressMap={progressMap}
@@ -916,6 +918,7 @@ export default function App() {
 
 interface TaskAreaProps {
   view: ViewId
+  selectedDay: Date | null
   isAndroid: boolean
   tasks: Task[]
   /** 任务 ID → 子任务进度（列表页批量取得） */
@@ -953,6 +956,7 @@ interface TaskAreaProps {
 
 function TaskArea({
   view,
+  selectedDay,
   isAndroid,
   tasks,
   progressMap,
@@ -1111,10 +1115,13 @@ function TaskArea({
       <TaskSections
         tasks={tasks}
         separateCompleted={view === 'today'}
+        isCompleted={(task) => selectedDay ? taskDoneOnDay(task, selectedDay) : task.status === 'done'}
         renderTask={(t) => (
           <TaskCard
             key={t.id}
             task={t}
+            displayDone={selectedDay ? taskDoneOnDay(t, selectedDay) : undefined}
+            completionReadOnly={!!selectedDay && t.status === 'done' && !taskDoneOnDay(t, selectedDay)}
             mode={view === 'trash' ? 'trash' : 'normal'}
             progress={progressMap[t.id]}
             onToggle={onToggle}

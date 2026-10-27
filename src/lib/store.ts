@@ -19,7 +19,7 @@ import type {
   TodayOverview,
   ViewId,
 } from './types'
-import { dateRange, todayRange } from './datetime'
+import { dateRange, periodDayBounds, todayRange } from './datetime'
 import type { SubtaskProgress } from './organize-ipc'
 export type SubtaskSummary = Omit<SubtaskProgress, 'taskId'>
 
@@ -178,6 +178,7 @@ export function buildQuery(s: {
         const range = s.todayDate ? dateRange(s.todayDate) : todayRange()
         q.plannedFrom = range.start
         q.plannedTo = range.end
+        q.periodDay = periodDayBounds(new Date(range.start))
       }
       break
     // ---------------- 周期任务视图 ----------------
@@ -202,6 +203,7 @@ export function buildQuery(s: {
       const r = todayRange(d)
       q.plannedFrom = r.start
       q.plannedTo = r.end
+      q.periodDay = periodDayBounds(d)
       break
     }
     case 'week': {

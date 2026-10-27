@@ -33,7 +33,7 @@ import { SubtaskPreview } from './SubtaskPreview'
 import { onDataChanged } from '../lib/data-change'
 import { listenEvent } from '../lib/event-listener'
 import { createRequestGate, runLatestRequest } from '../lib/request-gate'
-import { fromUtcIso, isOverdue, todayRange } from '../lib/datetime'
+import { fromUtcIso, isOverdue, periodDayBounds, taskDoneOnDay, todayRange } from '../lib/datetime'
 import { TaskEditor } from './TaskEditor'
 import type { FloatingState } from '../lib/window-ipc'
 import type { Task, TaskQuery } from '../lib/types'
@@ -104,6 +104,7 @@ export function FloatingToday() {
           statuses: ['todo', 'doing', 'waiting', 'done'],
           plannedFrom: r.start,
           plannedTo: r.end,
+          periodDay: periodDayBounds(selectedDay),
         }
         const [list, allCount, doneCount, st, counts] = await Promise.all([
           ipc.listTasks({
@@ -121,6 +122,7 @@ export function FloatingToday() {
                 statuses: ['todo', 'doing', 'waiting'],
                 plannedFrom: range.start,
                 plannedTo: range.end,
+                periodDay: periodDayBounds(day),
               })
             }),
           ),
@@ -612,8 +614,10 @@ export function FloatingToday() {
           <FloatingTaskSections
             tasks={tasks}
             hideDone={hideDone}
+            isCompleted={(task) => taskDoneOnDay(task, selectedDay)}
             renderTask={(t) => {
-                const isDone = t.status === 'done'
+                const isDone = taskDoneOnDay(t, selectedDay)
+                const completionReadOnly = t.status === 'done' && !isDone
                 const overdue = isOverdue(t)
                 const at = fromUtcIso(t.plannedAt)
                 const editing = editingId === t.id
@@ -629,12 +633,15 @@ export function FloatingToday() {
                       role="checkbox"
                       aria-checked={isDone}
                       aria-label={
-                        isDone
+                        completionReadOnly
+                          ? `「${t.title}」在之后完成，历史日期不能修改完成状态`
+                          : isDone
                           ? `将「${t.title}」标记为未完成`
                           : `完成「${t.title}」`
                       }
                       className="floating__check"
-                      disabled={clickThrough}
+                      disabled={clickThrough || completionReadOnly}
+                      title={completionReadOnly ? '任务已在之后完成，请在完成日或今天修改状态' : undefined}
                       onClick={() => void toggle(t.id, !isDone)}
                     >
                       {isDone && <CheckMark size={11} />}
@@ -711,6 +718,7 @@ export function FloatingToday() {
                         <Icon name="repeat" size={13} />
                       </span>
                     )}
+                    {completionReadOnly && <span className="floating__mark">之后已完成</span>}
 
                     {/* 完整编辑：打开与主窗口同一个表单，而不是只能改标题 */}
                     <button
@@ -726,7 +734,7 @@ export function FloatingToday() {
                     {(subtasks[t.id]?.length ?? 0) > 0 && (
                       <SubtaskPreview
                         items={subtasks[t.id] ?? []}
-                        disabled={clickThrough}
+                        disabled={clickThrough || completionReadOnly}
                         completionMode={subtaskModes[t.id] ?? 'free'}
                       />
                     )}

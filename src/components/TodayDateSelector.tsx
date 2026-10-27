@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { addDays, format, startOfWeek } from 'date-fns'
 import * as ipc from '../lib/ipc'
-import { todayRange } from '../lib/datetime'
+import { onDataChanged } from '../lib/data-change'
+import { periodDayBounds, todayRange } from '../lib/datetime'
 
 interface Props {
   selectedDate: string
@@ -21,21 +22,27 @@ export function TodayDateSelector({ selectedDate, onChange }: Props) {
   const request = useRef(0)
 
   useEffect(() => {
-    const current = ++request.current
+    const refresh = () => {
+      const current = ++request.current
+      void Promise.all(dates.map(async date => {
+        const range = todayRange(date)
+        return ipc.countTasks({
+          groupRecurring: true,
+          statuses: ['todo', 'doing', 'waiting'],
+          plannedFrom: range.start,
+          plannedTo: range.end,
+          periodDay: periodDayBounds(date),
+        }).then(result => result.total)
+      })).then(next => {
+        if (request.current === current) setCounts(next)
+      }).catch(() => {
+        if (request.current === current) setCounts(Array(7).fill(null))
+      })
+    }
     setCounts(Array(7).fill(null))
-    void Promise.all(dates.map(async date => {
-      const range = todayRange(date)
-      return ipc.countTasks({
-        statuses: ['todo', 'doing', 'waiting'],
-        plannedFrom: range.start,
-        plannedTo: range.end,
-      }).then(result => result.total)
-    })).then(next => {
-      if (request.current === current) setCounts(next)
-    }).catch(() => {
-      if (request.current === current) setCounts(Array(7).fill(null))
-    })
-    return () => { request.current += 1 }
+    refresh()
+    const off = onDataChanged(['tasks', 'all'], refresh)
+    return () => { request.current += 1; off() }
   }, [dates])
 
   const moveWeek = (offset: number) => onChange(format(addDays(selectedDay, offset * 7), 'yyyy-MM-dd'))

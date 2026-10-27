@@ -5,14 +5,16 @@ import type { Task } from "../lib/types";
 export function FloatingTaskSections({
   tasks,
   hideDone,
+  isCompleted = (task) => task.status === "done",
   renderTask,
 }: {
   tasks: Task[];
   hideDone: boolean;
+  isCompleted?: (task: Task) => boolean;
   renderTask: (task: Task) => ReactNode;
 }) {
-  const unfinished = tasks.filter((task) => task.status !== "done");
-  const completed = tasks.filter((task) => task.status === "done");
+  const unfinished = tasks.filter((task) => !isCompleted(task));
+  const completed = tasks.filter(isCompleted);
 
   return (
     <>

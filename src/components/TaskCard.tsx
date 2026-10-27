@@ -144,6 +144,8 @@ const PRIORITY_LABEL: Record<number, string> = {
 
 interface TaskCardProps {
   task: Task
+  displayDone?: boolean
+  completionReadOnly?: boolean
   onToggle: (id: string, done: boolean) => void
   onDelete: (id: string) => void
   onRestore?: (id: string) => void
@@ -172,6 +174,8 @@ interface TaskCardProps {
 
 export function TaskCard({
   task,
+  displayDone,
+  completionReadOnly = false,
   onToggle,
   onDelete,
   onRestore,
@@ -187,7 +191,7 @@ export function TaskCard({
   isDragging = false,
   dropHint = null,
 }: TaskCardProps) {
-  const done = task.status === 'done'
+  const done = displayDone ?? task.status === 'done'
   const overdue = isOverdue(task)
   const timeText = formatTaskTime(task)
   const inTrash = mode === 'trash'
@@ -259,11 +263,15 @@ export function TaskCard({
             role="checkbox"
             aria-checked={done}
             aria-label={
-              done
+              completionReadOnly
+                ? `「${task.title}」在之后完成，历史日期不能修改完成状态`
+                : done
                 ? `将「${task.title}」标记为未完成`
                 : `将「${task.title}」标记为已完成`
             }
             className="task__check"
+            disabled={completionReadOnly}
+            title={completionReadOnly ? '任务已在之后完成，请在完成日或今天修改状态' : undefined}
             onClick={() => onToggle(task.id, !done)}
           >
             {done && <CheckMark />}
@@ -297,6 +305,7 @@ export function TaskCard({
 
             {overdue && <span className="badge badge--overdue">已逾期</span>}
             {done && <span className="badge badge--done">已完成</span>}
+            {completionReadOnly && <span className="badge">之后已完成</span>}
             {done && <span className="task__completed selectable">{formatCompletionTime(task.completedAt)}</span>}
             {/* 周期跨度徽标：让用户一眼看出这是"这周做完就行"而不是某天的具体安排 */}
             {task.periodType && task.periodType !== 'none' && (
@@ -435,7 +444,7 @@ export function TaskCard({
       {!expanded &&
         !inTrash &&
         progress?.items &&
-        progress.items.length > 0 && <SubtaskPreview items={progress.items} completionMode={progress.completionMode} />}
+        progress.items.length > 0 && <SubtaskPreview items={progress.items} disabled={completionReadOnly} completionMode={progress.completionMode} />}
 
       {expanded && hasDetail && (
         <div className="task__detail">
@@ -451,7 +460,9 @@ export function TaskCard({
               ? <div className="task-description__content selectable mdpreview"><ContentMarkdown>{task.description}</ContentMarkdown></div>
               : <p className="reminders__empty">填写要完成什么、交付要求和注意事项。</p>}
           </section>
-          <SubtaskList taskId={task.id} isRecurring={isRecurring} taskTitle={task.title} />
+          {completionReadOnly
+            ? <p className="reminders__empty">此任务在之后完成，请在完成日或今天修改子任务。</p>
+            : <SubtaskList taskId={task.id} isRecurring={isRecurring} taskTitle={task.title} />}
           <AttachmentList taskId={task.id} />
           {/* 专注计时绑定到这个任务：结束后时长累加到 actual_minutes */}
           <div className="focusblock">
@@ -464,7 +475,7 @@ export function TaskCard({
             taskId={task.id}
             hasPlanned={Boolean(task.plannedAt)}
             hasDue={Boolean(task.dueAt)}
-            taskDone={done || task.status === 'archived'}
+            taskDone={task.status === 'done' || task.status === 'archived'}
             onEditRecurringRule={isRecurring ? () => setEditingRule(true) : undefined}
           />
           <DependencyEditor taskId={task.id} taskTitle={task.title} />

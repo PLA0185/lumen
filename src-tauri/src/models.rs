@@ -243,6 +243,20 @@ pub struct UpdateTaskInput {
     pub clear_link: bool,
 }
 
+/// 本地某日所属自然周期的 UTC 边界。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodDayBounds {
+    pub week_from: String,
+    pub week_to: String,
+    pub month_from: String,
+    pub month_to: String,
+    pub quarter_from: String,
+    pub quarter_to: String,
+    pub year_from: String,
+    pub year_to: String,
+}
+
 /// 任务列表查询条件（§4.1 组合筛选 + 搜索）
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -283,6 +297,9 @@ pub struct TaskQuery {
     pub planned_from: Option<String>,
     #[serde(default)]
     pub planned_to: Option<String>,
+    /// 单日列表同时纳入该本地日所属周/月/季度/年的周期任务。
+    #[serde(default)]
+    pub period_day: Option<PeriodDayBounds>,
     /// 截止时间区间（UTC，含端点）
     #[serde(default)]
     pub due_from: Option<String>,

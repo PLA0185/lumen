@@ -1184,7 +1184,15 @@ fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppRes
         for s in &query.statuses {
             valid.push(validate_status(s)?);
         }
-        b.push(" AND status IN (");
+        if query.period_day.is_some() {
+            let end = validate_opt_time("计划结束", query.planned_to.as_ref())?
+                .ok_or_else(|| AppError::validation("周期日查询缺少日期终点"))?;
+            b.push(" AND (CASE WHEN period_type IN ('week','month','quarter','year') AND status = 'done' AND COALESCE(completed_at, updated_at, created_at) > ")
+                .push_bind(end)
+                .push(" THEN 'todo' ELSE status END) IN (");
+        } else {
+            b.push(" AND status IN (");
+        }
         let mut sep = b.separated(", ");
         for v in valid {
             sep.push_bind(v.to_string());
@@ -1238,11 +1246,62 @@ fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppRes
         .push(")");
     }
 
-    if let Some(from) = validate_opt_time("计划起始", query.planned_from.as_ref())? {
-        b.push(" AND planned_at >= ").push_bind(from);
-    }
-    if let Some(to) = validate_opt_time("计划结束", query.planned_to.as_ref())? {
-        b.push(" AND planned_at <= ").push_bind(to);
+    let planned_from = validate_opt_time("计划起始", query.planned_from.as_ref())?;
+    let planned_to = validate_opt_time("计划结束", query.planned_to.as_ref())?;
+    if let Some(period) = &query.period_day {
+        let from = planned_from
+            .as_ref()
+            .ok_or_else(|| AppError::validation("周期日查询缺少日期起点"))?;
+        let to = planned_to
+            .as_ref()
+            .ok_or_else(|| AppError::validation("周期日查询缺少日期终点"))?;
+        if from > to {
+            return Err(AppError::validation("周期日查询的日期范围无效"));
+        }
+        let spans = [
+            ("week", &period.week_from, &period.week_to),
+            ("month", &period.month_from, &period.month_to),
+            ("quarter", &period.quarter_from, &period.quarter_to),
+            ("year", &period.year_from, &period.year_to),
+        ];
+        b.push(" AND ((period_type NOT IN ('week','month','quarter','year') AND planned_at >= ")
+            .push_bind(from.clone())
+            .push(" AND planned_at <= ")
+            .push_bind(to.clone())
+            .push(") OR ((");
+        for (index, (kind, start, end)) in spans.iter().enumerate() {
+            let start = validate_time("周期起点", start)?;
+            let end = validate_time("周期终点", end)?;
+            if start > end {
+                return Err(AppError::validation("周期范围无效"));
+            }
+            if index > 0 {
+                b.push(" OR ");
+            }
+            b.push("(period_type = ")
+                .push_bind((*kind).to_string())
+                .push(" AND COALESCE(planned_at, due_at, created_at) >= ")
+                .push_bind(start)
+                .push(" AND COALESCE(planned_at, due_at, created_at) <= ")
+                .push_bind(end)
+                .push(")");
+        }
+        b.push(") AND (COALESCE(planned_at, due_at) IS NOT NULL OR created_at <= ")
+            .push_bind(to.clone())
+            .push(") AND (status <> 'done' OR COALESCE(completed_at, updated_at, created_at) >= ")
+            .push_bind(from.clone())
+            .push(")) OR (period_type IN ('week','month','quarter','year') AND status = 'done' AND COALESCE(completed_at, updated_at, created_at) >= ")
+            .push_bind(from.clone())
+            .push(" AND COALESCE(completed_at, updated_at, created_at) <= ")
+            .push_bind(to.clone())
+            .push("))");
+    } else {
+        if let Some(from) = planned_from {
+            b.push(" AND planned_at >= ").push_bind(from);
+        }
+        if let Some(to) = planned_to {
+            b.push(" AND planned_at <= ").push_bind(to);
+        }
     }
     if let Some(from) = validate_opt_time("截止起始", query.due_from.as_ref())? {
         b.push(" AND due_at >= ").push_bind(from);
