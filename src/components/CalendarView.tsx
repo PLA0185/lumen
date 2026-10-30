@@ -77,9 +77,10 @@ function weekDays(anchor: Date): Date[] {
   )
 }
 
-export function CalendarView({ onDateChange, onCreateTask }: {
+export function CalendarView({ onDateChange, onCreateTask, onEdit }: {
   onDateChange?: (date: string) => void
   onCreateTask?: (date: string) => void
+  onEdit?: (task: Task) => void
 } = {}) {
   const gate = useMemo(createRequestGate, [])
   const [mode, setMode] = useState<Mode>('month')
@@ -194,8 +195,9 @@ export function CalendarView({ onDateChange, onCreateTask }: {
     const done = t.status === 'done'
     const overdue = t.dueAt && !done && fromUtcIso(t.dueAt)!.getTime() < Date.now()
     return (
-      <div
+      <button
         key={t.id}
+        type="button"
         className={[
           'calchip',
           done ? 'calchip--done' : '',
@@ -204,7 +206,13 @@ export function CalendarView({ onDateChange, onCreateTask }: {
         ]
           .filter(Boolean)
           .join(' ')}
+        aria-label={`打开任务：${t.title}`}
         draggable
+        onClick={(event) => {
+          // 任务条在日历格内部；打开任务时不要触发格子的日期切换。
+          event.stopPropagation()
+          onEdit?.(t)
+        }}
         onDragStart={(e) => {
           setDragging(t.id)
           // 必须设置 dataTransfer，否则 Firefox 等不会触发 drop
@@ -233,7 +241,7 @@ export function CalendarView({ onDateChange, onCreateTask }: {
             <Icon name="repeat" size={13} />
           </span>
         )}
-      </div>
+      </button>
     )
   }
 
