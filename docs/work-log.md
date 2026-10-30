@@ -5286,3 +5286,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [0.4.72 发布说明](../RELEASE_NOTES.md)
 - [日历任务条组件](../src/components/CalendarView.tsx)
 - [日历任务条交互回归用例](../src/components/CalendarView.test.tsx)
+
+## 第 133 轮 · 2026-10-30 · v0.4.72 双端正式发布
+
+### 做了
+
+- 合并 PR #58，日历任务条点击和键盘激活均可打开任务编辑窗口，且不会误切换日期。
+- 正式发布 v0.4.72 Windows x64 安装包与 Android ARM64 APK；Windows 安装包附带有效更新签名，Release 同时提供 `latest.json`。
+- 更新清单版本为 0.4.72，Windows x64 与 NSIS 两个平台入口都指向该版本的安装包与签名。
+
+### 没做到
+
+- 未在用户实际 Windows 客户端中触发“检查更新”，也未在 OnePlus Ace 2 / Android 16 实机安装 APK 验收；本机没有用户的设备环境。
+- 本机 `cargo test --lib` 输出 621 项通过、4 项忽略、0 项失败，但进程在汇总后没有正常退出，因此不记作本地命令完整通过。
+
+### 怎么验证的
+
+- PR CI run 244 的前端与 Rust 作业均成功；Release run 61 的完整门禁、Android 签名构建、Windows 安装包签名与篡改拒绝、更新清单规范化、APK 上传及公开发布步骤均成功。
+- 本机 432 项前端测试、类型检查、版本检查、构建、lint、`cargo fmt --check`、`cargo check --all-targets` 和无豁免 Clippy 通过。
+- 读取正式 `latest.json` 确认版本 0.4.72 和两个 Windows 平台键均有签名；Windows 安装包与 Android APK 下载链接的 HEAD 请求均返回 HTTP 200。
+- 未读取或修改用户生产数据库。
+
+### 相关文档
+
+- [PR #58：日历任务条打开编辑](https://github.com/PLA0185/lumen/pull/58)
+- [GitHub Release v0.4.72](https://github.com/PLA0185/lumen/releases/tag/v0.4.72)
+- [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.72/Lumen_0.4.72_x64-setup.exe)
+- [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.72/Lumen_0.4.72_android_arm64.apk)
+- [0.4.72 发布说明](../RELEASE_NOTES.md)
