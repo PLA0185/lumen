@@ -5258,3 +5258,28 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_android_arm64.apk)
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_x64-setup.exe)
 - [0.4.71 发布说明](../RELEASE_NOTES.md)
+
+## 第 132 轮 · 2026-10-30 · 日历任务条打开编辑
+
+### 做了
+
+- 找到日历任务条无法打开的原因：任务条只支持拖拽，未连接任务编辑回调；同时点击事件会冒泡到日历格，导致月历点任务时还会切换日期。
+- 将日历任务条改为可点击、可键盘聚焦的按钮，连接现有编辑窗口，并阻止点击任务触发日历格日期切换。
+- 更新版本为 0.4.72，并同步发布说明和 README，按项目发布流程准备 Windows 与 Android ARM64 同版更新。
+
+### 没做到
+
+- 0.4.72 的 PR CI 与双端正式发布尚未完成，完成后补记实际结果和下载地址。
+- 未在用户的 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；本机没有这两种实际运行环境。
+
+### 怎么验证的
+
+- 新增的日历任务点击用例在修改前失败，提示编辑回调调用次数为 0；修改后日历组件的 2 项定向测试通过，并确认点击不切换所选日期。
+- 类型检查、版本与 `v0.4.72` 一致性校验、前端构建、lint 与 `git diff --check` 通过。完整前端与 Rust 门禁交由 PR / Release CI 执行。
+- 未读取或修改用户生产数据库。
+
+### 相关文档
+
+- [0.4.72 发布说明](../RELEASE_NOTES.md)
+- [日历任务条组件](../src/components/CalendarView.tsx)
+- [日历任务条交互回归用例](../src/components/CalendarView.test.tsx)
