@@ -5280,6 +5280,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 相关文档
 
+- [PR #58：日历任务条打开编辑](https://github.com/PLA0185/lumen/pull/58)
 - [0.4.72 发布说明](../RELEASE_NOTES.md)
 - [日历任务条组件](../src/components/CalendarView.tsx)
 - [日历任务条交互回归用例](../src/components/CalendarView.test.tsx)
