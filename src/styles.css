@@ -2498,16 +2498,22 @@ input[type='number'].input--compact {
 
 /* 日历中的任务条 */
 .calchip {
+  appearance: none;
   display: flex;
   gap: 5px;
   align-items: baseline;
+  width: 100%;
   padding: 3px 6px;
   font-size: 0.8em;
+  font-family: inherit;
   line-height: 1.35;
+  color: inherit;
+  text-align: left;
   background: var(--c-surface-2);
+  border: 1px solid transparent;
   border-left: 3px solid var(--c-border-strong);
   border-radius: 5px;
-  cursor: grab;
+  cursor: pointer;
   transition: background var(--dur-fast) var(--ease);
 }
 
@@ -2517,6 +2523,11 @@ input[type='number'].input--compact {
 
 .calchip:active {
   cursor: grabbing;
+}
+
+.calchip:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
 }
 
 .calchip--done {

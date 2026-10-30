@@ -1003,7 +1003,7 @@ function TaskArea({
 
   // 日历视图（日 / 周 / 月 + 拖拽改期）
   if (view === 'calendar') {
-    return <CalendarView onDateChange={onCalendarDate} onCreateTask={onCreateCalendarTask} />
+    return <CalendarView onDateChange={onCalendarDate} onCreateTask={onCreateCalendarTask} onEdit={onEdit} />
   }
 
   // 看板视图（按状态分列 + 拖拽改状态）

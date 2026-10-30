@@ -5258,3 +5258,31 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_android_arm64.apk)
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.71/Lumen_0.4.71_x64-setup.exe)
 - [0.4.71 发布说明](../RELEASE_NOTES.md)
+
+## 第 132 轮 · 2026-10-30 · 日历任务条打开编辑
+
+### 做了
+
+- 找到日历任务条无法打开的原因：任务条只支持拖拽，未连接任务编辑回调；同时点击事件会冒泡到日历格，导致月历点任务时还会切换日期。
+- 将日历任务条改为可点击、可键盘聚焦的按钮，连接现有编辑窗口，并阻止点击任务触发日历格日期切换。
+- 更新版本为 0.4.72，并同步发布说明和 README，按项目发布流程准备 Windows 与 Android ARM64 同版更新。
+
+### 没做到
+
+- GitHub 没有为 PR #58 创建 CI 检查任务；Windows 与 Android ARM64 正式发布尚未开始。
+- 未在用户的 Windows 安装版或 OnePlus Ace 2 / Android 16 实机验收；本机没有这两种实际运行环境。
+
+### 怎么验证的
+
+- 新增的日历任务点击用例在修改前失败，提示编辑回调调用次数为 0；修改后日历组件的 2 项定向测试通过，并确认点击不切换所选日期。
+- 本机前端全量 432 项测试、类型检查、版本与 `v0.4.72` 一致性校验、前端构建、lint、`cargo fmt --check` 与无豁免 Clippy 通过。
+- 本机 Rust 测试首次被代理转发的本地模拟请求影响，7 项联网测试返回 HTTP 502；在 `NO_PROXY=127.0.0.1,localhost,::1` 下汇总为 621 项通过、4 项忽略、0 项失败，但 Windows 进程在汇总后未退出，手动中断后退出码为 1，因此不记作完整通过。
+- GitHub 状态接口返回 PR #58 无检查任务；未把未运行的 CI 写成通过。
+- 未读取或修改用户生产数据库。
+
+### 相关文档
+
+- [PR #58：日历任务条打开编辑](https://github.com/PLA0185/lumen/pull/58)
+- [0.4.72 发布说明](../RELEASE_NOTES.md)
+- [日历任务条组件](../src/components/CalendarView.tsx)
+- [日历任务条交互回归用例](../src/components/CalendarView.test.tsx)
