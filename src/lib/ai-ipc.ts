@@ -104,6 +104,9 @@ export interface DiffItem {
   taskId: string | null
   title: string
   changes: FieldChange[]
+  /** AI 整理出的有序子任务步骤 */
+  subtasks?: string[]
+  subtaskCompletionMode?: 'free' | 'sequential' | null
   note: string | null
 }
 

@@ -4095,6 +4095,41 @@ body[data-window='floating'] .modal__actions {
   overflow-wrap: anywhere;
 }
 
+.difftable__row--multiline dd {
+  white-space: pre-wrap;
+}
+
+.diffsteps {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface-2);
+  font-size: 0.84em;
+}
+
+.diffsteps__title {
+  color: var(--c-text-2);
+  font-weight: 650;
+}
+
+.diffsteps__list {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding-left: 22px;
+}
+
+.diffsteps__list li {
+  padding-left: 2px;
+  color: var(--c-text-1);
+  overflow-wrap: anywhere;
+}
+
+.diffsteps__list--free {
+  list-style-type: disc;
+}
+
 /* 改动前后的视觉区分：旧值删除线 + 新值强调色 */
 .diffold {
   color: var(--c-text-3);

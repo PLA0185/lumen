@@ -5314,3 +5314,32 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [Windows x64 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.72/Lumen_0.4.72_x64-setup.exe)
 - [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.72/Lumen_0.4.72_android_arm64.apk)
 - [0.4.72 发布说明](../RELEASE_NOTES.md)
+
+## 第 134 轮 · 2026-11-03 · AI 任务整理支持精简的有序子任务
+
+### 做了
+
+- 更新 AI 任务整理结构：按独立交付物拆开候选任务，不把章节标题当任务；保留负责人、指导人、依赖、状态和截止要求在任务说明；明确完成的内容不新建为待办。
+- 原文有先后关系时，把关键执行节点按顺序保存为子任务；相近的微小动作可以合并，通常整理为 2–6 步，单个候选最多 20 步。重复核对点、条件和提醒留在任务说明，避免把任务拆碎。
+- 预览显示任务说明和编号步骤；确认后在同一数据库事务里创建任务及子任务，并设为顺序完成。重复任务会把步骤保存进系列模板。
+- 版本号改为 0.4.73，更新 README 和发布说明，按双端版本约定准备 Windows 与 Android 同版发布。
+
+### 没做到
+
+- 未使用用户配置的模型服务实测自然语言整理；本轮未调用外部 AI API，因此不同模型是否完全按提示词拆分仍未实测。
+- GitHub PR CI、合并、v0.4.73 Windows 安装包和 Android APK 发布尚未完成；也未在用户设备上安装验收。
+- 本机完整 Rust 测试汇报 622 项通过、4 项忽略、0 项失败，但测试进程在汇总后未退出，手动中断后的退出码为 1；不能记为本机完整命令通过。
+
+### 怎么验证的
+
+- 定向 Rust `ai_features` 用例 36 项通过，包括普通任务及重复系列的子任务顺序、顺序完成模式和预览字段；新增的 `organized_steps_are_previewed_and_saved_in_source_order` 用例覆盖从预览到数据库写入。
+- `cargo check --all-targets`、`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- 前端 `pnpm typecheck`、432 项测试、`pnpm build`、`pnpm lint` 通过；构建输出既有动态导入提示，不影响构建完成。
+- `pnpm install --frozen-lockfile`、`pnpm check:version` 通过，三处应用版本均为 0.4.73。未读取或修改用户生产数据库。
+
+### 相关文档
+
+- [AI 任务整理与应用](../src-tauri/src/ai_features.rs)
+- [AI 差异预览界面](../src/components/DiffPreviewDialog.tsx)
+- [0.4.73 发布说明](../RELEASE_NOTES.md)
+- PR 与 Release 链接将在 CI 和发布完成后补录。
