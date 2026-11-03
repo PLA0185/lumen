@@ -5327,7 +5327,7 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 没做到
 
 - 未使用用户配置的模型服务实测自然语言整理；本轮未调用外部 AI API，因此不同模型是否完全按提示词拆分仍未实测。
-- GitHub PR CI、合并、v0.4.73 Windows 安装包和 Android APK 发布尚未完成；也未在用户设备上安装验收。
+- 未在用户 OnePlus Ace 2 / Android 16 设备上安装验收；用户当前不方便用 USB 连接，因此也未能抓取该设备的启动日志。
 - 本机完整 Rust 测试汇报 622 项通过、4 项忽略、0 项失败，但测试进程在汇总后未退出，手动中断后的退出码为 1；不能记为本机完整命令通过。
 
 ### 怎么验证的
@@ -5336,13 +5336,14 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `cargo check --all-targets`、`cargo fmt --check`、`cargo clippy --all-targets --all-features -- -D warnings` 通过。
 - 前端 `pnpm typecheck`、432 项测试、`pnpm build`、`pnpm lint` 通过；构建输出既有动态导入提示，不影响构建完成。
 - `pnpm install --frozen-lockfile`、`pnpm check:version` 通过，三处应用版本均为 0.4.73。未读取或修改用户生产数据库。
+- [PR #60 CI run #248](https://github.com/PLA0185/lumen/actions/runs/41591815385) 前端与 Rust job 全部成功；[v0.4.73 Release run #62](https://github.com/PLA0185/lumen/actions/runs/41592483852) 的门禁、安装包签名与篡改拒绝检查、latest.json 规范、APK 上传和发布步骤均成功。
 
 ### 相关文档
 
 - [AI 任务整理与应用](../src-tauri/src/ai_features.rs)
 - [AI 差异预览界面](../src/components/DiffPreviewDialog.tsx)
 - [0.4.73 发布说明](../RELEASE_NOTES.md)
-- PR 与 Release 链接将在 CI 和发布完成后补录。
+- [PR #60](https://github.com/PLA0185/lumen/pull/60) 已合并；[v0.4.73 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.73) 已发布，包含 [Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.73/Lumen_0.4.73_x64-setup.exe) 与 [Android ARM64 APK](https://github.com/PLA0185/lumen/releases/download/v0.4.73/Lumen_0.4.73_android_arm64.apk)。
 
 ## 第 135 轮 · 2026-11-03 · 暂停后续版本的 APK 自动构建
 
@@ -5354,15 +5355,19 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 没做到
 
-- GitHub PR CI 尚未确认；目前改动还未合并到 main，后续 release tag 仍会用旧流程，直到本轮变更合并。
+- 手动运行 workflow_dispatch 并勾选 `include_android` 的恢复路径尚未实际执行，未验证它为已发布 tag 添加 APK 的真实行为。
 - 尚未验证手动勾选 `include_android` 的恢复流程，也未在 Android 设备上安装验收。
 
 ### 怎么验证的
 
 - 已静态检查 workflow 条件：tag 自动发布时 Android job 会跳过，Windows job 在 Android job 成功或跳过时继续；Android artifact 下载和上传仅在 Android job 成功时执行。
-- 当前 v0.4.73 发布运行仍在使用旧版 workflow；没有取消这次已启动的 Android 构建。
+- [PR #61 CI run #250](https://github.com/PLA0185/lumen/actions/runs/41594277349) 的前端与 Rust job 均通过；[PR #61](https://github.com/PLA0185/lumen/pull/61) 已合并到 main，合并提交为 `220e7028d9c069bd60fb492aaae59e90aa25f188`。
+- v0.4.73 tag 在新 workflow 合并前已触发旧流程；本次 Android APK 构建、Windows 安装包构建、签名检查和 Release 发布全部成功，未取消已启动的 APK 构建。
+- workflow 条件经静态检查：后续 tag push 会跳过 Android job；Windows release job 独立继续。手动恢复选项保留，但没有真实运行验证。
 
 ### 相关文档
 
 - [Release 工作流](../.github/workflows/release.yml)
+- [PR #61：暂停后续版本 APK 自动构建](https://github.com/PLA0185/lumen/pull/61)
+- [v0.4.73 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.73)
 - [下载与发布说明](../README.md)
