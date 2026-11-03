@@ -12,10 +12,9 @@
 
 ```
 Lumen_<版本>_x64-setup.exe
-Lumen_<版本>_android_arm64.apk
 ```
 
-Windows 与 Android APK 会随同一版本发布。Android 使用每次发布都保持不变的签名；首次启用 APK 自动发布前，按[Android 发布签名说明](docs/android-release-signing.md)把签名密钥加入 GitHub Actions Secrets。
+Lumen 0.4.73 同时提供 Windows 安装包和 Android ARM64 APK。从后续版本起，Android APK 暂停自动构建，默认只发布 Windows；需要恢复 APK 时可在对应版本标签上手动启用。Android 使用固定发布签名，配置说明见[Android 发布签名说明](docs/android-release-signing.md)。
 
 > **升级说明：** v0.3.0 及更早版本升级到 v0.4.0 时，由于 updater 签名信任链已重置，
 > 需要手动下载安装一次；从 v0.4.0 开始，后续版本恢复应用内自动更新。
@@ -442,7 +441,7 @@ pnpm typecheck                # 类型检查
 
 ## 文档索引
 
-当前源码版本 0.4.73。AI 任务整理按独立交付物拆分候选任务，把负责人和要求保留在任务说明，并将有顺序的执行步骤预览和保存为顺序子任务。日历任务可点击打开编辑并支持键盘操作；今天页和悬浮窗按所属周期逐日显示周、月、季度和年任务，并将已完成任务收进默认折叠区。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。Windows 安装包与 Android ARM64 APK 按同版发布。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
+当前源码版本 0.4.73。AI 任务整理按独立交付物拆分候选任务，把负责人和要求保留在任务说明，并将有顺序的执行步骤预览和保存为顺序子任务。日历任务可点击打开编辑并支持键盘操作；今天页和悬浮窗按所属周期逐日显示周、月、季度和年任务，并将已完成任务收进默认折叠区。Windows 提供默认关闭的本机智能场景便签；Android 保持既有业务可用，并明确标注场景监测仅支持 Windows。0.4.73 包含 Windows 安装包与 Android ARM64 APK；后续版本暂停 APK 自动构建。OnePlus Ace 2 / Android 16 实机启动验收仍未完成。0.4.60 的工作区设计合同、预览和原型验收边界作为历史记录保留，功能完成情况见各轮[工作记录](docs/work-log.md)。
 
 | 文档 | 内容 |
 | --- | --- |
