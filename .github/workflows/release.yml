@@ -1,13 +1,12 @@
 name: Release
 
-# 打 tag（形如 v0.4.0）时构建签名 Android APK、Windows 安装包并发布同一个 Release。
+# 打 tag 时默认只构建 Windows 安装包。Android APK 暂停自动构建；需要恢复时，
+# 在对应 tag 上手动运行此工作流并勾选 include_android。
 # 仓库 Settings → Secrets and variables → Actions 必须配置以下 Secrets：
 #   - `TAURI_SIGNING_PRIVATE_KEY`：`lumen-updater.key` 的**文件内容**
 #   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：该密钥的密码
-#   - `LUMEN_ANDROID_KEYSTORE_BASE64`：Android 发布 keystore 的 Base64
-#   - `LUMEN_ANDROID_KEY_ALIAS`：Android 发布 key alias
-#   - `LUMEN_ANDROID_KEYSTORE_PASSWORD`：keystore 密码
-#   - `LUMEN_ANDROID_KEY_PASSWORD`：key 密码
+#   - `LUMEN_ANDROID_KEYSTORE_BASE64`：手动启用 Android 构建时需要
+#   - `LUMEN_ANDROID_KEY_ALIAS`、`LUMEN_ANDROID_KEYSTORE_PASSWORD`、`LUMEN_ANDROID_KEY_PASSWORD`：手动启用 Android 构建时需要
 #
 # 注意：Windows 上没法用环境变量传空密码（PowerShell 与 .NET 都会把空串
 # 当成"删除该变量"），所以密钥必须带密码，否则 CLI 会卡在交互式提示上。
@@ -23,9 +22,17 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      include_android:
+        description: '重新启用 Android APK 构建'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   android:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.include_android }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +122,7 @@ jobs:
     permissions:
       contents: write
     needs: android
+    if: ${{ always() && (needs.android.result == 'success' || needs.android.result == 'skipped') }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -233,12 +241,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw '上传 updater manifest 失败' }
 
       - name: 下载 Android APK 并添加到同一 Release
+        if: ${{ needs.android.result == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: android-apk-${{ github.ref_name }}
           path: android-release
 
       - name: 上传 Android APK
+        if: ${{ needs.android.result == 'success' }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

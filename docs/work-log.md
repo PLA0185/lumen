@@ -5343,3 +5343,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [AI 差异预览界面](../src/components/DiffPreviewDialog.tsx)
 - [0.4.73 发布说明](../RELEASE_NOTES.md)
 - PR 与 Release 链接将在 CI 和发布完成后补录。
+
+## 第 135 轮 · 2026-11-03 · 暂停后续版本的 APK 自动构建
+
+### 做了
+
+- 按用户最新要求，从后续版本开始默认只构建 Windows 安装包，暂停 Android APK 自动构建。
+- 保留手动恢复入口：在目标版本 tag 上手动运行 Release 工作流并明确勾选 `include_android` 后，才构建并上传 APK。
+- 0.4.73 的 Android 构建在收到暂停要求前已启动；本次仍按原定双端发布完成。
+
+### 没做到
+
+- GitHub PR CI 尚未确认；目前改动还未合并到 main，后续 release tag 仍会用旧流程，直到本轮变更合并。
+- 尚未验证手动勾选 `include_android` 的恢复流程，也未在 Android 设备上安装验收。
+
+### 怎么验证的
+
+- 已静态检查 workflow 条件：tag 自动发布时 Android job 会跳过，Windows job 在 Android job 成功或跳过时继续；Android artifact 下载和上传仅在 Android job 成功时执行。
+- 当前 v0.4.73 发布运行仍在使用旧版 workflow；没有取消这次已启动的 Android 构建。
+
+### 相关文档
+
+- [Release 工作流](../.github/workflows/release.yml)
+- [下载与发布说明](../README.md)
