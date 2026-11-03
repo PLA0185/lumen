@@ -587,6 +587,25 @@ async fn daily_list_and_count_include_period_tasks_until_completion_day() {
         .execute(db.pool())
         .await
         .unwrap();
+    let due_only = create_task_impl(
+        db,
+        CreateTaskInput {
+            due_at: Some("2026-10-27T10:00:00.000Z".into()),
+            ..task("无计划日期的截止任务")
+        },
+    )
+    .await
+    .unwrap();
+    let planned_and_due = create_task_impl(
+        db,
+        CreateTaskInput {
+            planned_at: Some("2026-10-28T10:00:00.000Z".into()),
+            due_at: Some("2026-10-27T10:00:00.000Z".into()),
+            ..task("有计划日期时仍按计划日显示")
+        },
+    )
+    .await
+    .unwrap();
 
     let mut query: TaskQuery = serde_json::from_value(serde_json::json!({
         "statuses": ["todo", "doing", "waiting", "done"],
@@ -605,12 +624,14 @@ async fn daily_list_and_count_include_period_tasks_until_completion_day() {
     for id in [&ids[0], &ids[1], &ids[2], &ids[3], &ids[6]] {
         assert!(visible.contains(id.as_str()));
     }
+    assert!(visible.contains(due_only.id.as_str()));
+    assert!(!visible.contains(planned_and_due.id.as_str()));
     assert!(!visible.contains(ids[4].as_str()));
     assert!(!visible.contains(ids[5].as_str()));
     assert!(visible.contains(unscheduled.id.as_str()));
     assert_eq!(
         crate::commands::count_tasks_impl(db, &query).await.unwrap(),
-        6
+        7
     );
 
     let mut monday = query.clone();
@@ -636,9 +657,11 @@ async fn daily_list_and_count_include_period_tasks_until_completion_day() {
     let next = list_tasks_impl(db, query.clone()).await.unwrap();
     assert!(next.iter().any(|t| t.id == ids[0]));
     assert!(!next.iter().any(|t| t.id == ids[6]));
+    assert!(!next.iter().any(|t| t.id == due_only.id));
+    assert!(next.iter().any(|t| t.id == planned_and_due.id));
     assert_eq!(
         crate::commands::count_tasks_impl(db, &query).await.unwrap(),
-        5
+        6
     );
 
     state.db.pool().close().await;
