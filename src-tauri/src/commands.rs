@@ -1264,9 +1264,10 @@ fn apply_task_filters(b: &mut QueryBuilder<Sqlite>, query: &TaskQuery) -> AppRes
             ("quarter", &period.quarter_from, &period.quarter_to),
             ("year", &period.year_from, &period.year_to),
         ];
-        b.push(" AND ((period_type NOT IN ('week','month','quarter','year') AND planned_at >= ")
+        // 日视图里普通任务按计划日归属；没有计划日时回退到截止日，保持与日历一致。
+        b.push(" AND ((period_type NOT IN ('week','month','quarter','year') AND COALESCE(planned_at, due_at) >= ")
             .push_bind(from.clone())
-            .push(" AND planned_at <= ")
+            .push(" AND COALESCE(planned_at, due_at) <= ")
             .push_bind(to.clone())
             .push(") OR ((");
         for (index, (kind, start, end)) in spans.iter().enumerate() {
