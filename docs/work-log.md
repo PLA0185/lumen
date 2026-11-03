@@ -5383,16 +5383,17 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 ### 没做到
 
-- 尚未构建或安装 0.4.74，因此未在用户正在使用的窗口中实机确认列表刷新和显示。
+- 未在用户正在使用的窗口中安装并实机确认列表刷新；0.4.74 Windows 安装包已发布，但没有替用户安装。Android APK 按要求未构建。
 - 最新 14 条任务的日期没有被批量改动；在 11 月 3 日查看时，设为 11 月 4 日和 11 月 6 日的未来任务按日期仍不会列入“今天”，可在“全部任务”查看。截止日当天它们会按本次修复出现在该日视图。
 
 ### 怎么验证的
 
 - 新增的定向 Rust 场景在旧筛选下先失败：无计划日但截止日在当日的任务不在列表内；改用 `COALESCE(planned_at, due_at)` 后同一用例通过。
 - 定向命令：`cargo test --lib daily_list_and_count_include_period_tasks_until_completion_day -- --nocapture`，1 项通过。
-- `cargo fmt --check` 与 `git diff --check` 通过；未运行完整 Rust 或前端测试套件。
-- `node tools/check-version.mjs` 确认三处应用版本一致为 0.4.74；GitHub CI 正在运行，最终结果待记录。
-- 生产数据库通过 SQLite `mode=ro` 连接只读查询，没有写入、删除或改动任何记录。
+- `cargo fmt --check` 与 `git diff --check` 通过；定向 Rust 回归用例修复前失败、修复后通过（1 项）。
+- PR #62 CI（run #254）与合并到 main 后的 CI（run #255）前端、Rust job 全部通过；发布工作流 #63 的完整门禁、签名包验签和篡改拒绝检查、latest.json 规范与正式发布均成功。
+- `node tools/check-version.mjs` 确认三处应用版本一致为 0.4.74。生产数据库通过 SQLite `mode=ro` 连接只读查询，没有写入、删除或改动任何记录。
+- Release 工作流的 Android job 为 skipped，没有构建或上传 APK。
 
 ### 相关文档
 
@@ -5400,4 +5401,5 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [日历日期筛选回归用例](../src-tauri/src/commands_e2e.rs)
 - [0.4.74 发布说明](../RELEASE_NOTES.md)
 - [PR #62](https://github.com/PLA0185/lumen/pull/62)
+- [v0.4.74 Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.74/Lumen_0.4.74_x64-setup.exe)（[Release 页面](https://github.com/PLA0185/lumen/releases/tag/v0.4.74)）
 - [本轮修复说明与验证记录](work-log.md)
