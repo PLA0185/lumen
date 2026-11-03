@@ -329,7 +329,10 @@ export function DiffPreviewDialog({
                       {it.changes.length > 0 && (
                         <dl className="difftable">
                           {it.changes.map((c, ci) => (
-                            <div className="difftable__row" key={ci}>
+                            <div
+                              className={`difftable__row${c.field === 'description' ? ' difftable__row--multiline' : ''}`}
+                              key={ci}
+                            >
                               <dt>{c.label}</dt>
                               <dd>
                                 {c.before != null && c.before !== '' ? (
@@ -345,6 +348,29 @@ export function DiffPreviewDialog({
                             </div>
                           ))}
                         </dl>
+                      )}
+
+                      {!!it.subtasks?.length && (
+                        <section className="diffsteps" aria-label="子任务步骤">
+                          <div className="diffsteps__title">
+                            {it.subtaskCompletionMode === 'sequential'
+                              ? '按顺序执行'
+                              : '子任务'}
+                            {' · '}
+                            {it.subtasks.length} 步
+                          </div>
+                          <ol
+                            className={
+                              it.subtaskCompletionMode === 'sequential'
+                                ? 'diffsteps__list'
+                                : 'diffsteps__list diffsteps__list--free'
+                            }
+                          >
+                            {it.subtasks.map((step, stepIndex) => (
+                              <li key={`${stepIndex}-${step}`}>{step}</li>
+                            ))}
+                          </ol>
+                        </section>
                       )}
 
                       {it.note && (

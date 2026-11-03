@@ -45,6 +45,8 @@ const PREVIEW_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// 单次可生成的最大条目数，防止模型返回超长列表把界面撑爆
 const MAX_ITEMS: usize = 50;
+/// 单个 AI 候选任务可生成的最多步骤数。
+const MAX_AI_SUBTASKS: usize = 20;
 
 /// 备注正文是否默认发送给模型。
 ///
@@ -93,6 +95,12 @@ pub struct DiffItem {
     pub title: String,
     /// 字段级改动列表（界面逐条展示，用户可据此判断）
     pub changes: Vec<FieldChange>,
+    /// 按输入次序排列的子任务步骤。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtasks: Vec<String>,
+    /// 子任务完成方式（有序步骤默认 sequential）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtask_completion_mode: Option<String>,
     /// 该条要写入的完整字段（`apply` 时使用）
     #[serde(skip_serializing)]
     pub payload: serde_json::Value,
@@ -467,12 +475,87 @@ fn build_create_item(
         return None;
     }
 
+    let mut subtasks = Vec::new();
+    if let Some(raw_subtasks) = obj.get("subtasks") {
+        let Some(raw_subtasks) = raw_subtasks.as_array() else {
+            issues.push(ValidationIssue {
+                level: "error".into(),
+                index: idx + 1,
+                message: "子任务步骤必须是字符串数组".into(),
+            });
+            return None;
+        };
+        if raw_subtasks.len() > MAX_AI_SUBTASKS {
+            issues.push(ValidationIssue {
+                level: "error".into(),
+                index: idx + 1,
+                message: format!("子任务最多 {MAX_AI_SUBTASKS} 步"),
+            });
+            return None;
+        }
+        for (step_index, raw_step) in raw_subtasks.iter().enumerate() {
+            let Some(step) = raw_step.as_str() else {
+                issues.push(ValidationIssue {
+                    level: "error".into(),
+                    index: idx + 1,
+                    message: format!("第 {} 个子任务步骤不是文本", step_index + 1),
+                });
+                return None;
+            };
+            let step = step.trim();
+            if step.is_empty() || step.chars().count() > 500 {
+                issues.push(ValidationIssue {
+                    level: "error".into(),
+                    index: idx + 1,
+                    message: format!("第 {} 个子任务标题应为 1–500 个字符", step_index + 1),
+                });
+                return None;
+            }
+            subtasks.push(step.to_string());
+        }
+    }
+
+    let subtask_completion_mode = if subtasks.is_empty() {
+        None
+    } else {
+        let mode = obj
+            .get("subtaskCompletionMode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sequential");
+        match mode {
+            "free" | "sequential" => Some(mode.to_string()),
+            other => {
+                issues.push(ValidationIssue {
+                    level: "error".into(),
+                    index: idx + 1,
+                    message: format!("子任务完成方式无效：{other}"),
+                });
+                return None;
+            }
+        }
+    };
+
     let mut changes = vec![FieldChange {
         field: "title".into(),
         label: "标题".into(),
         before: None,
         after: Some(title.clone()),
     }];
+
+    let description = obj
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if !description.is_empty() {
+        changes.push(FieldChange {
+            field: "description".into(),
+            label: "任务说明 / 负责人".into(),
+            before: None,
+            after: Some(description.clone()),
+        });
+    }
 
     // 截止时间
     let mut due_at: Option<String> = None;
@@ -578,7 +661,7 @@ fn build_create_item(
 
     let mut payload = serde_json::json!({
         "title": title,
-        "description": obj.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+        "description": description,
         "priority": priority,
         "plannedAt": planned_at,
         "hasPlannedTime": has_planned_time,
@@ -637,6 +720,8 @@ fn build_create_item(
         task_id: None,
         title,
         changes,
+        subtasks,
+        subtask_completion_mode,
         payload,
         note: obj
             .get("reason")
@@ -722,6 +807,8 @@ fn build_reschedule_item(
             before: old_planned.clone(),
             after: Some(new_at.clone()),
         }],
+        subtasks: vec![],
+        subtask_completion_mode: None,
         payload: serde_json::json!({
             "taskId": id,
             "plannedAt": new_at,
@@ -891,17 +978,22 @@ pub struct OrganizeInput {
     pub tzid: Option<String>,
 }
 
-const ORGANIZE_SYSTEM: &str = r#"你是一个任务整理助手。用户会给你一段自由文本，请把它整理成结构化的任务候选。
+const ORGANIZE_SYSTEM: &str = r#"你是 Lumen 的任务整理助手。用户会给你一段自由文本，请按 Lumen 当前任务结构整理为候选任务。
 只输出 JSON，不要任何解释文字。JSON 格式：
-{"tasks":[{"title":"任务标题","description":"要求和注意事项","dueAt":"YYYY-MM-DD 或带时区的 ISO-8601 或 null","plannedAt":"同上或 null","priority":0,"estimatedMinutes":30,"rrule":null,"dtstartLocal":null,"hasStartTime":false,"reason":"为什么这样安排"}]}
+{"tasks":[{"title":"独立可交付任务标题","description":"负责人、指导人、要求、依赖条件和注意事项","subtasks":["第 1 步","第 2 步"],"subtaskCompletionMode":"sequential","dueAt":"YYYY-MM-DD 或带时区的 ISO-8601 或 null","plannedAt":"同上或 null","priority":0,"estimatedMinutes":30,"rrule":null,"dtstartLocal":null,"hasStartTime":false,"reason":"为什么这样安排"}]}
 要求：
-- title 必填，简洁明确，不超过 100 字。
+- title 必填，简洁明确，不超过 100 字。一个可独立验收的产出应单独成为任务；不要把不同产品、站点、负责人或交付物合并成一个任务。章节标题和总截止时间是上下文，不是任务本身。
+- 原文中的负责人、指导人、当前状态、依赖条件、重点提醒和详细要求都保留在 description 中。Lumen 当前没有单独的负责人字段，不要丢掉这些信息，也不要把负责人塞进标题。
+- 只把关键、可执行且有先后依赖的节点放入 subtasks 数组，按原文顺序表达；紧密相关的微小动作可合并成一个步骤。不要把每个句子、核对点、条件或提醒都拆成独立子任务，这些细节写入 description。通常每项任务整理为 2–6 步；确有必要时可更多，最多 20 步。
+- 只要子任务之间有明确顺序，subtaskCompletionMode 必须为 "sequential"。原文没有步骤，或明确说明步骤彼此无顺序时，subtasks 用空数组或简洁清单，并使用 "free"。不要为了凑步数而拆分。
+- 明确标记“已完成”的任务不要作为新的待办任务创建；若它能帮助理解其他任务，可在相关 description 中注明已完成状态。
+- 同一章节给出的总截止时间适用于该章节下所有未单独注明截止时间的任务；更具体的任务截止时间优先。
 - priority 取 0（无）、1（低）、2（中）、3（高）。
 - 日期无法从原文推断时填 null，不要编造日期。
 - 不要创建与已有任务重复的条目。
 - 用户说每周一、每周几天、每天、每月时，必须生成重复规则，不能转换成一个单次任务。每周一用 FREQ=WEEKLY;BYDAY=MO，周三和周五用 FREQ=WEEKLY;BYDAY=WE,FR。每天默认双休，用 FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR；用户明确每天含周末时用 FREQ=DAILY。法定节假日不执行加 ;X-LUMEN-HOLIDAYS=CN。不要擅自设置调休补班。
 - 重复任务必须填写 dtstartLocal（YYYY-MM-DDTHH:MM:SS，本地首次日期；未指定开始日期从今天开始），有具体时间时 hasStartTime=true。普通任务 rrule=null。
-- 最多 20 条。"#;
+- 最多 50 条任务，每条最多 20 个子任务步骤。"#;
 
 #[tauri::command]
 pub async fn ai_organize(
@@ -1007,9 +1099,18 @@ pub async fn ai_organize(
 
     detect_duplicates(&items, &mut issues);
 
+    let step_count: usize = items.iter().map(|item| item.subtasks.len()).sum();
     finish_preview(
         "整理任务",
-        format!("从输入中整理出 {} 个候选任务", items.len()),
+        if step_count == 0 {
+            format!("从输入中整理出 {} 个候选任务", items.len())
+        } else {
+            format!(
+                "从输入中整理出 {} 个候选任务，含 {} 个子任务步骤",
+                items.len(),
+                step_count
+            )
+        },
         items,
         issues,
         resp.text,
@@ -1142,6 +1243,8 @@ pub async fn ai_breakdown(
             task_id: Some(input.task_id.clone()),
             title: step_title,
             changes,
+            subtasks: vec![],
+            subtask_completion_mode: None,
             payload: serde_json::json!({
                 "parentTaskId": input.task_id,
                 "title": obj.get("title").and_then(|v| v.as_str()).unwrap_or(""),
@@ -1622,11 +1725,15 @@ pub(crate) async fn ai_apply_impl(
                     let input: crate::recurrence_service::CreateRecurringInput =
                         serde_json::from_value(it.payload.clone())
                             .map_err(|e| AppError::validation(format!("重复任务参数无效：{e}")))?;
+                    let subtasks = crate::recurrence_subtasks::templates_from_titles(&it.subtasks)?;
+                    let completion_mode = crate::recurrence_subtasks::parse_completion_mode(
+                        it.subtask_completion_mode.as_deref(),
+                    )?;
                     let (series, first, _) = crate::recurrence_service::create_recurring_seed_tx(
                         &mut tx,
                         &input,
-                        &[],
-                        crate::recurrence_subtasks::SubtaskCompletionMode::Free,
+                        &subtasks,
+                        completion_mode,
                     )
                     .await?;
                     recurring.push((series, first));
@@ -1730,6 +1837,22 @@ pub(crate) async fn ai_apply_impl(
                     .bind(&id)
                     .execute(&mut *tx)
                     .await?;
+                if !it.subtasks.is_empty() {
+                    let templates =
+                        crate::recurrence_subtasks::templates_from_titles(&it.subtasks)?;
+                    let completion_mode = crate::recurrence_subtasks::parse_completion_mode(
+                        it.subtask_completion_mode.as_deref(),
+                    )?;
+                    sqlx::query("UPDATE tasks SET subtask_completion_mode = ?1 WHERE id = ?2")
+                        .bind(completion_mode.as_db())
+                        .bind(&id)
+                        .execute(&mut *tx)
+                        .await?;
+                    crate::recurrence_subtasks::insert_plain_subtasks(
+                        &mut tx, &id, &templates, &now,
+                    )
+                    .await?;
+                }
                 if let Some(tags) = it.payload.get("tagIds").and_then(|v| v.as_array()) {
                     for tag in tags.iter().filter_map(|v| v.as_str()) {
                         sqlx::query("INSERT INTO task_tags(task_id,tag_id) VALUES(?1,?2)")
@@ -1874,10 +1997,75 @@ pub async fn schedule_conflicts(state: State<'_, AppState>) -> AppResult<Vec<ser
 #[cfg(test)]
 mod tests {
     #[tokio::test]
+    async fn organized_steps_are_previewed_and_saved_in_source_order() {
+        let dir = std::env::temp_dir().join(format!("lumen-ai-organize-{}", uuid::Uuid::now_v7()));
+        let state = AppState::new(crate::db::Db::init(&dir).await.unwrap());
+        let obj = serde_json::json!({
+            "title": "英国站 723 文案优化",
+            "description": "负责人：林心韬；总截止时间：2026-11-06 18:00。",
+            "subtasks": [
+                "参考加拿大站产品卖点",
+                "结合英国站关键词表优化文案",
+                "检查关键词是否自然埋入描述"
+            ],
+            "subtaskCompletionMode": "sequential"
+        });
+        let mut issues = Vec::new();
+        let item = build_create_item(0, obj.as_object().unwrap(), &mut issues).unwrap();
+        assert!(issues.is_empty());
+        assert_eq!(item.subtasks.len(), 3);
+        assert_eq!(item.subtask_completion_mode.as_deref(), Some("sequential"));
+        assert!(item.changes.iter().any(|change| {
+            change.field == "description"
+                && change
+                    .after
+                    .as_deref()
+                    .is_some_and(|value| value.contains("负责人：林心韬"))
+        }));
+        let preview_json = serde_json::to_value(&item).unwrap();
+        assert_eq!(preview_json["subtasks"][0], "参考加拿大站产品卖点");
+        assert_eq!(preview_json["subtasks"][2], "检查关键词是否自然埋入描述");
+
+        let preview_id = register("整理任务", vec![item]);
+        assert_eq!(
+            ai_apply_impl(&state, preview_id, None)
+                .await
+                .unwrap()
+                .created,
+            1
+        );
+        let mode: String = sqlx::query_scalar(
+            "SELECT subtask_completion_mode FROM tasks WHERE title = '英国站 723 文案优化'",
+        )
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(mode, "sequential");
+        let steps: Vec<String> = sqlx::query_scalar(
+            "SELECT title FROM subtasks
+             WHERE task_id = (SELECT id FROM tasks WHERE title = '英国站 723 文案优化')
+             ORDER BY sort_order",
+        )
+        .fetch_all(state.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            steps,
+            [
+                "参考加拿大站产品卖点",
+                "结合英国站关键词表优化文案",
+                "检查关键词是否自然埋入描述"
+            ]
+        );
+        state.db.pool().close().await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn ai_weekly_candidates_create_real_series_only_after_confirmation() {
         let dir = std::env::temp_dir().join(format!("lumen-ai-weekly-{}", uuid::Uuid::now_v7()));
         let state = AppState::new(crate::db::Db::init(&dir).await.unwrap());
-        let obj = serde_json::json!({"title":"每周运营表", "rrule":"FREQ=WEEKLY;BYDAY=MO,WE", "dtstartLocal":"2026-09-30T00:00:00", "tzid":"Asia/Shanghai", "hasStartTime":false});
+        let obj = serde_json::json!({"title":"每周运营表", "rrule":"FREQ=WEEKLY;BYDAY=MO,WE", "dtstartLocal":"2026-09-30T00:00:00", "tzid":"Asia/Shanghai", "hasStartTime":false, "subtasks":["核对本周数据", "整理并发送报告"], "subtaskCompletionMode":"sequential"});
         let mut issues = vec![];
         let item = build_create_item(0, obj.as_object().unwrap(), &mut issues).unwrap();
         assert!(issues.is_empty());
@@ -1903,6 +2091,21 @@ mod tests {
                 .unwrap();
         assert!(rows.len() > 4);
         assert!(rows.iter().all(|(_, s)| s == &rows[0].1));
+        let (first_id, mode): (String, String) = sqlx::query_as(
+            "SELECT id, subtask_completion_mode FROM tasks WHERE series_id = ?1 ORDER BY planned_at LIMIT 1",
+        )
+        .bind(&rows[0].1)
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(mode, "sequential");
+        let steps: Vec<String> =
+            sqlx::query_scalar("SELECT title FROM subtasks WHERE task_id = ?1 ORDER BY sort_order")
+                .bind(first_id)
+                .fetch_all(state.db.pool())
+                .await
+                .unwrap();
+        assert_eq!(steps, ["核对本周数据", "整理并发送报告"]);
         for (at, _) in rows {
             use chrono::Datelike;
             let date = chrono::DateTime::parse_from_rfc3339(&at)
@@ -2066,6 +2269,8 @@ mod tests {
                 task_id: None,
                 title: "第一条子任务".into(),
                 changes: vec![],
+                subtasks: vec![],
+                subtask_completion_mode: None,
                 payload: serde_json::json!({
                     "parentTaskId": "ai-parent",
                     "asSubtask": true
@@ -2121,6 +2326,8 @@ mod tests {
                 task_id: Some(first.id.clone()),
                 title: first.title.clone(),
                 changes: vec![],
+                subtasks: vec![],
+                subtask_completion_mode: None,
                 payload: serde_json::json!({
                     "plannedAt": "2026-09-26T11:00:00.000Z",
                     "hasPlannedTime": true
@@ -2408,6 +2615,8 @@ mod tests {
             task_id: Some(format!("id-{title}")),
             title: title.to_string(),
             changes: vec![],
+            subtasks: vec![],
+            subtask_completion_mode: None,
             payload: serde_json::json!({ "plannedAt": planned }),
             note: None,
         }
