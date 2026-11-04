@@ -14,7 +14,7 @@
 Lumen_<版本>_x64-setup.exe
 ```
 
-Lumen 0.4.73 同时提供 Windows 安装包和 Android ARM64 APK。从后续版本起，Android APK 暂停自动构建，默认只发布 Windows；需要恢复 APK 时可在对应版本标签上手动启用。Android 使用固定发布签名，配置说明见[Android 发布签名说明](docs/android-release-signing.md)。
+Lumen 0.4.75 提供 Windows 安装包。Android APK 自动构建继续暂停；需要恢复时可在对应版本标签上手动启用。Android 使用固定发布签名，配置说明见[Android 发布签名说明](docs/android-release-signing.md)。
 
 > **升级说明：** v0.3.0 及更早版本升级到 v0.4.0 时，由于 updater 签名信任链已重置，
 > 需要手动下载安装一次；从 v0.4.0 开始，后续版本恢复应用内自动更新。
