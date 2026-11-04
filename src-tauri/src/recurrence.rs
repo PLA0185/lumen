@@ -247,6 +247,30 @@ impl RecurrenceRule {
         dtstart_local: &str,
         has_start_time: bool,
     ) -> AppResult<Self> {
+        Self::parse_rrule_string(rrule, tzid, dtstart_local, has_start_time, true)
+    }
+
+    /// 读取已保存的规则时允许起始日期超出当前节假日日历覆盖范围。
+    ///
+    /// 新建或编辑规则仍须使用 `from_rrule_string` 做完整校验；已保存的未来规则
+    /// 则必须能在日历数据更新前被读取和展示。`expand` 会在覆盖范围结束时停止，
+    /// 不会推测尚未公布的节假日或生成这些日期的任务。
+    pub(crate) fn from_saved_rrule_string(
+        rrule: &str,
+        tzid: &str,
+        dtstart_local: &str,
+        has_start_time: bool,
+    ) -> AppResult<Self> {
+        Self::parse_rrule_string(rrule, tzid, dtstart_local, has_start_time, false)
+    }
+
+    fn parse_rrule_string(
+        rrule: &str,
+        tzid: &str,
+        dtstart_local: &str,
+        has_start_time: bool,
+        validate_holiday_calendar_start: bool,
+    ) -> AppResult<Self> {
         let mut freq: Option<Freq> = None;
         let mut interval: i64 = 1;
         let mut by_weekday: Vec<u8> = Vec::new();
@@ -431,7 +455,10 @@ impl RecurrenceRule {
 
         // 校验 dtstart_local 合法
         let start = parse_local_datetime(dtstart_local)?;
-        if skip_holidays && crate::holiday_calendar::is_workday(start.date()).is_none() {
+        if validate_holiday_calendar_start
+            && skip_holidays
+            && crate::holiday_calendar::is_workday(start.date()).is_none()
+        {
             return Err(AppError::validation("起始年份没有已公布的节假日日历")
                 .with_hint("已内置 2025–2026 年。请更新日历，或取消节假日过滤后按双休安排。"));
         }

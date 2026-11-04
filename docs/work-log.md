@@ -5403,3 +5403,35 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [PR #62](https://github.com/PLA0185/lumen/pull/62)
 - [v0.4.74 Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.74/Lumen_0.4.74_x64-setup.exe)（[Release 页面](https://github.com/PLA0185/lumen/releases/tag/v0.4.74)）
 - [本轮修复说明与验证记录](work-log.md)
+
+## 第 137 轮 · 2026-11-04 · 修复未来节假日规则导致重复编辑器卡住
+
+### 做了
+
+- 定位重复规则弹窗卡在“正在读取重复规则…”的原因：读取整组规则时会解析 2027 年起生效、带中国节假日过滤的已保存分段；节假日日历只覆盖到 2026 年，严格解析报错后前端仍把错误状态显示成加载状态。
+- 新增已保存规则的读取路径：允许查看与编辑起始年份超出节假日日历覆盖范围的规则；新建和修改规则仍执行原有日历校验，未来未公布的节假日不用于猜测或生成任务。
+- 重复规则详情在未来节假日日历未覆盖时显示非阻塞提醒；读取失败时停止显示加载文案并提供“重试读取”按钮。
+- 将发布版本准备为 0.4.75，更新 Windows 发布说明；Android APK 构建继续暂停。
+
+### 没做到
+
+- PR CI 与 v0.4.75 Windows 正式发布尚未运行；未把该版本安装到用户电脑，也未用桌面控制操作。
+- 未构建或上传 Android APK，按用户要求继续暂停。
+- 本机 Rust 全量测试打印 623 项通过、4 项忽略、0 项失败，但 Windows 测试进程在结果汇总后未退出；手动中断后命令退出码为 1，因此不记作本机完整命令通过，等待 CI 验证。
+- 本轮没有修改用户生产数据库。
+
+### 怎么验证的
+
+- 前端回归用例在修复前稳定失败：后端节假日日历错误已显示，但弹窗仍同时显示“正在读取重复规则…”；修复后该用例通过并确认出现重试入口。
+- Rust 回归用例在修复前以“起始年份没有已公布的节假日日历”失败；修复后未来规则分段可读取，且未知日历范围展开为空；原有 `missing_calendar_does_not_invent_future_workdays` 用例仍通过，确保新规则校验不放宽。
+- `corepack pnpm install --frozen-lockfile`、类型检查、前端 433 项测试、构建、lint、版本校验、`cargo fmt --check`、`cargo check --all-targets` 与无豁免 Clippy 均通过。构建只有既有动态导入提示。
+- Rust 全量测试命令输出 623 passed、4 ignored、0 failed；测试摘要后进程不退出，手动中断，因此仅记录摘要，不标为命令通过。
+- 未读取或修改用户生产数据库；本轮回归用例使用隔离测试数据。
+
+### 相关文档
+
+- [重复任务与数据结构设计说明](design-recurrence.md)
+- [0.4.75 发布说明](../RELEASE_NOTES.md)
+- [重复规则弹窗](../src/components/SeriesRuleDialog.tsx)
+- [重复规则与节假日日历解析](../src-tauri/src/recurrence.rs)
+- [本轮回归测试](../src/components/SeriesRuleDialog.test.tsx)

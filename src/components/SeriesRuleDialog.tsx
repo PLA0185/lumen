@@ -55,9 +55,12 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
   const [completedBefore, setCompletedBefore] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   useEffect(() => {
     let active = true
+    setDetail(null)
+    setError(null)
     void Promise.all([rec.recurringGet(seriesId), rec.recurringScopeInfo(taskId)])
       .then(([d, info]) => {
         if (!active) return
@@ -71,7 +74,7 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
       })
       .catch((e) => { if (active) setError(e instanceof IpcError ? e.userMessage() : String(e)) })
     return () => { active = false }
-  }, [seriesId, taskId, occurrenceKey])
+  }, [seriesId, taskId, occurrenceKey, loadAttempt])
 
   const save = async () => {
     if (!rrule || !detail) return
@@ -124,7 +127,10 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
       <div className="modal modal--wide">
         <h2 className="modal__title" id="series-rule-title">修改重复规则</h2>
         {error && <div className="alert alert--error" role="alert">{error}</div>}
-        {!detail ? <p>正在读取重复规则…</p> : <>
+        {detail?.warning && <div className="alert alert--warn" role="note">{detail.warning}</div>}
+        {!detail && !error && <p>正在读取重复规则…</p>}
+        {!detail && error && <p className="setgroup__hint">读取失败。你可以重试，或关闭窗口。</p>}
+        {detail && <>
           {detail.series.terminatedFromOccurrenceKey && (
             <div className="alert alert--warn" role="note">
               {detail.series.terminatedFromOccurrenceKey.startsWith('1970-')
@@ -177,6 +183,10 @@ export function SeriesRuleDialog({ taskId, seriesId, occurrenceKey, onClose, onS
           </label>}
         </>}
         <div className="modal__actions">
+          {!detail && error && <button type="button" className="btn btn--quiet"
+            onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            重试读取
+          </button>}
           <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>取消</button>
           <button type="button" className="btn btn--primary" onClick={() => void save()}
             disabled={!detail || busy || (completedBefore > 0 && !confirmHistory)}>
