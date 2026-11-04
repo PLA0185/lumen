@@ -183,7 +183,7 @@ fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTim
     let mut out = Vec::new();
 
     // 第 1 段永远存在：系列本身的规则，从 dtstart 起生效
-    let base_rule = RecurrenceRule::from_rrule_string(
+    let base_rule = RecurrenceRule::from_saved_rrule_string(
         &base.rrule,
         &base.tzid,
         &base.dtstart_local,
@@ -211,7 +211,7 @@ fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTim
                 Some(r) => r.clone(),
                 None => current_rule.to_rrule_string()?,
             };
-            RecurrenceRule::from_rrule_string(
+            RecurrenceRule::from_saved_rrule_string(
                 &rrule,
                 active_tzid,
                 &anchor,
@@ -247,6 +247,23 @@ fn build_rule_timeline(base: &Series, segments: &[Segment]) -> AppResult<RuleTim
     }
 
     Ok(out)
+}
+
+fn unavailable_holiday_calendar_warning(timeline: &RuleTimeline) -> AppResult<Option<String>> {
+    for (_, _, rule, _) in timeline {
+        if !rule.skip_holidays {
+            continue;
+        }
+        let start = parse_local_datetime(&rule.dtstart_local)?;
+        let year = chrono::Datelike::year(&start.date());
+        if year > crate::holiday_calendar::LAST_YEAR {
+            return Ok(Some(format!(
+                "中国节假日日历目前仅内置至 {}-12-31；这条规则从 {year} 年开始，相关任务暂不会生成。更新节假日日历后可继续生成。",
+                crate::holiday_calendar::LAST_YEAR
+            )));
+        }
+    }
+    Ok(None)
 }
 
 /// 分段生效起点的本地日期串
@@ -1081,6 +1098,7 @@ pub async fn recurring_get(
 
     let segments: Vec<Segment> = rows.into_iter().map(Segment::from).collect();
     let timeline = build_rule_timeline(&series, &segments)?;
+    let warning = unavailable_holiday_calendar_warning(&timeline)?;
     let now = to_db_time(utc_now());
     let rule = timeline
         .iter()
@@ -1109,6 +1127,7 @@ pub async fn recurring_get(
         "rule": rule,
         "description": rule.describe(),
         "edgeNote": rule.edge_policy_note(),
+        "warning": warning,
         "nextFutureOccurrenceKey": next_future,
         "segments": segments,
         "skippedOccurrences": skips.into_iter().map(|(k,)| k).collect::<Vec<_>>(),
@@ -2520,6 +2539,48 @@ pub async fn recurring_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_future_holiday_segment_remains_readable_without_published_calendar() {
+        let series = Series {
+            id: "series".into(),
+            rrule: "FREQ=WEEKLY".into(),
+            tzid: "Asia/Shanghai".into(),
+            dtstart_local: "2026-11-04T00:00:00".into(),
+            has_start_time: 0,
+            recurrence_end_kind: "never".into(),
+            recurrence_until: None,
+            recurrence_count: None,
+            terminated_from_occurrence_key: None,
+            rule_version: 2,
+            created_at: "2026-11-04T00:00:00.000Z".into(),
+            updated_at: "2026-11-04T00:00:00.000Z".into(),
+        };
+        let rrule = "FREQ=WEEKLY;BYDAY=TH;X-LUMEN-HOLIDAYS=CN";
+        let segment = Segment {
+            id: "segment".into(),
+            series_id: "series".into(),
+            rule_version: 2,
+            effective_from_occurrence: "2027-01-05T16:00:00.000Z".into(),
+            new_rrule: Some(rrule.into()),
+            new_tzid: None,
+            override_title: None,
+            override_description: None,
+            override_priority: None,
+            override_project_id: None,
+            override_category_id: None,
+            override_estimated_minutes: None,
+        };
+
+        let timeline = build_rule_timeline(&series, &[segment])
+            .expect("已保存的未来规则应能读取，即使该年的节假日日历尚未公布");
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[1].2.to_rrule_string().unwrap(), rrule);
+        assert!(timeline[1].2.expand(10).unwrap().is_empty());
+        assert!(unavailable_holiday_calendar_warning(&timeline)
+            .unwrap()
+            .is_some_and(|warning| warning.contains("2026-12-31") && warning.contains("2027")));
+    }
 
     #[test]
     fn scope_labels_are_stable() {

@@ -144,6 +144,7 @@ export interface SeriesDetail {
   }
   description: string
   edgeNote: string | null
+  warning: string | null
   nextFutureOccurrenceKey: string | null
   segments: Array<{
     id: string
