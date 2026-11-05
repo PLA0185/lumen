@@ -5445,22 +5445,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 做了
 
 - 调整展开任务详情中的 Markdown 排版：列表项内的段落不再带额外上下边距，列表项之间留少量间隔；普通段落继续保留手动换行。
-- 将 Windows 发布版本准备为 0.4.76；Android APK 构建继续暂停。
+- 发布 Windows 0.4.76，上传已验签的 x64 安装包、签名文件和更新清单；Android APK 构建继续暂停。
 
 ### 没做到
 
 - 未在用户电脑安装或打开 0.4.76；也未使用桌面控制。
 - 未构建或上传 Android APK，按用户要求继续暂停。
-- PR CI 与 Windows 正式发布尚未运行，因此发布结果待验证。
+- 本机未运行测试套件；PR CI 与 Windows 发布门禁已通过。
 - 本轮未读取或修改用户生产数据库。
 
 ### 怎么验证的
 
 - 根据用户截图检查任务详情使用的 Markdown 渲染器和样式，定位详情容器保留全局空白、列表段落继承默认段距造成的过大间隔，并在任务描述范围内修正。
-- `git diff --check` 与 `node tools/check-version.mjs` 通过，版本一致为 0.4.76；本机未运行测试套件。
+- `git diff --check` 与 `node tools/check-version.mjs` 通过，版本一致为 0.4.76。
+- PR #65 的前端与 Rust CI、合并后的 main CI、Windows 发布完整门禁均通过；签名包验签与篡改拒绝、`latest.json` 规范化和正式发布均成功。发布工作流的 Android job 为 skipped。
 
 ### 相关文档
 
 - [任务详情样式](../src/styles.css)
 - [任务卡片](../src/components/TaskCard.tsx)
 - [0.4.76 发布说明](../RELEASE_NOTES.md)
+- [PR #65](https://github.com/PLA0185/lumen/pull/65)
+- [v0.4.76 Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.76/Lumen_0.4.76_x64-setup.exe)（[Release 页面](https://github.com/PLA0185/lumen/releases/tag/v0.4.76)）
+- [v0.4.76 发布工作流 #65](https://github.com/PLA0185/lumen/actions/runs/41947797856)
