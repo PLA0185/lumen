@@ -5164,7 +5164,10 @@ body {
   .flow-canvas__nav { grid-row: 2; justify-self: center; }
   .memos--canvas .flow-canvas__head .flow-canvas__nav { position: relative; top: auto; left: auto; transform: none; }
 }
-.task-description__content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.task-description__content { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.task-description__content p { white-space: pre-wrap; }
+.task-description__content li > p { margin: 0; }
+.task-description__content li + li { margin-top: 2px; }
 .task-description { padding: 10px 0; border-bottom: 1px solid var(--c-border); }
 .subtask__completed, .task__completed { font-size: .75rem; color: var(--c-text-3); white-space: nowrap; }
 .floating .subtask-preview__item { flex-wrap: wrap; }
