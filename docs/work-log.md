@@ -5468,3 +5468,30 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [PR #65](https://github.com/PLA0185/lumen/pull/65)
 - [v0.4.76 Windows 安装包](https://github.com/PLA0185/lumen/releases/download/v0.4.76/Lumen_0.4.76_x64-setup.exe)（[Release 页面](https://github.com/PLA0185/lumen/releases/tag/v0.4.76)）
 - [v0.4.76 发布工作流 #65](https://github.com/PLA0185/lumen/actions/runs/41947797856)
+
+## 第 139 轮 · 2026-11-08 · 修复本机安装并接入每日待办
+
+### 做了
+
+- 查明 Windows 安装记录指向临时验证目录中的 0.4.37，本机正式目录中的程序仍是 0.4.24；最近的 `0xc0000409` 崩溃事件发生在临时验证程序。
+- 对正式用户数据库做 SQLite 一致性备份，从官方 Release 下载并校验 SHA-256 后，将 0.4.76 安装到正式目录。迁移沿用原用户数据，没有清库。
+- 按已确认的农历日期和官方公农历对照表，在本机正式任务库建立下一次生日的日期任务和提前一周、当天的提醒；撤回此前两条无日期的模糊待办。
+- 在 Codex 本地创建每天北京时间 22:00 的独立自动整理任务，指定 GPT-6 Luna 的 max 思考档：先读本机限定私聊，记录覆盖范围，再生成报告并将明确待办去重同步到 Lumen。停用原聊天记录器的 23:55 模型日报，保留消息采集。
+
+### 没做到
+
+- 旧临时验证程序为何发生 `0xc0000409` 尚未定位到具体源码调用点。0.4.76 能正常启动，但没有作长时间运行验收。
+- 下一次生日提醒尚未到触发时间，Windows 通知实际送达未验证。每天 22:00 自动整理的首次定时运行尚未发生，其结果未验证。
+
+### 怎么验证的
+
+- 官方安装包大小与发布资产一致，SHA-256 为 `44ad001931c268a063856746f78687896b4327a2b2e8aef47a06f9c752306495`；安装退出码为 0，正式目录的 EXE 和注册表版本均为 0.4.76。
+- 应用重启后进程响应正常；用户数据库 `PRAGMA quick_check` 为 `ok`，仅有一条有效生日待办和两条已启用的对应提醒。
+- 自动化配置显示 `ACTIVE`、每日 22:00、`gpt-6-luna`、`max`；聊天记录器重启后身份核对通过且继续接收消息，旧日报开关为关闭。
+- 仓库对齐至 0.4.76 后，`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（623 项通过、4 项忽略）和 `cargo clippy --all-targets --all-features -- -D warnings` 均通过。
+
+### 相关文档
+
+- [Lumen GitHub v0.4.76 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.76)
+- [香港天文台公历与农历对照表（2027）](https://data.weather.gov.hk/weatherAPI/hko_data/calendar/nongli_calendar_2027.csv)
+
