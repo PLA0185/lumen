@@ -5501,20 +5501,20 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 
 - 查明“本周内”显示计划日期所属周期，“已逾期”按单独的截止时间计算；截图中截止时间仍为 11 月 6 日 18:00。日历改期只移动计划时间、保留截止时间，符合现有时间字段语义。
 - 修复任务卡悬停边框覆盖逾期红色的问题，使左侧红条在鼠标悬停时保持显示。
-- 将 Windows 发布版本准备为 0.4.77；Android APK 构建继续暂停。
+- 发布 Windows 版 0.4.77，逾期任务的红色左边框在悬停时保持可见；Android APK 构建继续暂停。
 
 ### 没做到
 
 - 未在用户电脑安装或打开 0.4.77；未操作桌面界面。
 - 未构建或上传 Android APK，按用户要求继续暂停。
-- PR CI 和 Windows 正式发布尚待执行。
 - 本轮未读取或修改用户生产数据库。
 
 ### 怎么验证的
 
 - 检查 `task_reschedule` 后端实现，确认拖动日历只写入 `planned_at`；检查 `periodBadgeLabel` 与 `isOverdue`，确认周期徽标与逾期徽标分别依据计划时间和截止时间。
 - 检查 `.task:hover` 与 `.task--overdue` 规则，确认普通悬停边框颜色覆盖原逾期颜色；新增更高优先级的悬停规则保留红色。
-- `pnpm install --frozen-lockfile`、`pnpm typecheck`、前端测试（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check` 与全特性 Clippy 均通过；`node tools/check-version.mjs` 确认三个应用版本文件一致为 0.4.77，`git diff --check` 通过。`cargo test --lib -- --quiet` 输出 623 项通过、4 项忽略、0 项失败，但 Windows 上测试进程在汇总后仍未退出，手动结束后命令返回码为 1；未将该命令记为通过，待 PR CI 核实。
+- 本机 `pnpm install --frozen-lockfile`、`pnpm typecheck`、前端测试（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check` 与全特性 Clippy 均通过；`node tools/check-version.mjs` 确认三处版本文件一致为 0.4.77，`git diff --check` 通过。`cargo test --lib -- --quiet` 本机输出 623 项通过、4 项忽略、0 项失败，但测试进程在结果汇总后未退出，手动结束后的命令返回码为 1，因此不记为本机通过。PR #67 的 Windows CI、合并后的 main CI，以及 0.4.77 Release 发版前完整门禁均成功，CI 的 Rust 测试和 Clippy 均通过。
+- Release 工作流成功构建并验签 `Lumen_0.4.77_x64-setup.exe`，发布了安装包、签名文件与 `latest.json`；Android job 按设置跳过。已检查公开 Release 资产和下载链接。
 
 ### 相关文档
 
@@ -5523,4 +5523,6 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - [计划时间与截止时间语义](../src/lib/datetime.ts)
 - [日历拖动改期实现](../src-tauri/src/commands.rs)
 - [0.4.77 发布说明](../RELEASE_NOTES.md)
+- [PR #67](https://github.com/PLA0185/lumen/pull/67)
+- [Lumen GitHub v0.4.77 Release](https://github.com/PLA0185/lumen/releases/tag/v0.4.77)
 
