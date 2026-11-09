@@ -797,6 +797,9 @@ select {
 .task--overdue {
   border-left: 3px solid var(--c-danger);
 }
+.task--overdue:hover {
+  border-left-color: var(--c-danger);
+}
 
 .task--pinned {
   background: linear-gradient(90deg, var(--c-accent-soft), transparent 42%), var(--c-surface);
