@@ -5554,3 +5554,25 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 - `D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-09-截至22点.md`
 - [香港天文台 2026 年公农历对照表](https://data.weather.gov.hk/weatherAPI/hko_data/calendar/nongli_calendar_2026.csv)
 - [香港天文台 2027 年公农历对照表](https://data.weather.gov.hk/weatherAPI/hko_data/calendar/nongli_calendar_2027.csv)
+
+## 第 142 轮 · 2026-11-20 · 雨宝聊天整理与 Lumen 待办核对
+
+### 做了
+
+- 只读整理 2026-11-20 北京时间聊天库快照：原始及按消息 ID 去重后均为 132 条；主号与雨宝各 66 条。将当天首条 16:18:03、末条 21:30:09、最长记录间隔及数据库时间戳写入本机报告，并注明 00:00–16:18:03 无记录、数据库没有同步水位，无法确认完整监听和最新同步时间。
+- 按有效聊天消息核对后，没有发现明确、尚未完成的新待办；没有写入 Lumen 数据库。既有文件待办状态及 2027 年生日任务、两次启用提醒均作只读核查。
+- 报告写入 `D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-20-截至22点.md`。本轮未向 QQ 发送消息，也未修改聊天原文。
+
+### 没做到
+
+- 无法读取当天 00:00–16:18:03 的聊天记录；数据库没有监听心跳或同步水位，无法验证监听是否连续或确定最新同步时间。
+- 没有从当天对话确认既有文件待办是否已完成；该待办仍保持原状态。
+
+### 怎么验证的
+
+- 报告记载了数据库身份、逐发送方条数、首末消息时间、重复检查结果、文件修改时间及缺失的同步水位信息。
+- 只读确认了 Lumen 中既有待办与生日提醒；因本轮无数据库写入，不需要做 SQLite 写前备份。未修改应用代码。`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（623 项通过、4 项忽略）及 `cargo clippy --all-targets --all-features -- -D warnings` 均通过；构建有既有动态导入分块提示。
+
+### 相关文档
+
+- 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-20-截至22点.md`（位于仓库外，未入库）。
