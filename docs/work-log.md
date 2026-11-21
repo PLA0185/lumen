@@ -5576,3 +5576,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-20-截至22点.md`（位于仓库外，未入库）。
+
+## 第 143 轮 · 2026-11-21 · 雨宝聊天整理与 Lumen 待办核对
+
+### 做了
+
+- 只读查询当天私聊并核实双方账号、方向、消息条数、去重、首末记录时间、媒体/引用占位及数据库同步水位缺失；报告明确标出午夜后至首条记录前无记录和最长记录间隔。
+- 没有发现可确认的主号未完成新待办，未写入 Lumen 数据库。只读核实了已有文件待办和生日任务/提醒。
+- 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-21-截至22点.md`。未向 QQ 发消息、未修改聊天原文。
+
+### 没做到
+
+- 当天 00:00 至 11:29:02 没有消息记录；数据库无监听心跳/同步水位，无法证明全天监听连续或确认最新同步时间。
+- 当天无法核实既有文件待办的完成状态；保持原状态。
+- 前端构建仍输出 9 条 `INEFFECTIVE_DYNAMIC_IMPORT` 分块提示；本轮未改代码处理这些已有分块告警。
+
+### 怎么验证的
+
+- 对数据库采用只读连接，按北京时间当天范围核对身份、原始和去重条数、各方消息覆盖、去重结果、首末时间、最长空档及媒体/引用标记；报告记录数据库修改时间早于最后消息且无同步水位。
+- Lumen 只读检查相关待办、生日提醒和 `PRAGMA quick_check`（`ok`）；无写入，不需要 SQLite 写前备份。完整本机门禁通过：前端 433 项，Rust 623 项通过、4 项忽略；格式检查和 clippy 通过。
+
+### 相关文档
+
+- 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-21-截至22点.md`（仓库外，本地保存，不入库）。
