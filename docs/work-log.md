@@ -5647,3 +5647,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-23-截至22点.md`（仓库外，本地保存）。
+
+## 第 146 轮 · 2026-11-24 · 雨宝聊天整理与 Lumen 待办核对
+
+### 做了
+
+- 只读核对当天私聊双方身份、方向、记录数、消息 ID 去重、实际时间覆盖、最大间隔、占位/引用标记及数据库同步水位；报告保存于本机报告目录。
+- 使用 GPT-6 Luna max 总结可核实事实及原话依据；没有发现明确、尚未完成的新待办，Lumen 数据库保持只读。根据香港天文台官方对照表核对了既有农历生日安排，没有重复创建。
+- 未向 QQ 发消息，也未修改聊天原文；任务数据和报告保持本地。
+
+### 没做到
+
+- 当天 00:00–15:34:52 及 21:20:47–运行时没有记录；数据库无监听心跳/同步水位，无法证明全天监听连续或确认最新同步时间。
+- 当天记录不足以确认既有任务是否完成；未更改原状态。本轮未写 Lumen 数据库，无需创建备份。
+
+### 怎么验证的
+
+- 只读 SQLite 查询核对账号、消息方向/条数、重复记录、首末记录、时间空档、占位标记和数据库修改时间；聊天库及 Lumen 库的 `PRAGMA quick_check` 均为 `ok`。
+- Lumen 任务和提醒通过只读查询核实；香港天文台官方 2027 对照表确认农历日期与既有安排一致。
+- 推送前完整门禁通过：`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（623 项通过、4 项忽略）及 `cargo clippy --all-targets --all-features -- -D warnings`。
+
+### 相关文档
+
+- 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-24-截至22点.md`（仓库外，本地保存）。
