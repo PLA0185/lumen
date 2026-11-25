@@ -5670,3 +5670,26 @@ Provider 默认值映射、切换不残留旧模型、分页追加不重复、�
 ### 相关文档
 
 - 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-24-截至22点.md`（仓库外，本地保存）。
+
+## 第 147 轮 · 2026-11-25 · 雨宝聊天整理与 Lumen 待办核对
+
+### 做了
+
+- 只读核对当天私聊身份、方向、记录数、唯一消息 ID、内容重复、实际覆盖、空档、占位/引用标记及同步水位；本机生成截至 22:00 报告。
+- 使用 GPT-6 Luna max 总结真实消息与原话依据；没有发现明确、尚未完成的新待办，Lumen 数据库保持只读。生日日期依据香港天文台官方 2027 对照表核实，既有提醒无重复。
+- 未向 QQ 发消息、未修改聊天原文；聊天报告和任务记录留在本机。
+
+### 没做到
+
+- 当天 00:00–17:16:38 及 21:17:47–运行时无记录；数据库无监听心跳/同步水位，无法证明全天监听连续或确认最新同步时间。
+- 当天记录不足以核实既有任务完成状态；未改动任务。本轮没有写 Lumen 数据库，因此未创建备份。前端构建输出 9 条既有 `INEFFECTIVE_DYNAMIC_IMPORT` 提示；Rust 测试显示一条 Windows linker stdout 警告，但测试成功。
+
+### 怎么验证的
+
+- 只读 SQLite 查询核对账号、方向、消息数、去重、时间范围、最大空档、占位标记、数据库修改时间和同步水位；聊天库和 Lumen 库 `PRAGMA quick_check` 均为 `ok`。
+- 只读核验 Lumen 任务与提醒；香港天文台官方 2027 对照表确认 2027-10-27 为农历九月廿八。
+- 推送前完整门禁通过：`pnpm install --frozen-lockfile`、`pnpm typecheck`、`pnpm test`（433 项）、`pnpm build`、`pnpm lint`、`cargo fmt --check`、`cargo test --lib`（623 项通过、4 项忽略）及 `cargo clippy --all-targets --all-features -- -D warnings`。
+
+### 相关文档
+
+- 本机报告：`D:\Codex\ai-companion-kit\packages\companion\data\pangbao-trial\main-account-monitor\reports\2026-11-25-截至22点.md`（仓库外，本地保存）。
